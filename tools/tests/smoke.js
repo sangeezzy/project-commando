@@ -1,10 +1,12 @@
-// Полигон: карта, игрок в центре, противники вне поля зрения, у всех M4A1, набор укрытий.
+// Полигон: карта, старт на краю карты, противники вне поля зрения, у всех M4A1, набор укрытий.
 window.__result = (() => {
   const { check, run } = T_;
   run('полигон', () => {
     const p = me();
     check('карта 72×54 м', map.w === 72 && map.h === 54, [map.w, map.h]);
-    check('игрок в центре карты', Math.abs(p.x / TILE - map.w / 2) < 1 && Math.abs(p.y / TILE - map.h / 2) < 1, [p.x / TILE, p.y / TILE]);
+    check('старт на краю карты', Math.min(p.x / TILE, p.y / TILE, map.w - p.x / TILE, map.h - p.y / TILE) < 4, [p.x / TILE, p.y / TILE]);
+    const near = Math.min(...G.enemies.map((e) => Math.hypot(e.x - p.x, e.y - p.y) / PX_M));
+    check('рядом со стартом противников нет (ближе 12 м)', near > 12, near.toFixed(1));
     check('8 противников', G.enemies.length === 8, G.enemies.length);
     const seen = G.enemies.filter((e) => los(p.x, p.y, e.x, e.y)).map((e) => [Math.floor(e.x / TILE), Math.floor(e.y / TILE)]);
     check('ни одного противника не видно с места игрока (даже за спиной)', !seen.length, seen);

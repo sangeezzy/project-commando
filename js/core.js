@@ -67,7 +67,7 @@ function makeAI(o, a, patrol) {
     doorFire: null, doorFireCd: 0,  // обстрел закрытой двери на звук
     peek: null, peekCd: 0, flank: null,   // выглядывание из-за угла и обход
     kneel: false, kneelSet: false, stanceT: 0, stillT: 0,   // стрельба с колена
-    role: null, fightT: 0, flankCd: 0, huntFlank: false, bodies: new Set(), barkT: 0, supPause: 0,   // группа, манёвры, тела
+    role: null, fightT: 0, flankCd: 0, huntFlank: false, bodies: new Set(), barked: {}, supPause: 0,   // группа, манёвры, тела
     st: 0,                 // 0 спокоен, 1 насторожен, 2 бой
     notice: 0,             // 0..1 — насколько заметил цель
     target: null, lastX: x, lastY: y, lastSeen: -99, seeing: false,
@@ -75,7 +75,7 @@ function makeAI(o, a, patrol) {
     goal: null, cover: null, coverT: 0, searchT: 0, calmT: 0,
     home: { x, y, a }, look: a, lookT: rand(1, 3),
     patrol: patrol ? patrol.map(([px, py]) => ({ x: (px + 0.5) * TILE, y: (py + 0.5) * TILE })) : null, pi: 0,
-    regroup: false, leader: -1,
+    regroup: false, leader: -1, gSpot: null, gT: 0, stuckT: 0, unstuckT: 0, reviveSkip: null,
     fm: null, fmCd: 0, fmDecide: 0,   // огонь на ходу: отход с огнём / продвижение с подавлением
   });
   return o;
@@ -103,7 +103,7 @@ function startRange(squad = null, bots = false) {
   nextId = 1;
   G.seq = (G.seq || 0) + 1;
   G.players = []; G.enemies = []; G.bullets = []; G.parts = []; G.decals = []; G.hurt = [];
-  G.hitmark = null; G.toast = null; G.muzzle = []; G.expo = null; G.squad = { t: 0, flankCd: 0 }; G.barks = []; G.fxOut = [];
+  G.hitmark = null; G.toast = null; G.muzzle = []; G.expo = null; G.squad = { t: 0, flankCd: 0 }; G.barks = []; G.fxOut = []; G.intel = { p: new Map(), e: new Map() };
   squad = squad || [{ slot: G.mySlot, human: true, name: G.myName }];
   G.lastSquad = squad; G.lastBots = bots;
   const s = map.start;

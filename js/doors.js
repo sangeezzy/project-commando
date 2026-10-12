@@ -205,9 +205,14 @@ function updateDoors(dt) {
 // ---------- ИИ: открыть закрытую незапертую дверь на пути ----------
 // Возвращает true, если боец сейчас возится с дверью (идти не надо)
 function aiDoorAhead(e, ang, dt) {
-  const px = e.x + Math.cos(ang) * (PR + 10), py = e.y + Math.sin(ang) * (PR + 10);
-  const tx = Math.floor(px / TILE), ty = Math.floor(py / TILE);
-  if (tileAt(tx, ty) !== T.DOOR) { e.doorT = 0; return false; }
+  // прямо по ходу или чуть в сторону (подход к двери наискосок)
+  let tx = -1, ty = -1;
+  for (const da of [0, 0.6, -0.6]) {
+    const px = e.x + Math.cos(ang + da) * (PR + 10), py = e.y + Math.sin(ang + da) * (PR + 10);
+    const x = Math.floor(px / TILE), y = Math.floor(py / TILE);
+    if (tileAt(x, y) === T.DOOR) { tx = x; ty = y; break; }
+  }
+  if (tx < 0) { e.doorT = 0; return false; }
   const d = map.doorAt.get(ty * map.w + tx);
   if (!d || d.locked) return false;
   e.doorT = (e.doorT || 0) + dt;

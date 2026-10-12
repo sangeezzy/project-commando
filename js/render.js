@@ -55,6 +55,7 @@ function render(dt = 1 / 60) {
   for (const e of G.enemies) if (!e.dead && e.va > 0.3 && perceivedAt(e.x, e.y) > LIGHT.seeMin) drawAwareness(e);
   if (view) drawFog(offX, offY, p, view);
   drawTeamTags();
+  drawIntel();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   drawHUD();
 }
@@ -119,6 +120,27 @@ function drawKey(k) {
   ctx.restore();
 }
 
+// Противники, замеченные отрядом (ботами или товарищами), которых сам сейчас не видишь: красная метка, гаснет за ~6 с
+function drawIntel() {
+  const mine = me();
+  if (!mine || !G.intel) return;
+  const intel = G.intel[mine.side];
+  if (!intel) return;
+  ctx.save();
+  for (const it of intel.values()) {
+    const e = G.enemies.find((q) => q.id === it.id);
+    if (!e || e.dead || (e.va || 0) > 0.5 || !onScreen(it.x, it.y)) continue;
+    const age = G.time - it.t, k = clamp(1 - age / ENEMY.intel.ttl, 0, 1);
+    ctx.globalAlpha = 0.25 + 0.6 * k;
+    ctx.strokeStyle = '#ff5040'; ctx.lineWidth = 2;
+    const r = 9 + 2 * Math.sin(G.time * 5);
+    ctx.beginPath(); ctx.moveTo(it.x, it.y - r); ctx.lineTo(it.x + r, it.y); ctx.lineTo(it.x, it.y + r); ctx.lineTo(it.x - r, it.y); ctx.closePath(); ctx.stroke();
+    ctx.fillStyle = '#ff5040'; ctx.font = '10px Consolas, monospace'; ctx.textAlign = 'center';
+    ctx.fillText(age < 1 ? 'контакт' : `${Math.round(age)} с назад`, it.x, it.y - r - 4);
+  }
+  ctx.restore();
+}
+
 // Метки своих поверх тумана: цвет места и имя (бот — «бот»)
 function drawTeamTags() {
   const mine = me();
@@ -139,6 +161,7 @@ function drawTeamTags() {
       ctx.fillStyle = '#9fe870'; ctx.fillRect(o.x - 16, o.y - 32, 32 * o.rev, 4);
     }
     ctx.beginPath(); ctx.moveTo(o.x - 4, o.y - 16); ctx.lineTo(o.x + 4, o.y - 16); ctx.lineTo(o.x, o.y - 12); ctx.closePath(); ctx.fill();
+    if (!o.ai) talkIcon(o.x + ctx.measureText(o.name).width / 2 + 8, o.y - 24, o.slot);   // говорит (рядом / по рации)
   }
   ctx.restore();
 }

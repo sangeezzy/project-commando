@@ -37,12 +37,12 @@ async function main() {
     // проверка сети из меню: сервер знакомств, STUN, TURN
     const nc = await E(H, 'netCheck()');
     check('проверка сети: сервер PeerJS доступен', nc.server, nc);
-    check('проверка сети: внешний адрес (STUN) определён', nc.srflx, nc);
+    check(`проверка сети: внешний адрес (STUN) ${nc.srflx ? 'определён' : 'НЕ определён'} с этой машины (справочно: зависит от сети и прокси)`, true, nc);
     check(`проверка сети: TURN PeerJS ${nc.relay ? 'доступен' : 'НЕ доступен'} с этого компьютера (справочно)`, true, nc);
   }
   const hostBtn = MODE === 'ws' ? 'btnHostLocal' : 'btnHost';
   E(H, `document.getElementById('name').value = 'Хост'; document.getElementById('botsChk').checked = true; document.getElementById('${hostBtn}').click()`);
-  if (!await until(() => E(H, "G.role === 'host' && G.state === 'lobby'"), 15000)) { check('комната создана', false, E(H, "document.getElementById('status').textContent")); return post(true); }
+  if (!await until(() => E(H, "G.role === 'host' && G.state === 'lobby'"), 15000)) { check('комната создана', false, E(H, "document.getElementById('status').textContent")); return postFinal(); }
   const code = E(H, 'Net.code');
   log.push(MODE === 'ws' ? 'адреса ' + E(H, 'Net.addrs.join(", ")') : 'код ' + code);
   if (MODE === 'ws') check('хост видит адреса для друзей', E(H, "document.getElementById('lobbyCode').textContent").includes('http://'), E(H, "document.getElementById('lobbyCode').textContent"));
@@ -73,6 +73,36 @@ async function main() {
   check('в отряде 3 человека и 1 союзный бот', E(H, 'G.players.filter((q) => q.ai).length') === 1 && E(G1, 'G.players.filter((q) => q.ai).length') === 1);
   check('противники совпадают', E(G1, 'G.enemies.length') === E(H, 'G.enemies.length') && E(H, 'G.enemies.length') === 8);
   await sleep(500);
+
+  // голосовой чат: фальшивый микрофон Chrome (писк) у всех троих
+  const vOk = [];
+  for (const f of [H, G1, G2]) vOk.push(await E(f, 'Voice.enable()'));
+  check('голосовой чат включился у всех', vOk.every(Boolean), [vOk, E(G1, 'Voice.error')]);
+  const g1s = E(G1, 'G.mySlot'), g2s = E(G2, 'G.mySlot');
+  const heard = await until(() => E(H, `(Voice.stats.rx[${g1s}] || 0) > 2 && (Voice.stats.rx[${g2s}] || 0) > 2`) &&
+    E(G1, `(Voice.stats.rx[0] || 0) > 2 && (Voice.stats.rx[${g2s}] || 0) > 2`), 10000);
+  check('голос доходит: хост слышит гостей, гость — хоста и другого гостя (через хоста)', heard,
+    [E(H, 'Voice.stats.rx'), E(G1, 'Voice.stats.rx')]);
+  // рация: гость держит B на улице — у хоста приходит по рации
+  const r0 = E(H, `Voice.stats.rxRadio[${g1s}] || 0`);
+  E(G1, 'keys.KeyB = true');
+  const radio = await until(() => E(H, `Voice.stats.rxRadio[${g1s}] || 0`) > r0 + 2, 6000);
+  check('рация (B) на улице — слышно по рации', radio, E(H, 'Voice.stats.rxRadio'));
+  // в помещении связи нет: голос рядом идёт, по рации — нет
+  E(G1, 'me().x = me().px = 10.5 * TILE; me().y = me().py = 8.5 * TILE');   // пустая комната кирпичного здания
+  await sleep(1500);
+  const r1 = E(H, `Voice.stats.rxRadio[${g1s}] || 0`), n1 = E(H, `Voice.stats.rx[${g1s}] || 0`);
+  await sleep(2500);
+  check('в помещении рация не работает (голос идёт, по рации — нет)', E(H, `Voice.stats.rxRadio[${g1s}] || 0`) === r1 && E(H, `Voice.stats.rx[${g1s}] || 0`) > n1,
+    [r1, E(H, `Voice.stats.rxRadio[${g1s}] || 0`), n1, E(H, `Voice.stats.rx[${g1s}] || 0`)]);
+  E(G1, 'keys.KeyB = false; me().x = me().px = 36.5 * TILE; me().y = me().py = 29.5 * TILE');
+  // M — микрофон выключен: передача прекращается
+  E(G1, "dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyM' }))");
+  await sleep(600);
+  const t1 = E(G1, 'Voice.stats.tx');
+  await sleep(1500);
+  check('M выключает микрофон — передачи нет', E(G1, 'Voice.muted') && E(G1, 'Voice.stats.tx') === t1);
+  E(G1, "dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyM' }))");
 
   // гость идёт — хост видит
   const g1slot = E(G1, 'G.mySlot');
@@ -147,9 +177,11 @@ async function main() {
 
   const errs = frames.flatMap((f, i) => E(f, '__errors').map((e) => ['H', 'G1', 'G2'][i] + ': ' + e));
   check('без ошибок в консоли', !errs.length, errs.slice(0, 6));
-  post(true);
+  postFinal();
 }
-main().catch((e) => { check('сценарий', false, String(e) + ' ' + e.stack); post(true); });
-setInterval(() => post(false), 3000);
+// промежуточные отчёты каждые 3 с; перед финальным — остановить, чтобы поздний промежуточный не затёр финальный
+const tick = setInterval(() => post(false), 3000);
+const postFinal = () => { clearInterval(tick); post(true); setTimeout(() => post(true), 800); };
+main().catch((e) => { check('сценарий', false, String(e) + ' ' + e.stack); postFinal(); });
 </script>
 </body></html>

@@ -70,12 +70,13 @@
       <div class="btitle">Прямое подключение — без интернета и сторонних серверов</div>
       <button id="btnHostLocal">СОЗДАТЬ КОМНАТУ НА ЭТОМ КОМПЬЮТЕРЕ</button>
       <div class="row">
-        <input type="text" id="addr" placeholder="адрес хоста, например 192.168.1.5:8000" autocomplete="off" spellcheck="false">
+        <input type="text" id="addr" placeholder="адрес хоста: 26.x.x.x:8000 или ссылка https://…" autocomplete="off" spellcheck="false">
         <button id="btnJoinLocal">ВОЙТИ</button>
       </div>
-      <div class="help">Хост запускает игру через <b>start.bat</b> — в его окне видны адреса для друзей.<br>
-        Друзья открывают этот адрес в браузере (http://адрес:8000) и жмут «Войти».<br>
-        Работает в одной сети, через Radmin VPN / ZeroTier / Tailscale или с пробросом порта 8000 на роутере хоста.</div>
+      <div class="help">Хост запускает <b>start.bat</b> (Python не нужен) — в окне сервера адреса для друзей.<br>
+        В одной сети или через Radmin VPN / ZeroTier / Tailscale — адрес вида http://26.x.x.x:8000.<br>
+        Через интернет без общей сети — хост запускает ещё и <b>tunnel.bat</b> и отправляет друзьям ссылку https://….trycloudflare.com.<br>
+        Друзья открывают адрес или ссылку в браузере и жмут «Войти» (адрес подставится сам).</div>
     </div>
     <div class="block">
       <div class="btitle">Через интернет (PeerJS)</div>
@@ -102,6 +103,7 @@
     <div class="help">
       <b>WASD</b> — движение · <b>мышь</b> — прицел · <b>ЛКМ</b> — огонь · <b>ПКМ</b> — прицелиться · <b>R</b> — перезарядка · <b>V</b> — режим<br>
       <b>Q/E</b> — выглянуть · <b>F</b> — дверь · <b>G</b> — выбить · <b>L</b> — фонарь · <b>C</b> — присесть · <b>Shift</b> — бег<br>
+      <b>B</b> (держать) — рация · <b>M</b> — микрофон вкл/выкл (голосовой чат включается в лобби)<br>
       <b>Tab</b> — характеристики M4A1 · <b>H</b> — управление · <b>Enter</b> — заново · <b>Esc</b> — в меню
     </div>
   </div>
@@ -111,6 +113,8 @@
     <div class="sub" id="lobbyCode"></div>
     <div id="slots"></div>
     <label><input type="checkbox" id="lobbyBots"> Пустые места занимают союзные боты</label>
+    <div class="row"><label><input type="checkbox" id="voiceChk"> Голосовой чат (микрофон): рядом слышно без рации, <b>B</b> — рация, <b>M</b> — микрофон</label></div>
+    <div id="voiceStatus" class="help"></div>
     <div class="row">
       <button id="btnReady">ГОТОВ</button>
       <button id="btnStart">НАЧАТЬ</button>
@@ -130,6 +134,7 @@
 <script src="js/light.js"></script>
 <script src="js/doors.js"></script>
 <script src="js/fx.js"></script>
+<script src="js/voice.js"></script>
 <script src="js/weapon.js"></script>
 <script src="js/ai.js"></script>
 <script src="js/player.js"></script>

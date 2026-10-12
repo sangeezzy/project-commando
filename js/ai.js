@@ -14,8 +14,12 @@ function makeNoise(x, y, r, kind, src) {
     for (const e of aiList()) {
       if (e.dead || e === src || Math.hypot(e.x - x, e.y - y) > r) continue;
       if (src && src.side === e.side) {
-        // стреляет свой — на помощь: туда, куда он стреляет (человек — к нему)
-        if (e.st < 2 && !e.seeing) alertEnemy(e, src.ai ? src.lastX : x, src.ai ? src.lastY : y, true);
+        // стреляет свой — на помощь туда, куда он стреляет (у ИИ — его цель; у человека — точка по линии прицела)
+        if (e.st < 2 && !e.seeing) {
+          let tx = src.lastX, ty = src.lastY;
+          if (!src.ai) { const r = castRay(src.x, src.y, Math.cos(src.a), Math.sin(src.a), M(30)); tx = src.x + Math.cos(src.a) * r; ty = src.y + Math.sin(src.a) * r; }
+          alertEnemy(e, tx, ty, true);
+        }
       } else {
         // стреляют из-за закрытой двери, а он в тревоге и стрелка не видит — отвечает сквозь дверь
         if (e.st === 2 && !e.seeing && Math.hypot(e.x - x, e.y - y) < ENEMY.doorFire.range + M(10)) {
@@ -172,6 +176,7 @@ function planFlank(e, t) {
     bc = from.f[i]; best = { x: cx, y: cy };
   }
   if (!best || bc > P.maxFlank) return null;
+  if (!nearLeader(e, best.x, best.y, ENEMY.guard.tether)) return null;   // ведомый в далёкий обход не уходит
   // who — настоящая цель (для догадки о её месте в поиске — та, с кем дрался)
   return { field: weightedField(best.x, best.y, cost, P.maxFlank * 3), x: best.x, y: best.y, t: 0, tx: t.x, ty: t.y, who: t.gun ? t : e.target };
 }
@@ -290,8 +295,10 @@ function checkBodies(e) {
 
 // Короткая реплика (слышно игрокам поблизости)
 function bark(e, text) {
-  if (e.barkT > 0) return;
-  e.barkT = ENEMY.barkCd;
+  // пауза — на каждую фразу своя (разные фразы не глушат друг друга)
+  e.barked = e.barked || {};
+  if (G.time - (e.barked[text] ?? -99) < ENEMY.barkCd) return;
+  e.barked[text] = G.time;
   emit(['bark', e.x, e.y, text, e.side]);
 }
 
@@ -350,7 +357,7 @@ function alertEnemy(e, x, y, combat) {
   if (e.dead) return;
   if (combat && e.st < 2) { e.st = 2; e.react = rand(ENEMY.react[0], ENEMY.react[1]); }
   else if (!combat && e.st === 0) e.st = 1;
-  e.calmT = 0;
+  e.calmT = 0; e.alertAt = G.time;
   if (!e.seeing) {
     e.lastX = x; e.lastY = y;
     if (!combat) e.lastSeen = Math.min(e.lastSeen, G.time - 10);
@@ -360,9 +367,21 @@ function alertEnemy(e, x, y, combat) {
 }
 
 // Шаг ИИ. Закрытая незапертая дверь на пути — сначала открыть.
+// Застрял (идёт, но почти не двигается) — на полсекунды шаг вбок и путь заново.
 function moveDir(e, ang, mps, dt) {
   if (aiDoorAhead(e, ang, dt)) return false;
-  return moveCircle(e, Math.cos(ang) * M(mps) * dt, Math.sin(ang) * M(mps) * dt, PR);
+  if (e.unstuckT > 0) { e.unstuckT -= dt; ang = e.unstuckA; }
+  const x0 = e.x, y0 = e.y;
+  const hit = moveCircle(e, Math.cos(ang) * M(mps) * dt, Math.sin(ang) * M(mps) * dt, PR);
+  const want = M(mps) * dt;
+  if (want > 0.3 && Math.hypot(e.x - x0, e.y - y0) < want * 0.2) {
+    e.stuckT = (e.stuckT || 0) + dt;
+    if (e.stuckT > 0.6) {
+      e.stuckT = 0; e.unstuckT = 0.5; e.goal = null;
+      e.unstuckA = ang + (Math.random() < 0.5 ? 1 : -1) * Math.PI / 2;
+    }
+  } else e.stuckT = Math.max(0, (e.stuckT || 0) - dt);
+  return hit;
 }
 
 // Кого из бойцов другой стороны видит прямо сейчас (и под каким углом от взгляда)
@@ -408,6 +427,7 @@ function noticeTime(e, t, d, off, partial = false) {
 // Все бойцы под ИИ: противники и союзные боты
 function updateAI(dt) {
   updateSquads(dt);
+  updateIntel();
   const ais = aiList();
   for (const e of ais) {
     if (e.dead) continue;
@@ -415,7 +435,6 @@ function updateAI(dt) {
     if (e.down) { downedAI(e, dt); continue; }
     e.flankCd = Math.max(0, (e.flankCd || 0) - dt);
     e.stillT = e.speed < M(0.3) ? (e.stillT || 0) + dt : 0;
-    e.barkT = Math.max(0, (e.barkT || 0) - dt);
     updateGun(e, dt);
     e.supp = Math.max(0, e.supp - dt * 0.45);
     // ослепление фонарём (только в темноте): быстро наступает, проходит за ~1 с
@@ -452,13 +471,14 @@ function updateAI(dt) {
     if (!e.peek) e.leanWant = 0;
     if (e.side === 'p') checkLeash(e);
     const hurt = e.side === 'p' && !e.seeing ? downedToHelp(e) : null;
-    if (hurt) reviveStep(e, hurt, dt);
+    if (hurt && reviveStep(e, hurt, dt)) { /* поднимает раненого */ }
     else if (e.regroup && !e.seeing) followLeader(e, dt);
     else if (e.peek) peekStep(e, dt, seen);
     else if (e.flank) flankStep(e, dt, seen);
     else if (e.st === 2 && e.seeing) fight(e, dt, seen);
     else if (e.doorFire) doorFireStep(e, dt);
     else if (e.st === 2 && suppressing(e)) suppressStep(e, dt);
+    else if (e.st === 2 && e.side === 'p' && guarding(e)) guardStep(e, dt);
     else if (e.st === 2) hunt(e, dt);
     else idle(e, dt);
     if (!e.kneelSet) e.kneel = false;      // колено держат только режимы прицельного огня
@@ -558,7 +578,7 @@ function fireMoveCheck(e, t, d, dt) {
   // (из хорошего укрытия в одиночку на прижатую цель не лезут)
   const covered = teamOf(e.side).some((o) => o !== e && o.ai && !o.dead && o.role === 'suppress' && o.target === t);
   const pinned = covered || (t.gun && t.gun.reloadT > 0) || (!inCover && (t.supp || 0) > 0.5);
-  if (e.role !== 'suppress' && d > F.advanceMin && pinned && Math.random() < F.advanceChance) {
+  if (e.role !== 'suppress' && d > F.advanceMin && pinned && nearLeader(e, t.x, t.y, ENEMY.guard.tether) && Math.random() < F.advanceChance) {
     e.fm = { kind: 'advance', t: 0, dur: rand(F.advanceDur[0], F.advanceDur[1]) };
     bark(e, 'Вперёд, давлю!');
     return true;
@@ -572,7 +592,16 @@ function fireMoveStep(e, t, d, dt) {
   e.sprint = false; e.crouch = false; e.cover = null;
   e.want = ta;
   if (!g.chamber && !g.reloadT) startReload(e);
-  if (e.fm.kind === 'retreat') {
+  // ведомый отходит не куда попало, а к укрытию рядом с ведущим (если есть), продолжая стрелять
+  const L = e.side === 'p' ? leaderOf(e) : null;
+  if (e.fm.kind === 'retreat' && L && ENEMY.guard.retreatCover && e.fm.spot === undefined) e.fm.spot = coverNear(e, L, t);
+  if (e.fm.kind === 'retreat' && e.fm.spot && Math.hypot(e.fm.spot.x - e.x, e.fm.spot.y - e.y) > 8) {
+    const step = fieldStep(e, fieldTo(e.fm.spot.x, e.fm.spot.y));
+    if (step !== null) moveDir(e, step, ENEMY.speed.walk, dt); else e.fm.spot = null;
+  } else if (e.fm.kind === 'retreat' && e.fm.spot) {
+    e.crouch = coverToward(e.x, e.y, t.x, t.y);       // добрался — пригнуться за укрытием
+    e.gSpot = e.fm.spot;
+  } else if (e.fm.kind === 'retreat') {
     // пятится: назад медленнее, стены — обходить скольжением; упёрся — в сторону
     const back = ta + Math.PI + (e.fm.side || 0);
     const before = { x: e.x, y: e.y };
@@ -660,6 +689,7 @@ function findCover(e, t) {
     if (pd > R + 2) continue;
     const cx = (tx + 0.5) * TILE, cy = (ty + 0.5) * TILE;
     if (Math.hypot(t.x - cx, t.y - cy) < M(6)) continue;
+    if (!nearLeader(e, cx, cy, ENEMY.guard.coverR)) continue;     // ведомый ищет укрытие рядом с ведущим
     if (teamOf(e.side).some((o) => o !== e && !o.dead && ((o.cover && Math.hypot(o.cover.x - cx, o.cover.y - cy) < TILE * 1.5) ||
       Math.hypot(o.x - cx, o.y - cy) < TILE))) continue;
     if (!coverToward(cx, cy, t.x, t.y) || !los(cx, cy, t.x, t.y)) continue;
@@ -790,6 +820,19 @@ function updateEnemyLamp(e, dt) {
 function downedAI(e, dt) {
   e.crouch = true; e.sprint = false; e.leanWant = 0; e.burst = 0; e.kneel = false;
   e.lamp = false;
+  // место простреливается — сначала уползти туда, где известные противники не видят
+  if (exposedTo(e.side, e.x, e.y)) {
+    e.hideSpot = e.hideSpot && !exposedTo(e.side, e.hideSpot.x, e.hideSpot.y) ? e.hideSpot : hiddenSpotNear(e, 5);
+    if (e.hideSpot) {
+      const step = fieldStep(e, fieldTo(e.hideSpot.x, e.hideSpot.y));
+      if (step !== null) {
+        e.want = step; e.a = turnTo(e.a, step, ENEMY.turn * dt);
+        moveCircle(e, Math.cos(step) * M(DOWN.crawl) * dt, Math.sin(step) * M(DOWN.crawl) * dt, PR);
+        return;
+      }
+    }
+  }
+  e.hideSpot = null;
   const mates = G.players.filter((q) => q !== e && !q.dead && !q.down);
   if (!mates.length) return;
   const m = mates.sort((a, b) => Math.hypot(a.x - e.x, a.y - e.y) - Math.hypot(b.x - e.x, b.y - e.y))[0];
@@ -801,12 +844,41 @@ function downedAI(e, dt) {
   }
 }
 
-// Кого из раненых поднимать: ближайший в пределах DOWN.botRange, если его не поднимает кто-то другой
+// Простреливается ли точка: известный своим противник (разведданные) видит её
+function exposedTo(side, x, y) {
+  const intel = G.intel && G.intel[side];
+  if (!intel) return null;
+  for (const it of intel.values()) {
+    if (G.time - it.t < 4 && Math.hypot(it.x - x, it.y - y) < M(45) && los(it.x, it.y, x, y)) return it;
+  }
+  return null;
+}
+
+// Ближайшая (по пути) клетка в радиусе r м, которую известные противники не видят (лёжа — низкие укрытия тоже закрывают)
+function hiddenSpotNear(e, r) {
+  const f = bfsFrom(e.x, e.y, r + 3, true), ex = Math.floor(e.x / TILE), ey = Math.floor(e.y / TILE);
+  const threats = [...(G.intel[e.side] || new Map()).values()].filter((it) => G.time - it.t < 6);
+  let best = null, bd = 1e9;
+  for (let ty = ey - r; ty <= ey + r; ty++) for (let tx = ex - r; tx <= ex + r; tx++) {
+    if (tileAt(tx, ty) !== T.FLOOR) continue;
+    const pd = f.f[ty * map.w + tx];
+    if (pd >= bd || pd > r + 3) continue;
+    const c = { x: (tx + 0.5) * TILE, y: (ty + 0.5) * TILE, crouch: true };
+    if (threats.some((it) => sightLine({ x: it.x, y: it.y, crouch: false }, c))) continue;
+    bd = pd; best = c;
+  }
+  return best;
+}
+
+// Кого из раненых поднимать: ближайший в пределах DOWN.botRange, если его не поднимает кто-то другой,
+// до него есть путь и место не простреливается (если кровотечение не критичное — сначала укрыться)
 function downedToHelp(e) {
   let best = null, bd = DOWN.botRange;
   for (const t of G.players) {
     if (t === e || !t.down || t.dead) continue;
     if (t.lastReviver && t.lastReviver !== e.id) continue;
+    if (e.reviveSkip && e.reviveSkip.id === t.id && e.reviveSkip.until > G.time) continue;
+    if (t.bleed > ENEMY.guard.reviveRisk && exposedTo(e.side, t.x, t.y)) { if (!e.toldRisk) { bark(e, 'Не подойти — простреливается!'); e.toldRisk = true; } continue; }
     // идёт ближайший к раненому из свободных ботов
     const d = Math.hypot(t.x - e.x, t.y - e.y);
     const closer = G.players.some((o) => o !== e && o.ai && !o.dead && !o.down && !o.seeing && Math.hypot(t.x - o.x, t.y - o.y) < d - 1 &&
@@ -817,20 +889,128 @@ function downedToHelp(e) {
   return best;
 }
 
+// Идёт к раненому и поднимает. Пути нет — не лезть напрямую в стену, а отложить (false — заняться другим).
 function reviveStep(e, t, dt) {
-  e.sprint = false; e.burst = 0; e.peek = null; e.leanWant = 0;
   const d = Math.hypot(t.x - e.x, t.y - e.y);
+  const reach = d <= DOWN.reviveR * 0.75 && los(e.x, e.y, t.x, t.y);   // рядом и без стены между
+  let step = null;
+  if (!reach) {
+    step = fieldStep(e, fieldTo(t.x, t.y));
+    if (step === null && d > TILE * 0.6) { e.reviveSkip = { id: t.id, until: G.time + 4 }; return false; }
+  }
+  e.sprint = false; e.burst = 0; e.peek = null; e.leanWant = 0; e.toldRisk = false;
   e.want = Math.atan2(t.y - e.y, t.x - e.x);
-  if (d > DOWN.reviveR * 0.75) {
+  if (!reach) {
     e.crouch = false;
-    const step = fieldStep(e, fieldTo(t.x, t.y)) ?? Math.atan2(t.y - e.y, t.x - e.x);
     const far = d > M(6);
     e.sprint = far;
-    moveDir(e, step, far ? ENEMY.speed.run : ENEMY.speed.walk, dt);
-    return;
+    moveDir(e, step ?? e.want, far ? ENEMY.speed.run : ENEMY.speed.walk, dt);
+    return true;
   }
   e.crouch = true;          // присел рядом и поднимает
   e.reviveWant = true;
+  return true;
+}
+
+// Дисциплина ведомого: союзный бот с живым ведущим не уходит от него дальше r (у противников ведущего нет — без ограничений)
+function nearLeader(e, x, y, r) {
+  if (e.side !== 'p' || !e.ai) return true;
+  const L = leaderOf(e);
+  return !L || Math.hypot(x - L.x, y - L.y) <= r;
+}
+
+// ---------- Разведданные: кого видят свои ----------
+// ИИ, видящий цель, и люди отряда, видящие противника, сообщают своим (голосом в 25 м, союзники — и по рации).
+// Не знавший об угрозе боец переходит в бой (не видя цель): поворачивается к ней, занимает позицию.
+function updateIntel() {
+  const I = ENEMY.intel;
+  G.intel = G.intel || { p: new Map(), e: new Map() };
+  for (const side of ['p', 'e']) for (const [id, it] of G.intel[side]) if (G.time - it.t > I.ttl) G.intel[side].delete(id);
+  for (const e of aiList()) if (!e.dead && !e.down && e.seeing && e.target && !e.target.dead && !e.target.down) intelReport(e, e.target);
+  for (const h of G.players) {
+    if (h.ai || h.dead || h.down) continue;
+    for (const t of G.enemies) if (!t.dead && !t.down && sees(h, t)) intelReport(h, t);
+  }
+}
+
+function intelReport(by, t) {
+  const map_ = G.intel[by.side];
+  let it = map_.get(t.id);
+  const fresh = !it;
+  if (!it) map_.set(t.id, (it = { id: t.id, sent: -99 }));
+  it.x = t.x; it.y = t.y; it.t = G.time; it.by = by.id;
+  if (!fresh && G.time - it.sent < ENEMY.intel.resend) return;
+  it.sent = G.time;
+  if (fresh && by.ai) bark(by, 'Контакт!');
+  for (const m of teamOf(by.side)) {
+    if (!m.ai || m === by || m.dead || m.down || m.seeing) continue;
+    const near = Math.hypot(m.x - by.x, m.y - by.y) < ENEMY.intel.share;
+    const radio = by.side === 'p' && radioOk(by) && radioOk(m);
+    if (!near && !radio) continue;
+    if (m.st === 2 && G.time - m.lastSeen < 2) continue;      // сам только что видел — своё свежее
+    alertEnemy(m, t.x, t.y, true);
+    m.lastX = t.x; m.lastY = t.y; m.lastSeen = Math.max(m.lastSeen, G.time - 2.5);
+    if (!m.target) m.target = t;
+  }
+}
+
+// ---------- Союзный бот при угрозе: у ведущего, в укрытии, лицом к угрозе ----------
+// Искать противника идёт, только если угроза рядом с ведущим; иначе держит позицию возле него.
+function guarding(e) {
+  const L = leaderOf(e);
+  if (!L || !ENEMY.guard.hold) return false;
+  if (G.time - Math.max(e.lastSeen, e.alertAt ?? -99) > ENEMY.guard.calm) { e.st = 1; e.calmT = 0; e.gSpot = null; return false; }
+  return Math.hypot(e.lastX - L.x, e.lastY - L.y) > ENEMY.guard.huntNear;
+}
+
+function guardStep(e, dt) {
+  const L = leaderOf(e), g = e.gun, th = { x: e.lastX, y: e.lastY };
+  e.burst = 0; e.fightT = 0; e.sprint = false;
+  if (g.mag < WEAPONS[g.t].mag - 5 && !g.reloadT && g.pouch.some((n) => n > g.mag)) startReload(e);
+  e.gT = (e.gT || 0) - dt;
+  if (!e.gSpot || e.gT <= 0 || Math.hypot(e.gSpot.x - L.x, e.gSpot.y - L.y) > M(ENEMY.guard.radius + 2)) {
+    e.gT = 2;
+    e.gSpot = coverNear(e, L, th);
+    if (!e.gSpot) {
+      // укрытия рядом нет — встать за ведущим со стороны, противоположной угрозе
+      const a = Math.atan2(L.y - th.y, L.x - th.x) + (e.slot % 2 ? 0.6 : -0.6);
+      const p = freeSpotNear(L.x + Math.cos(a) * M(2.2), L.y + Math.sin(a) * M(2.2));
+      e.gSpot = { x: p.x, y: p.y, open: true };
+    }
+  }
+  const d = Math.hypot(e.gSpot.x - e.x, e.gSpot.y - e.y);
+  if (d > 8) {
+    const step = fieldStep(e, fieldTo(e.gSpot.x, e.gSpot.y));
+    if (step === null) { e.gSpot = null; return; }
+    e.crouch = false;
+    e.sprint = d > M(5);
+    moveDir(e, step, e.sprint ? ENEMY.speed.run : ENEMY.speed.walk, dt);
+    e.want = d > M(2) ? step : Math.atan2(th.y - e.y, th.x - e.x);
+    return;
+  }
+  // на месте: за укрытием — присев (не видно и не достать), лицом к угрозе; встанет стрелять, когда увидит
+  e.want = Math.atan2(th.y - e.y, th.x - e.x);
+  e.crouch = !e.gSpot.open && coverToward(e.x, e.y, th.x, th.y);
+}
+
+// Клетка за низким укрытием от угрозы (откуда, встав, её видно) в пределах guard.radius м от ведущего
+function coverNear(e, L, th) {
+  const R = ENEMY.guard.radius, f = bfsFrom(e.x, e.y, 30, true);
+  const lx = Math.floor(L.x / TILE), ly = Math.floor(L.y / TILE);
+  let best = null, bs = 1e9;
+  for (let ty = ly - R; ty <= ly + R; ty++) for (let tx = lx - R; tx <= lx + R; tx++) {
+    if (tileAt(tx, ty) !== T.FLOOR) continue;
+    const pd = f.f[ty * map.w + tx];
+    if (pd >= 1e9) continue;
+    const cx = (tx + 0.5) * TILE, cy = (ty + 0.5) * TILE;
+    if (Math.hypot(cx - L.x, cy - L.y) > M(R) || Math.hypot(cx - L.x, cy - L.y) < TILE) continue;
+    if (!coverToward(cx, cy, th.x, th.y) || !los(cx, cy, th.x, th.y)) continue;
+    if (teamOf(e.side).some((o) => o !== e && !o.dead && ((o.gSpot && Math.hypot(o.gSpot.x - cx, o.gSpot.y - cy) < TILE * 1.2) ||
+      (o.cover && Math.hypot(o.cover.x - cx, o.cover.y - cy) < TILE * 1.2)))) continue;
+    const s = pd + Math.hypot(cx - L.x, cy - L.y) / TILE * 0.7;
+    if (s < bs) { bs = s; best = { x: cx, y: cy }; }
+  }
+  return best;
 }
 
 // ---------- Союзный бот: держаться у ведущего ----------
@@ -869,12 +1049,13 @@ function followLeader(e, dt) {
   const dLead = Math.hypot(L.x - e.x, L.y - e.y), dGoal = Math.hypot(gx - e.x, gy - e.y);
   e.crouch = !!L.crouch && dGoal < M(1.5);
   if (dGoal > M(0.8)) {
-    const step = fieldStep(e, fieldTo(gx, gy)) ?? Math.atan2(gy - e.y, gx - e.x);
+    // к месту в строю; не достать — к самому ведущему; и туда нет пути — стоять (а не идти в стену)
+    const step = fieldStep(e, fieldTo(gx, gy)) ?? fieldStep(e, fieldTo(L.x, L.y));
     const far = dLead > A.runDist;
-    e.sprint = far;
+    e.sprint = far && step !== null;
     e.crouch = false;
-    moveDir(e, step, far ? ENEMY.speed.run : L.crouch ? SPEED.crouch : ENEMY.speed.walk, dt);
-    if (far) { e.want = step; return; }
+    if (step !== null) moveDir(e, step, far ? ENEMY.speed.run : L.crouch ? SPEED.crouch : ENEMY.speed.walk, dt);
+    if (far && step !== null) { e.want = step; return; }
   } else e.sprint = false;
   // свой сектор: куда смотрит ведущий, со смещением в сторону (каждый бот — в свою)
   e.lookT -= dt;

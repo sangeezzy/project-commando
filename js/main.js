@@ -9,6 +9,7 @@ function frame(now) {
   last = now;
   G.time += dt;
   if (map && G.state !== 'menu' && G.state !== 'lobby') update(dt);
+  Voice.update();
   render(dt);
   requestAnimationFrame(frame);
 }

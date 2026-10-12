@@ -5,6 +5,9 @@
 
     python server.py            # порт 8000
     python server.py 8080       # другой порт
+    python server.py --open     # и открыть игру в браузере
+
+Без Python (Windows): server.ps1 — то же самое на PowerShell (его запускает start.bat).
 
 Хост открывает http://localhost:8000, гости — http://<адрес хоста>:8000 (адреса печатаются при запуске).
 Одна комната на сервер: первый, кто создал комнату, — хост; остальные — гости.
@@ -12,7 +15,6 @@
 import asyncio
 import base64
 import hashlib
-import json
 import mimetypes
 import os
 import socket
@@ -24,6 +26,7 @@ from urllib.parse import unquote, urlparse
 ROOT = Path(__file__).resolve().parent
 WS_MAGIC = b'258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
 REPORT_FILE = None          # для автотестов: POST /report пишется сюда (--report путь)
+OPEN = False                # --open: открыть игру в браузере, когда сервер запущен
 
 try:
     sys.stdout.reconfigure(encoding='utf-8')
@@ -80,11 +83,11 @@ class WS:
             self.w.write(head + data)
             await self.w.drain()
 
-    async def send(self, obj):
+    async def send_text(self, text):
         if self.closed:
             return
         try:
-            await self._frame(1, json.dumps(obj, ensure_ascii=False, separators=(',', ':')).encode('utf-8'))
+            await self._frame(1, text.encode('utf-8'))
         except (ConnectionError, RuntimeError):
             self.closed = True
 
@@ -97,6 +100,11 @@ class WS:
 
 
 # ---------- Комната: хост и гости, пересылка ----------
+# Протокол (заголовок перед JSON игры, серверу не нужно его разбирать):
+#   хост → сервер: H (создать комнату), T<id>|… (гостю), A|… (всем гостям), K<id> (отключить гостя)
+#   гость → сервер: G (войти), M|… (хосту)
+#   сервер → хосту: O|адреса, J<id> (вошёл), L<id> (вышел), F<id>|… (от гостя), E|ошибка
+#   сервер → гостю: W<id> (вошёл), M|… (от хоста), X (хост ушёл), E|ошибка
 class Room:
     def __init__(self):
         self.host = None
@@ -105,35 +113,35 @@ class Room:
 
     async def serve(self, ws, addrs):
         hello = await ws.recv()
-        try:
-            hello = json.loads(hello or '{}')
-        except ValueError:
-            return
-        if hello.get('t') == 'host':
+        if hello == 'H':
             if self.host and not self.host.closed:
-                await ws.send({'t': 'error', 'e': 'host-exists'})
+                await ws.send_text('E|host-exists')
                 return
             self.host = ws
-            await ws.send({'t': 'hosted', 'addrs': addrs})
+            await ws.send_text('O|' + ','.join(addrs))
             print('Хост создал комнату')
             try:
                 while True:
                     m = await ws.recv()
                     if m is None:
                         break
-                    try:
-                        m = json.loads(m)
-                    except ValueError:
-                        continue
-                    if m.get('t') == 'to':
-                        g = self.guests.get(m.get('id'))
-                        if g:
-                            await g.send({'t': 'msg', 'd': m.get('d')})
-                    elif m.get('t') == 'all':
+                    if m.startswith('A|'):
+                        body = 'M|' + m[2:]
                         for g in list(self.guests.values()):
-                            await g.send({'t': 'msg', 'd': m.get('d')})
-                    elif m.get('t') == 'kick':
-                        g = self.guests.pop(m.get('id'), None)
+                            await g.send_text(body)
+                    elif m.startswith('T'):
+                        bar = m.find('|')
+                        try:
+                            g = self.guests.get(int(m[1:bar]))
+                        except ValueError:
+                            g = None
+                        if g:
+                            await g.send_text('M|' + m[bar + 1:])
+                    elif m.startswith('K'):
+                        try:
+                            g = self.guests.pop(int(m[1:]), None)
+                        except ValueError:
+                            g = None
                         if g:
                             g.close()
             finally:
@@ -141,33 +149,29 @@ class Room:
                     self.host = None
                     print('Хост вышел — комната закрыта')
                     for g in list(self.guests.values()):
-                        await g.send({'t': 'hostgone'})
+                        await g.send_text('X')
                         g.close()
                     self.guests.clear()
-        elif hello.get('t') == 'guest':
+        elif hello == 'G':
             if not self.host or self.host.closed:
-                await ws.send({'t': 'error', 'e': 'no-host'})
+                await ws.send_text('E|no-host')
                 return
             gid = self.next_id
             self.next_id += 1
             self.guests[gid] = ws
-            await ws.send({'t': 'joined', 'id': gid})
-            await self.host.send({'t': 'join', 'id': gid})
+            await ws.send_text(f'W{gid}')
+            await self.host.send_text(f'J{gid}')
             print(f'Гость {gid} подключился')
             try:
                 while True:
                     m = await ws.recv()
                     if m is None:
                         break
-                    try:
-                        m = json.loads(m)
-                    except ValueError:
-                        continue
-                    if m.get('t') == 'msg' and self.host:
-                        await self.host.send({'t': 'msg', 'from': gid, 'd': m.get('d')})
+                    if m.startswith('M|') and self.host:
+                        await self.host.send_text(f'F{gid}|' + m[2:])
             finally:
                 if self.guests.pop(gid, None) is not None and self.host:
-                    await self.host.send({'t': 'leave', 'id': gid})
+                    await self.host.send_text(f'L{gid}')
                 print(f'Гость {gid} отключился')
 
 
@@ -278,13 +282,20 @@ async def main(port):
         print('  Друзьям — один из адресов (свой у каждой сети):')
         for a in addrs:
             print(f'    http://{a}:{port}')
+    print('  Через интернет без общей сети — запустите tunnel.bat и отправьте друзьям выданную ссылку.')
     print('  Не закрывайте это окно, пока идёт игра. Остановить — Ctrl+C.')
+    if OPEN:
+        import webbrowser
+        webbrowser.open(f'http://localhost:{port}/')
     async with server:
         await server.serve_forever()
 
 
 if __name__ == '__main__':
     args = [a for a in sys.argv[1:]]
+    if '--open' in args:
+        args.remove('--open')
+        OPEN = True
     if '--report' in args:
         i = args.index('--report')
         REPORT_FILE = args[i + 1]

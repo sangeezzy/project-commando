@@ -46,6 +46,9 @@ UNIT_TESTS = {
     'bots': 'bots=1',
     'firemove': '',
     'revive': 'bots=1',
+    'voice': '',
+    'netaddr': '',
+    'allies': 'bots=1',
 }
 
 try:
@@ -116,9 +119,16 @@ def run_unit(chrome, names):
 
 
 def free_port():
-    with socket.socket() as s:
-        s.bind(('127.0.0.1', 0))
-        return s.getsockname()[1]
+    # Windows иногда резервирует части диапазона портов (WinError 10013) — пробуем несколько раз и в другом диапазоне
+    import random
+    for attempt in range(40):
+        try:
+            with socket.socket() as s:
+                s.bind(('127.0.0.1', 0 if attempt < 5 else random.randint(20000, 45000)))
+                return s.getsockname()[1]
+        except OSError:
+            time.sleep(0.1)
+    raise OSError('не удалось найти свободный порт')
 
 
 def run_net(chrome):
@@ -176,22 +186,94 @@ def run_net(chrome):
     Report.check('финальная фаза дошла до конца', bool(r.get('final')), r.get('log'))
 
 
-def run_netlocal(chrome):
-    """Прямое подключение: server.py (раздаёт игру и пересылает сообщения), хост и 2 гостя через WebSocket. Интернет не нужен."""
-    print('\n[netlocal] прямое подключение через server.py: хост + 2 гостя (около 30 с)')
+def tls_proxy(port_to, cert, key):
+    """https-прокси перед сервером игры (как туннель): TLS снаружи, байты внутрь. Возвращает порт."""
+    import asyncio, ssl
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.load_cert_chain(cert, key)
     port = free_port()
-    rep = Path(tempfile.mkdtemp()) / 'report.json'
-    srv = subprocess.Popen([sys.executable, str(ROOT / 'server.py'), str(port), '--report', str(rep)],
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    ready = threading.Event()
+
+    async def pipe(r, w):
+        try:
+            while True:
+                b = await r.read(65536)
+                if not b:
+                    break
+                w.write(b)
+                await w.drain()
+        except Exception:
+            pass
+        finally:
+            try:
+                w.close()
+            except Exception:
+                pass
+
+    async def handle(r, w):
+        try:
+            r2, w2 = await asyncio.open_connection('127.0.0.1', port_to)
+        except OSError:
+            w.close()
+            return
+        await asyncio.gather(pipe(r, w2), pipe(r2, w))
+
+    def run():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.set_exception_handler(lambda l, c: None)   # обрывы соединений при закрытии браузера — не ошибка
+        loop.run_until_complete(asyncio.start_server(handle, '127.0.0.1', port, ssl=ctx))
+        ready.set()
+        loop.run_forever()
+
+    threading.Thread(target=run, daemon=True).start()
+    ready.wait(5)
+    return port
+
+
+def run_netlocal(chrome, server='py', tls=False):
+    """Прямое подключение: сервер хоста (server.py или server.ps1 — без Python), хост и 2 гостя через WebSocket.
+    tls — через https-прокси (как туннель tunnel.bat): страница по https, соединение wss. Интернет не нужен."""
+    title = {'py': 'server.py', 'ps1': 'server.ps1 (без Python)'}[server] + (' через https (как туннель)' if tls else '')
+    print(f'\n[netlocal] прямое подключение, {title}: хост + 2 гостя (около 30 с)')
+    port = free_port()
+    tmp = Path(tempfile.mkdtemp())
+    rep = tmp / 'report.json'
+    if server == 'py':
+        cmd_srv = [sys.executable, str(ROOT / 'server.py'), str(port), '--report', str(rep)]
+    else:
+        cmd_srv = ['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(ROOT / 'server.ps1'), '-Port', str(port), '-Report', str(rep)]
+    srv = subprocess.Popen(cmd_srv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    base = f'http://127.0.0.1:{port}'
+    if tls:
+        # openssl: в PATH или из состава Git для Windows; нет — вариант пропускается
+        ossl = shutil.which('openssl') or next((p for p in (r'C:\Program Files\Git\usr\bin\openssl.exe', r'C:\Program Files\Git\mingw64\bin\openssl.exe') if Path(p).exists()), None)
+        if not ossl:
+            print('  (пропущено: нужен openssl для тестового сертификата — есть в составе Git для Windows)')
+            srv.kill()
+            subprocess.run(['taskkill', '/F', '/T', '/PID', str(srv.pid)], capture_output=True)
+            return
+        cert, key = tmp / 'c.pem', tmp / 'k.pem'
+        subprocess.run([ossl, 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1', '-subj', '/CN=127.0.0.1',
+                        '-keyout', str(key), '-out', str(cert)], capture_output=True)
+        base = f'https://127.0.0.1:{tls_proxy(port, str(cert), str(key))}'
+    # сервер на PowerShell компилирует C# при запуске — подождать, пока начнёт отвечать
+    deadline = time.time() + 30
+    while time.time() < deadline:
+        try:
+            with socket.create_connection(('127.0.0.1', port), timeout=1):
+                break
+        except OSError:
+            time.sleep(0.5)
     prof = tempfile.mkdtemp()
     cmd = [chrome, '--headless=new', '--disable-gpu', f'--user-data-dir={prof}', '--remote-debugging-port=0',
            '--autoplay-policy=no-user-gesture-required', '--window-size=1800,1100', '--no-proxy-server',
-           f'http://127.0.0.1:{port}/tools/net.html?mode=ws']
-    time.sleep(1)
+           '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream',   # «микрофон» для голосового чата
+           '--ignore-certificate-errors', f'{base}/tools/net.html?mode=ws']
     proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     r = None
     try:
-        deadline = time.time() + 90
+        deadline = time.time() + 150
         while time.time() < deadline:
             time.sleep(1)
             try:
@@ -203,6 +285,8 @@ def run_netlocal(chrome):
     finally:
         proc.kill()
         srv.kill()
+        if server == 'ps1':
+            subprocess.run(['taskkill', '/F', '/T', '/PID', str(srv.pid)], capture_output=True)
         shutil.rmtree(prof, ignore_errors=True)
     if not r or 'checks' not in r:
         Report.check('отчёт получен', False, r)
@@ -227,7 +311,9 @@ def main():
         args.net = True
     run_unit(chrome, names)
     if netlocal:
-        run_netlocal(chrome)
+        run_netlocal(chrome, 'ps1')
+        run_netlocal(chrome, 'py')
+        run_netlocal(chrome, 'ps1', tls=True)
     if args.net:
         run_net(chrome)
     print(f'\nИтого: {Report.total - Report.failed}/{Report.total} проверок прошло')

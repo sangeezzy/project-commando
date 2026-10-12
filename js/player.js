@@ -66,7 +66,7 @@ function controlLocal(p, dt) {
 
   if (pressed.KeyL) doAct(p, 'lamp');
   if (pressed.KeyR) doAct(p, 'reload');
-  if (pressed.KeyV || pressed.KeyB) doAct(p, 'mode');
+  if (pressed.KeyV) doAct(p, 'mode');          // B — рация (голосовой чат)
   if (isAuth()) { if (!busy) pullTrigger(p, mouse.l, mouse.lPressed, playerSpread(p)); }
   else { Net.inp.fire = mouse.l && !busy; if (mouse.lPressed) Net.inp.press++; }
 

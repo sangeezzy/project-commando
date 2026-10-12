@@ -8,7 +8,7 @@ window.__result = (() => {
     at(e, tx, ty); e.a = e.want = Math.atan2(p.y - e.y, p.x - e.x); e.st = 2; e.notice = 1; e.seeing = false; e.react = 0;
     e.cover = null; e.coverT = 1e9; e.flank = null; e.flankCd = 1e9; e.role = null; e.peek = null; e.patrol = null;
     e.fm = null; e.fmCd = 0; e.fmDecide = 0; e.kneel = false; e.crouch = false; e.dead = false; e.hp = 100; e.gun = makeGun('m4a1', 5);
-    e.lamp = false; e.doorFire = null; e.target = null; e.lastSeen = -99; e.barkT = 0;
+    e.lamp = false; e.doorFire = null; e.target = null; e.lastSeen = -99; e.barked = {};
   };
   // n секунд; shots — выстрелы ИИ с его скоростью и бегом в момент выстрела
   function sim(sec, every) {
@@ -83,10 +83,16 @@ window.__result = (() => {
     at(p, 6, 27);                                    // человек в стороне
     at(A, 36, 27); A.st = 0; A.hp = 1e9; A.supp = 1; A.patrol = null; A.home = { x: A.x, y: A.y, a: 0 }; A.a = A.want = Math.PI;
     at(bot, 20, 27); bot.a = bot.want = 0; bot.st = 2; bot.notice = 1; bot.react = 0; bot.cover = null; bot.coverT = 1e9; bot.flankCd = 1e9; bot.leader = -1;
+    // ведущий далеко — ведомый вперёд не идёт (дисциплина: не дальше guard.tether от ведущего)
+    let advFar = false;
+    sim(2, () => { A.supp = 1; A.st = 0; A.notice = 0; if (bot.fm && bot.fm.kind === 'advance') advFar = true; });
+    check('ведущий далеко — бот не уходит вперёд', !advFar);
+    // ведущий рядом — продвигается
+    at(p, 26, 30); at(bot, 20, 27); bot.fm = null; bot.fmCd = 0; bot.fmDecide = 0; bot.cover = null; bot.coverT = 1e9;
     const d0 = Math.hypot(bot.x - A.x, bot.y - A.y);
     let advanced = false;
     sim(4, () => { A.supp = 1; A.st = 0; A.notice = 0; if (bot.fm && bot.fm.kind === 'advance') advanced = true; });
-    check('бот продвигается на прижатого противника с огнём', advanced && Math.hypot(bot.x - A.x, bot.y - A.y) < d0 - M(1.5), (Math.hypot(bot.x - A.x, bot.y - A.y) / PX_M).toFixed(1));
+    check('ведущий рядом — бот продвигается на прижатого противника с огнём', advanced && Math.hypot(bot.x - A.x, bot.y - A.y) < d0 - M(1.5), (Math.hypot(bot.x - A.x, bot.y - A.y) / PX_M).toFixed(1));
     G.players = G.players.filter((q) => q !== bot);
   });
   G.enemies = [];

@@ -221,7 +221,7 @@ function updateDowned(dt) {
     for (const t of G.players) {
       if (t === h || !t.down || t.dead) continue;
       const d = Math.hypot(t.x - h.x, t.y - h.y);
-      if (d < bd) { bd = d; best = t; }
+      if (d < bd && los(h.x, h.y, t.x, t.y)) { bd = d; best = t; }     // не через стену
     }
     if (best) { best.revivedBy = h; h.reviving = best.id; }
   }

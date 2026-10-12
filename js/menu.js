@@ -30,7 +30,8 @@ function renderLobby() {
   const isHost = G.role !== 'guest';
   const nHum = Lobby.slots.filter((s) => s.human).length;
   document.getElementById('lobbyCode').textContent = G.role === 'solo' ? 'ИГРА ОДНОМУ'
-    : Net.mode === 'ws' ? `ПРЯМОЕ ПОДКЛЮЧЕНИЕ · АДРЕС ДЛЯ ДРУЗЕЙ: ${(Net.addrs || []).map((a) => 'http://' + a).join('  или  ') || location.host} · ИГРОКОВ: ${nHum} из 4`
+    : Net.mode === 'ws' ? `ПРЯМОЕ ПОДКЛЮЧЕНИЕ · ДРУЗЬЯМ: ${(Net.addrs || []).map((a) => 'http://' + a).join('  или  ') || location.host}` +
+      ` (через интернет — ссылка из tunnel.bat) · ИГРОКОВ: ${nHum} из 4`
     : `КОД КОМНАТЫ: ${Net.code} · ИГРОКОВ: ${nHum} из 4`;
   slotsEl.innerHTML = '';
   for (const s of Lobby.slots) {
@@ -53,6 +54,8 @@ function renderLobby() {
   btnStart.classList.toggle('hidden', !isHost);
   btnStart.disabled = !lobbyReady();
   lobbyBotsChk.checked = Lobby.bots;
+  voiceChk.checked = !!Voice.stream;
+  voiceChk.disabled = G.role === 'solo';
   lobbyBotsChk.disabled = !isHost;
   const waiting = Lobby.slots.filter((s) => s.human && !s.ready).map((s) => s.name);
   lobbyStatusEl.textContent = !mine || !mine.ready ? 'Нажмите «Готов»'
@@ -115,6 +118,17 @@ document.getElementById('btnJoin').addEventListener('click', () => { initAudio()
 document.getElementById('code').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { initAudio(); readName(); joinGame(e.target.value); }
 });
+// Голосовой чат: включается в лобби
+const voiceChk = document.getElementById('voiceChk'), voiceStatusEl = document.getElementById('voiceStatus');
+voiceChk.addEventListener('change', async () => {
+  if (voiceChk.checked) {
+    voiceStatusEl.textContent = 'Запрашиваем микрофон…';
+    const ok = await Voice.enable();
+    voiceStatusEl.textContent = ok ? 'Микрофон включён. В бою: рядом слышно без рации, B — рация, M — микрофон вкл/выкл.' : Voice.error;
+    if (!ok) voiceChk.checked = false;
+  } else { Voice.disable(); voiceStatusEl.textContent = ''; }
+});
+
 // Сеть: проверка и свой TURN-сервер
 const turnUrlsEl = document.getElementById('turnUrls'), turnUserEl = document.getElementById('turnUser'), turnPassEl = document.getElementById('turnPass');
 const netReportEl = document.getElementById('netReport');

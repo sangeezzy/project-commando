@@ -38,6 +38,7 @@ function drawHUD() {
     if (v && v !== p) mono(`наблюдение: ${v.name}`, VW / 2, 82, HUD_DIM, 'center', 13);
   }
   drawTeam();
+  drawVoice(p);
   // задача
   const left = alive(G.enemies).length;
   box(14, 14, 290, 52);
@@ -184,7 +185,7 @@ function drawSpecs() {
 function drawControls() {
   const rows = [
     ['WASD', 'движение'], ['Мышь', 'направление взгляда и прицел'], ['ЛКМ', 'огонь'],
-    ['ПКМ (держать)', 'прицелиться: точнее, медленнее'], ['R', 'перезарядка'], ['V', 'режим огня'], ['Q / E (держать)', 'выглянуть влево / вправо из-за укрытия'], ['F', 'взаимодействие: дверь открыть / закрыть / отпереть'], ['G', 'выбить дверь ногой (громко)'], ['F (держать)', 'рядом с раненым товарищем — поднять'], ['L', 'фонарь на оружии (в темноте выдаёт вас)'],
+    ['ПКМ (держать)', 'прицелиться: точнее, медленнее'], ['R', 'перезарядка'], ['V', 'режим огня'], ['Q / E (держать)', 'выглянуть влево / вправо из-за укрытия'], ['F', 'взаимодействие: дверь открыть / закрыть / отпереть'], ['G', 'выбить дверь ногой (громко)'], ['F (держать)', 'рядом с раненым товарищем — поднять'], ['B (держать)', 'рация (в помещении связи нет)'], ['M', 'микрофон вкл/выкл'], ['L', 'фонарь на оружии (в темноте выдаёт вас)'],
     ['C', 'присесть / встать (за низким укрытием — спрятаться)'], ['Shift', 'бег (не стреляет, громко)'],
     ['Enter', 'заново (в сети — у хоста)'], ['Esc', 'выйти в меню'],
   ];
@@ -233,6 +234,35 @@ function drawRevivePrompt(p) {
   } else mono(`F (держать) — поднять: ${t.name} (осталось ${Math.ceil(t.bleed)} с)`, x, y, HUD_WARN, 'center', 13);
 }
 
+// Голос: микрофон, рация (в помещении связи нет), кто говорит
+function drawVoice(p) {
+  if (!Voice.stream || (G.role !== 'host' && G.role !== 'guest')) return;
+  const x = 20, y = VH - 96;
+  let line = Voice.muted ? 'МИКРОФОН ВЫКЛ (M)' : Voice.sending ? 'ГОВОРИТЕ' : 'МИКРОФОН ВКЛ (M)';
+  let col = Voice.muted ? HUD_DIM : Voice.sending ? '#9fe870' : HUD_COL;
+  if (keys.KeyB) {
+    if (radioOk(p)) { line += ' · РАЦИЯ: В ЭФИРЕ'; col = '#a0c8e8'; }
+    else { line += ' · РАЦИЯ: НЕТ СВЯЗИ (в помещении)'; col = HUD_RED; }
+  } else line += radioOk(p) ? ' · B — рация' : ' · рация: нет связи';
+  mono(line, x, y, col, 'left', 11);
+}
+
+// Значок голоса: волны — говорит рядом, антенна — по рации
+function talkIcon(x, y, slot) {
+  const t = Voice.talking(slot);
+  if (!t.talk) return;
+  ctx.save();
+  ctx.strokeStyle = t.radio ? '#a0c8e8' : '#9fe870'; ctx.lineWidth = 1.5;
+  if (t.radio) {
+    ctx.beginPath(); ctx.moveTo(x, y + 5); ctx.lineTo(x, y - 4); ctx.stroke();
+    ctx.beginPath(); ctx.arc(x, y - 4, 3, Math.PI * 1.15, Math.PI * 1.85); ctx.stroke();
+    ctx.beginPath(); ctx.arc(x, y - 4, 6, Math.PI * 1.15, Math.PI * 1.85); ctx.stroke();
+  } else {
+    for (let k = 1; k <= 3; k++) { ctx.beginPath(); ctx.arc(x - 3, y, k * 2.6, -0.7, 0.7); ctx.stroke(); }
+  }
+  ctx.restore();
+}
+
 // Состав отряда: цвет места, имя, здоровье (бот — помечен)
 function drawTeam() {
   if (G.players.length < 2) return;
@@ -242,6 +272,7 @@ function drawTeam() {
     const y = y0 + 22 + i * 22;
     ctx.fillStyle = SLOT_COLORS[o.slot]; ctx.fillRect(x + 10, y - 9, 8, 8);
     mono(o.name + (o.ai ? ' · бот' : '') + (o.slot === G.mySlot ? ' (вы)' : ''), x + 24, y, o.dead ? HUD_DIM : HUD_COL, 'left', 12);
+    if (!o.ai) talkIcon(x + 140, y - 4, o.slot);
     if (o.dead) { mono('погиб', x + 204, y, HUD_RED, 'right', 12); return; }
     if (o.down) { mono(`ранен ${Math.ceil(o.bleed)} с`, x + 204, y, HUD_RED, 'right', 12); return; }
     ctx.fillStyle = 'rgba(255,255,255,0.12)'; ctx.fillRect(x + 150, y - 7, 54, 5);

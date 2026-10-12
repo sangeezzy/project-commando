@@ -91,6 +91,13 @@ function onHostData(c, d) {
   if (d.t === 'hello') { onHello(c, d); return; }
   const slot = c.slot;
   if (slot === undefined) return;
+  // голос гостя: слышит хост, и он раздаёт остальным
+  if (d.t === 'vo') {
+    d.s = slot;
+    Voice.receive(d);
+    for (const c2 of Net.conns.values()) if (c2 !== c && c2.open) { try { c2.send(d); } catch (e) { /* ignore */ } }
+    return;
+  }
   if (d.t === 'ready' && G.state === 'lobby') { Lobby.slots[slot].ready = !!d.v; lobbyChanged(); return; }
   if (d.t === 'restart') { if (G.state === 'dead' || G.state === 'win') restartRange(); return; }
   if (d.t !== 'i' || d.seq !== G.seq) return;
@@ -113,6 +120,7 @@ function applyRemoteFire(p) {
 
 function onHello(c, d) {
   const name = String(d.name || 'Боец').slice(0, 16);
+  if (d.v !== GAME_VERSION) { c.send({ t: 'version', v: GAME_VERSION }); setTimeout(() => c.close(), 300); return; }
   if (G.state !== 'lobby') { c.send({ t: 'busy' }); setTimeout(() => c.close(), 300); return; }
   const slot = Lobby.slots.findIndex((s) => !s.human);
   if (slot < 0) { c.send({ t: 'full' }); setTimeout(() => c.close(), 300); return; }
@@ -212,7 +220,7 @@ function joinGame(code) {
       setStatus(netErrorText(ice === 'none' || ice === 'new' ? 'no-answer' : 'ice-' + ice));
       cleanupNet();
     }, 20000);
-    c.on('open', () => c.send({ t: 'hello', name: G.myName }));
+    c.on('open', () => c.send({ t: 'hello', name: G.myName, v: GAME_VERSION }));
     c.on('data', (d) => onGuestData(d, timeout, code));
     c.on('close', () => { if (G.role === 'guest') leaveToMenu('Соединение с хостом потеряно'); });
   });
@@ -231,6 +239,11 @@ function onGuestData(d, timeout, code) {
     setStatus(d.t === 'full' ? 'Комната заполнена' : 'Игра уже идёт — дождитесь конца раунда');
     clearTimeout(timeout); cleanupNet(); return;
   }
+  if (d.t === 'version') {
+    setStatus(`Другая версия игры: у вас ${GAME_VERSION}, у хоста ${d.v}. Обновите папку игры или откройте её по адресу хоста.`);
+    clearTimeout(timeout); cleanupNet(); return;
+  }
+  if (d.t === 'vo') { Voice.receive(d); return; }
   if (d.t === 'welcome') {
     clearTimeout(timeout);
     Net.connected = true; Net.code = code;
@@ -244,11 +257,26 @@ function onGuestData(d, timeout, code) {
   else if (d.t === 's') applySnapshot(d);
 }
 
-// ---------- Прямое подключение: WebSocket через server.py (без интернета и сторонних серверов) ----------
-// Хост открывает игру с запущенного у себя server.py (start.bat), гости — по адресу хоста (http://IP:8000).
-// Сервер только пересылает сообщения; игровой протокол тот же, что и через PeerJS.
+// ---------- Прямое подключение: WebSocket через сервер хоста (server.ps1 / server.py) ----------
+// Хост открывает игру со своего сервера (start.bat), гости — по адресу хоста: в локальной сети / Radmin VPN (http://IP:8000)
+// или через интернет по ссылке туннеля (https://…, tunnel.bat). Сервер только пересылает сообщения; протокол игры тот же.
+// Обмен с сервером: заголовок + JSON игры (серверу не нужно разбирать JSON) — см. описание протокола в server.py.
 const servedByServer = () => location.protocol === 'http:' || location.protocol === 'https:';
-const wsUrl = (addr) => `ws://${addr}/ws`;
+
+// Адрес → ссылка WebSocket: https/wss → защищённое соединение без порта (туннель); адрес этой страницы → её протокол;
+// адрес без схемы и порта → ws и порт 8000
+function wsTarget(input) {
+  let s = (input || '').trim();
+  if (!s) return null;
+  const m = /^([a-z]+):\/\//i.exec(s);
+  let secure = false;
+  if (m) { secure = /^(https|wss)$/i.test(m[1]); s = s.slice(m[0].length); }
+  s = s.replace(/[/?#].*$/, '');
+  if (!s) return null;
+  if (!m && s === location.host) secure = location.protocol === 'https:';
+  if (!m && !secure && !/:\d+$/.test(s)) s += ':8000';
+  return { url: (secure ? 'wss://' : 'ws://') + s + '/ws', host: s, secure };
+}
 
 function hostLocal() {
   if (!servedByServer()) {
@@ -257,35 +285,37 @@ function hostLocal() {
   }
   cleanupNet();
   setStatus('Создаём комнату на этом компьютере…');
-  const ws = new WebSocket(wsUrl(location.host));
+  const ws = new WebSocket(wsTarget(location.host).url);
   Net.ws = ws; Net.mode = 'ws';
-  ws.onopen = () => ws.send(JSON.stringify({ t: 'host' }));
+  ws.onopen = () => ws.send('H');
   ws.onmessage = (ev) => {
-    let m;
-    try { m = JSON.parse(ev.data); } catch (e) { return; }
-    if (m.t === 'error') {
-      setStatus(m.e === 'host-exists' ? 'На этом сервере комната уже создана (игра открыта в другой вкладке?).' : 'Ошибка сервера: ' + m.e);
-      cleanupNet(); return;
-    }
-    if (m.t === 'hosted') {
-      Net.addrs = m.addrs || [];
+    const m = String(ev.data), k = m[0];
+    if (k === 'E') {
+      setStatus(m.slice(2) === 'host-exists' ? 'На этом сервере комната уже создана (игра открыта в другой вкладке?).' : 'Ошибка сервера: ' + m.slice(2));
+      cleanupNet();
+    } else if (k === 'O') {
+      Net.addrs = m.slice(2) ? m.slice(2).split(',') : [];
       G.role = 'host'; G.mySlot = 0;
       Lobby.slots = emptySlots();
       Object.assign(Lobby.slots[0], { human: true, name: G.myName });
       enterLobby();
-      return;
+    } else if (k === 'J') {
+      const id = +m.slice(1);
+      Net.wsConns.set(id, wsConn(ws, id));
+    } else if (k === 'L') {
+      const id = +m.slice(1), c = Net.wsConns.get(id);
+      if (c) { Net.wsConns.delete(id); c.open = false; onGuestLeft(c); }
+    } else if (k === 'F') {
+      const bar = m.indexOf('|'), c = Net.wsConns.get(+m.slice(1, bar));
+      if (!c) return;
+      let d;
+      try { d = JSON.parse(m.slice(bar + 1)); } catch (e) { return; }
+      onHostData(c, d);
     }
-    if (m.t === 'join') { Net.wsConns.set(m.id, wsConn(ws, m.id)); return; }
-    if (m.t === 'leave') {
-      const c = Net.wsConns.get(m.id);
-      if (c) { Net.wsConns.delete(m.id); c.open = false; onGuestLeft(c); }
-      return;
-    }
-    if (m.t === 'msg') { const c = Net.wsConns.get(m.from); if (c) onHostData(c, m.d); }
   };
   ws.onclose = () => {
     if (Net.ws !== ws) return;
-    if (G.role === 'host') leaveToMenu('Связь с сервером игры потеряна — окно start.bat закрыто?');
+    if (G.role === 'host') leaveToMenu('Связь с сервером игры потеряна — окно сервера (start.bat) закрыто?');
     else { setStatus('Сервер игры не отвечает — запустите start.bat.'); cleanupNet(); }
   };
 }
@@ -294,49 +324,56 @@ function hostLocal() {
 function wsConn(ws, id) {
   return {
     id, open: true,
-    send(d) { if (ws.readyState === 1) ws.send(JSON.stringify({ t: 'to', id, d })); },
-    close() { if (ws.readyState === 1) ws.send(JSON.stringify({ t: 'kick', id })); this.open = false; },
+    send(d) { if (ws.readyState === 1) ws.send('T' + id + '|' + JSON.stringify(d)); },
+    close() { if (ws.readyState === 1) ws.send('K' + id); this.open = false; },
   };
 }
 
 function joinLocal(addr) {
-  addr = (addr || '').trim().replace(/^[a-z]+:\/\//i, '').replace(/\/.*$/, '');
-  if (!addr) { setStatus('Введите адрес хоста, например 192.168.1.5:8000'); return; }
-  if (!/:\d+$/.test(addr)) addr += ':8000';
+  const tg = wsTarget(addr);
+  if (!tg) { setStatus('Введите адрес хоста: 192.168.1.5:8000, 26.x.x.x:8000 или ссылку https://… от tunnel.bat'); return; }
   cleanupNet();
-  setStatus(`Подключаемся к ${addr}…`);
+  setStatus(`Подключаемся к ${tg.host}…`);
   let ws;
-  try { ws = new WebSocket(wsUrl(addr)); } catch (e) { setStatus('Неверный адрес: ' + addr); return; }
+  try { ws = new WebSocket(tg.url); } catch (e) { setStatus('Неверный адрес: ' + addr); return; }
   Net.ws = ws; Net.mode = 'ws';
   const conn = {
     open: false,
-    send(d) { if (ws.readyState === 1) ws.send(JSON.stringify({ t: 'msg', d })); },
+    send(d) { if (ws.readyState === 1) ws.send('M|' + JSON.stringify(d)); },
     close() { try { ws.close(); } catch (e) { /* ignore */ } },
   };
   Net.conn = conn;
+  const hint = tg.secure ? 'Ссылка туннеля ещё действует (окно tunnel.bat у хоста открыто)?'
+    : 'Хост запустил start.bat? Адрес открывается в браузере? Фаервол хоста разрешил доступ?';
   const timeout = setTimeout(() => {
     if (Net.connected || Net.ws !== ws) return;
-    setStatus(`Нет ответа от ${addr}. Проверьте: хост запустил start.bat; адрес открывается в браузере; фаервол хоста разрешил Python.`);
+    setStatus(`Нет ответа от ${tg.host}. ${hint}`);
     cleanupNet();
-  }, 8000);
-  ws.onopen = () => ws.send(JSON.stringify({ t: 'guest' }));
+  }, 10000);
+  ws.onopen = () => ws.send('G');
   ws.onmessage = (ev) => {
-    let m;
-    try { m = JSON.parse(ev.data); } catch (e) { return; }
-    if (m.t === 'error') {
+    const m = String(ev.data), k = m[0];
+    if (k === 'E') {
       clearTimeout(timeout);
-      setStatus(m.e === 'no-host' ? 'Сервер найден, но комнаты ещё нет: хост должен нажать «Создать комнату» в блоке «Прямое подключение».' : 'Ошибка сервера: ' + m.e);
-      cleanupNet(); return;
+      setStatus(m.slice(2) === 'no-host' ? 'Сервер найден, но комнаты ещё нет: хост должен нажать «Создать комнату на этом компьютере».' : 'Ошибка сервера: ' + m.slice(2));
+      cleanupNet();
+    } else if (k === 'W') {
+      conn.open = true;
+      conn.send({ t: 'hello', name: G.myName, v: GAME_VERSION });
+    } else if (k === 'X') {
+      clearTimeout(timeout);
+      if (G.role === 'guest') leaveToMenu('Хост закрыл комнату'); else { setStatus('Хост закрыл комнату'); cleanupNet(); }
+    } else if (k === 'M') {
+      let d;
+      try { d = JSON.parse(m.slice(2)); } catch (e) { return; }
+      onGuestData(d, timeout, tg.host);
     }
-    if (m.t === 'joined') { conn.open = true; conn.send({ t: 'hello', name: G.myName }); return; }
-    if (m.t === 'hostgone') { clearTimeout(timeout); if (G.role === 'guest') leaveToMenu('Хост закрыл комнату'); else { setStatus('Хост закрыл комнату'); cleanupNet(); } return; }
-    if (m.t === 'msg') onGuestData(m.d, timeout, addr);
   };
   ws.onclose = () => {
     if (Net.ws !== ws) return;
     clearTimeout(timeout);
     if (G.role === 'guest') leaveToMenu('Соединение с хостом потеряно');
-    else if (!Net.connected) { setStatus(`Не удалось подключиться к ${addr}. Хост запустил start.bat? Фаервол хоста разрешил Python?`); cleanupNet(); }
+    else if (!Net.connected) { setStatus(`Не удалось подключиться к ${tg.host}. ${hint}`); cleanupNet(); }
   };
 }
 
@@ -499,6 +536,7 @@ function cleanupNet() {
 
 function leaveToMenu(msg) {
   cleanupNet();
+  Voice.reset();
   G.role = 'none'; G.state = 'menu';
   G.players = []; G.enemies = []; G.bullets = []; G.parts = []; G.decals = [];
   map = null;

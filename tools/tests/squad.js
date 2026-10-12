@@ -7,7 +7,7 @@ window.__result = (() => {
     at(e, tx, ty); e.a = e.want = a; e.st = st; e.notice = st === 2 ? 1 : 0; e.seeing = false; e.lastSeen = -99; e.target = null;
     e.goal = null; e.searchT = 0; e.cover = null; e.patrol = null; e.home = { x: e.x, y: e.y, a }; e.look = a; e.lookT = 99;
     e.peek = null; e.peekCd = 0; e.flank = null; e.role = null; e.fightT = 0; e.flankCd = 0; e.huntFlank = false; e.bodies = new Set();
-    e.investigate = false; e.doorFire = null; e.dead = false; e.hp = 100; e.react = 0; e.barkT = 0; e.lamp = false;
+    e.investigate = false; e.doorFire = null; e.dead = false; e.hp = 100; e.react = 0; e.barked = {}; e.lamp = false;
     e.gun = makeGun('m4a1', ENEMY.mags);
   };
   const face = (o, x, y) => { o.a = Math.atan2(y - o.y, x - o.x); };
