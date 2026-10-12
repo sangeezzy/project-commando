@@ -108,5 +108,31 @@ document.getElementById('btnJoin').addEventListener('click', () => { initAudio()
 document.getElementById('code').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { initAudio(); readName(); joinGame(e.target.value); }
 });
+// Сеть: проверка и свой TURN-сервер
+const turnUrlsEl = document.getElementById('turnUrls'), turnUserEl = document.getElementById('turnUser'), turnPassEl = document.getElementById('turnPass');
+const netReportEl = document.getElementById('netReport');
+(() => { const t = customTurn(); if (t) { turnUrlsEl.value = t.urls; turnUserEl.value = t.username || ''; turnPassEl.value = t.credential || ''; } })();
+document.getElementById('btnTurnSave').addEventListener('click', () => {
+  const urls = turnUrlsEl.value.trim();
+  try {
+    if (urls) localStorage.setItem('pcr-turn', JSON.stringify({ urls, username: turnUserEl.value.trim(), credential: turnPassEl.value.trim() }));
+    else localStorage.removeItem('pcr-turn');
+  } catch (e) { /* ignore */ }
+  netReportEl.textContent = urls ? 'TURN сохранён. Нажмите «Проверить сеть». Тот же TURN нужно указать у всех игроков.' : 'Свой TURN не задан.';
+});
+document.getElementById('btnTurnClear').addEventListener('click', () => {
+  try { localStorage.removeItem('pcr-turn'); } catch (e) { /* ignore */ }
+  turnUrlsEl.value = turnUserEl.value = turnPassEl.value = '';
+  netReportEl.textContent = 'Свой TURN сброшен — используются стандартные серверы.';
+});
+document.getElementById('btnNetCheck').addEventListener('click', async () => {
+  const b = document.getElementById('btnNetCheck');
+  b.disabled = true;
+  netReportEl.textContent = 'Проверяем (до 20 секунд)…\n';
+  const lines = [];
+  await netCheck((s) => { lines.push(s); netReportEl.textContent = lines.join('\n'); });
+  b.disabled = false;
+});
+
 // Esc в бою — выйти в меню
 addEventListener('keydown', (e) => { if (e.code === 'Escape' && G.state !== 'menu' && G.state !== 'lobby') leaveToMenu(''); });

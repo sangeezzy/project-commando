@@ -32,6 +32,11 @@ function load(f) {
 async function main() {
   await Promise.all(frames.map(load));
   log.push('загружено');
+  // проверка сети из меню: сервер знакомств, STUN, TURN
+  const nc = await E(H, 'netCheck()');
+  check('проверка сети: сервер PeerJS доступен', nc.server, nc);
+  check('проверка сети: внешний адрес (STUN) определён', nc.srflx, nc);
+  check(`проверка сети: TURN PeerJS ${nc.relay ? 'доступен' : 'НЕ доступен'} с этого компьютера (справочно)`, true, nc);
   E(H, "document.getElementById('name').value = 'Хост'; document.getElementById('botsChk').checked = true; document.getElementById('btnHost').click()");
   if (!await until(() => E(H, 'Net.code'), 15000)) { check('комната создана', false); return post(true); }
   const code = E(H, 'Net.code');

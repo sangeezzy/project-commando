@@ -8,6 +8,22 @@ const PEER_PREFIX = 'project-commando-real-v1-';
 const SNAP_MS = 50;            // хост → гости, 20 Гц
 const INPUT_MS = 33;           // гость → хост, 30 Гц
 
+// Серверы для установки прямого соединения (ICE). STUN — узнать свой внешний адрес; TURN — ретранслятор,
+// если прямое соединение не пробивается (строгий NAT, фаервол). По умолчанию — как в PeerJS (Google STUN + TURN PeerJS),
+// плюс запасные STUN. Свой TURN задаётся в меню («Сеть») и хранится в браузере.
+const DEFAULT_ICE = [
+  { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302', 'stun:stun.cloudflare.com:3478'] },
+  { urls: ['turn:eu-0.turn.peerjs.com:3478', 'turn:us-0.turn.peerjs.com:3478'], username: 'peerjs', credential: 'peerjsp' },
+];
+function customTurn() {
+  try { const t = JSON.parse(localStorage.getItem('pcr-turn') || 'null'); return t && t.urls ? t : null; } catch (e) { return null; }
+}
+function iceServers() {
+  const t = customTurn();
+  return t ? [{ urls: t.urls.split(/[\s,]+/).filter(Boolean), username: t.username, credential: t.credential }, ...DEFAULT_ICE] : DEFAULT_ICE;
+}
+const peerOptions = () => ({ debug: 1, config: { iceServers: iceServers() } });
+
 const Net = {
   peer: null, conn: null, conns: new Map(), code: '', sendT: 0, connected: false,
   inp: { fire: false, press: 0, acts: [] },     // гость: накопленный ввод до следующего пакета
@@ -42,7 +58,7 @@ function hostGame() {
   cleanupNet();
   setStatus('Создаём комнату…');
   const code = randomCode();
-  const peer = new Peer(PEER_PREFIX + code, { debug: 1 });
+  const peer = new Peer(PEER_PREFIX + code, peerOptions());
   Net.peer = peer;
   peer.on('open', () => {
     Net.code = code;
@@ -59,9 +75,12 @@ function hostGame() {
   peer.on('disconnected', () => { try { peer.reconnect(); } catch (e) { /* ignore */ } });
   peer.on('error', (e) => {
     if (e.type === 'unavailable-id') { peer.destroy(); hostGame(); return; }
-    if (G.role === 'none') setStatus('Ошибка сети: ' + e.type);
-    else toast('Ошибка сети: ' + e.type, 3);
+    const msg = netErrorText(e.type);
+    if (G.role === 'none') setStatus(msg);
+    else toast(msg, 4);
   });
+  // сервер знакомств недоступен — комнату никто не найдёт
+  setTimeout(() => { if (Net.peer === peer && !Net.code) setStatus(netErrorText('server-timeout')); }, 10000);
 }
 
 function onHostData(c, d) {
@@ -171,15 +190,24 @@ function joinGame(code) {
   code = code.trim().toUpperCase();
   if (code.length !== 5) { setStatus('Введите 5-значный код комнаты'); return; }
   cleanupNet();
-  setStatus('Подключаемся…');
-  const peer = new Peer(undefined, { debug: 1 });
+  setStatus('Подключаемся к серверу…');
+  const peer = new Peer(undefined, peerOptions());
   Net.peer = peer;
+  // сервер знакомств не ответил — дальше не пойдём
+  const srvTimeout = setTimeout(() => { if (Net.peer === peer && !peer.open) { setStatus(netErrorText('server-timeout')); cleanupNet(); } }, 12000);
   peer.on('open', () => {
+    clearTimeout(srvTimeout);
+    setStatus('Сервер найден, ищем комнату и устанавливаем соединение…');
     const c = peer.connect(PEER_PREFIX + code, { reliable: true });
     Net.conn = c;
+    // комната найдена, но прямое соединение не пробилось — скажем почему (по состоянию ICE)
     const timeout = setTimeout(() => {
-      if (!Net.connected) { setStatus('Не удалось подключиться (таймаут). Проверьте код.'); cleanupNet(); }
-    }, 12000);
+      if (Net.connected) return;
+      const pc = c.peerConnection;
+      const ice = pc ? pc.iceConnectionState : 'none';
+      setStatus(netErrorText(ice === 'none' || ice === 'new' ? 'no-answer' : 'ice-' + ice));
+      cleanupNet();
+    }, 20000);
     c.on('open', () => c.send({ t: 'hello', name: G.myName }));
     c.on('data', (d) => {
       if (!d || typeof d !== 'object') return;
@@ -202,10 +230,10 @@ function joinGame(code) {
     c.on('close', () => { if (G.role === 'guest') leaveToMenu('Соединение с хостом потеряно'); });
   });
   peer.on('error', (e) => {
-    if (e.type === 'peer-unavailable') setStatus('Комната не найдена. Проверьте код.');
-    else setStatus('Ошибка сети: ' + e.type);
-    if (G.role === 'guest') leaveToMenu('Ошибка сети: ' + e.type);
-    else cleanupNet();
+    clearTimeout(srvTimeout);
+    const msg = netErrorText(e.type);
+    if (G.role === 'guest') leaveToMenu(msg);
+    else { setStatus(msg); cleanupNet(); }
   });
 }
 
@@ -295,6 +323,64 @@ function netTick(dt) {
     Net.sendT -= dt * 1000;
     if (Net.sendT <= 0) { guestSendInput(); Net.sendT = INPUT_MS; }
   }
+}
+
+// Понятные причины сбоев подключения
+function netErrorText(t) {
+  const M = {
+    'peer-unavailable': 'Комната не найдена. Проверьте код; хост должен быть в лобби (не в игре), и у обоих — одна версия игры.',
+    'server-timeout': 'Нет связи с сервером PeerJS (0.peerjs.com). Проверьте интернет; возможно, его блокирует фаервол, антивирус или сеть.',
+    'server-error': 'Сервер PeerJS не отвечает. Попробуйте позже.',
+    'network': 'Потеряна связь с сервером PeerJS. Проверьте интернет.',
+    'socket-error': 'Ошибка связи с сервером PeerJS. Проверьте интернет и фаервол.',
+    'socket-closed': 'Связь с сервером PeerJS закрыта. Проверьте интернет.',
+    'browser-incompatible': 'Браузер не поддерживает WebRTC. Используйте Chrome, Edge или Firefox.',
+    'webrtc': 'Ошибка WebRTC в браузере.',
+    'no-answer': 'Комната не ответила. Хост должен быть в лобби с этим кодом и не закрывать вкладку.',
+    'ice-checking': 'Комната найдена, но прямое соединение не установилось: сеть одного из игроков его не пропускает (строгий NAT или фаервол). Нужен TURN-сервер — меню «Сеть».',
+    'ice-failed': 'Комната найдена, но прямое соединение не удалось: сеть одного из игроков его не пропускает (строгий NAT или фаервол). Нужен TURN-сервер — меню «Сеть».',
+    'ice-disconnected': 'Соединение с хостом оборвалось. Попробуйте ещё раз.',
+  };
+  return M[t] || 'Ошибка сети: ' + t;
+}
+
+// Проверка сети: сервер знакомств, внешний адрес (STUN), ретранслятор (TURN). Отчёт — объект и строки для меню.
+async function netCheck(report) {
+  const res = { server: false, srflx: false, relay: false, relayTcp: false, host: false, ms: 0 };
+  const line = (s) => report && report(s);
+  if (typeof Peer === 'undefined') { line('✗ Сетевая библиотека не загрузилась — нет интернета или заблокирован jsdelivr.net'); return res; }
+  // 1) сервер знакомств
+  const t0 = performance.now();
+  await new Promise((resolve) => {
+    let done = false;
+    const peer = new Peer(undefined, peerOptions());
+    const fin = (ok) => { if (done) return; done = true; res.server = ok; res.ms = Math.round(performance.now() - t0); try { peer.destroy(); } catch (e) { /* ignore */ } resolve(); };
+    peer.on('open', () => fin(true));
+    peer.on('error', () => fin(false));
+    setTimeout(() => fin(false), 10000);
+  });
+  line(res.server ? `✓ Сервер PeerJS доступен (${res.ms} мс)` : '✗ Сервер PeerJS недоступен — подключиться никто не сможет (интернет, фаервол, антивирус)');
+  // 2) кандидаты ICE
+  try {
+    const pc = new RTCPeerConnection({ iceServers: iceServers() });
+    pc.createDataChannel('probe');
+    const gathered = new Promise((resolve) => {
+      pc.onicecandidate = (ev) => {
+        if (!ev.candidate) { resolve(); return; }
+        const c = ev.candidate.candidate;
+        if (/ typ host/.test(c)) res.host = true;
+        if (/ typ srflx/.test(c)) res.srflx = true;
+        if (/ typ relay/.test(c)) { res.relay = true; if (/ tcp /i.test(c)) res.relayTcp = true; }
+      };
+      setTimeout(resolve, 8000);
+    });
+    await pc.setLocalDescription(await pc.createOffer());
+    await gathered;
+    pc.close();
+  } catch (e) { line('✗ WebRTC недоступен в этом браузере: ' + e); return res; }
+  line(res.srflx ? '✓ Внешний адрес определён (STUN) — прямое соединение возможно' : '✗ Внешний адрес не определён (STUN заблокирован) — прямое соединение вряд ли получится');
+  line(res.relay ? '✓ Ретранслятор (TURN) доступен — соединение пройдёт даже через строгий NAT' : '✗ Ретранслятор (TURN) недоступен — при строгом NAT/фаерволе соединения не будет. Укажите свой TURN в «Сеть».');
+  return res;
 }
 
 function cleanupNet() {

@@ -44,6 +44,13 @@
   #btnStart { border-color:rgba(159,232,112,.6); }
   #btnReady.on { background:rgba(159,232,112,.18); border-color:rgba(159,232,112,.6); }
   #btnLeave { min-width:120px; }
+  #netBox { width:100%; max-width:520px; font-family:Consolas, monospace; font-size:13px; color:var(--dim); }
+  #netBox summary { cursor:pointer; text-align:center; padding:4px; }
+  #netBox input { width:100%; margin-top:6px; font-size:13px; }
+  .netrow { display:flex; gap:8px; justify-content:center; margin-top:6px; }
+  .netrow button { min-width:0; flex:1; font-size:13px; }
+  .netrow input { flex:1; }
+  #netReport { white-space:pre-wrap; color:var(--fg); font-size:12px; min-height:0; margin:6px 0; }
 </style>
 </head>
 <body>
@@ -62,6 +69,19 @@
     </div>
     <button id="btnSolo">ИГРАТЬ ОДНОМУ</button>
     <div id="status"></div>
+    <details id="netBox">
+      <summary>Сеть: проверка и свой TURN-сервер</summary>
+      <div class="netrow"><button id="btnNetCheck">ПРОВЕРИТЬ СЕТЬ</button></div>
+      <pre id="netReport"></pre>
+      <div class="help">Если соединение не устанавливается («прямое соединение не удалось»), нужен TURN-ретранслятор.<br>
+        Бесплатный можно получить, например, на metered.ca (Open Relay) или поднять свой (coturn). Данные одинаковые у всех игроков.</div>
+      <input type="text" id="turnUrls" placeholder="turn:адрес:3478, turns:адрес:443?transport=tcp" autocomplete="off" spellcheck="false">
+      <div class="netrow">
+        <input type="text" id="turnUser" placeholder="логин" autocomplete="off" spellcheck="false">
+        <input type="text" id="turnPass" placeholder="пароль" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="netrow"><button id="btnTurnSave">СОХРАНИТЬ TURN</button><button id="btnTurnClear">СБРОСИТЬ</button></div>
+    </details>
     <div class="help">
       <b>WASD</b> — движение · <b>мышь</b> — прицел · <b>ЛКМ</b> — огонь · <b>ПКМ</b> — прицелиться · <b>R</b> — перезарядка · <b>V</b> — режим<br>
       <b>Q/E</b> — выглянуть · <b>F</b> — дверь · <b>G</b> — выбить · <b>L</b> — фонарь · <b>C</b> — присесть · <b>Shift</b> — бег<br>
