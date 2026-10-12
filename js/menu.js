@@ -28,9 +28,10 @@ function enterLobby() {
 
 function renderLobby() {
   const isHost = G.role !== 'guest';
-  document.getElementById('lobbyCode').textContent = G.role === 'solo'
-    ? 'ИГРА ОДНОМУ'
-    : `КОД КОМНАТЫ: ${Net.code} · ИГРОКОВ: ${Lobby.slots.filter((s) => s.human).length} из 4`;
+  const nHum = Lobby.slots.filter((s) => s.human).length;
+  document.getElementById('lobbyCode').textContent = G.role === 'solo' ? 'ИГРА ОДНОМУ'
+    : Net.mode === 'ws' ? `ПРЯМОЕ ПОДКЛЮЧЕНИЕ · АДРЕС ДЛЯ ДРУЗЕЙ: ${(Net.addrs || []).map((a) => 'http://' + a).join('  или  ') || location.host} · ИГРОКОВ: ${nHum} из 4`
+    : `КОД КОМНАТЫ: ${Net.code} · ИГРОКОВ: ${nHum} из 4`;
   slotsEl.innerHTML = '';
   for (const s of Lobby.slots) {
     const el = document.createElement('div');
@@ -103,6 +104,12 @@ function startSolo() {
 }
 
 document.getElementById('btnSolo').addEventListener('click', () => { initAudio(); startSolo(); });
+document.getElementById('btnHostLocal').addEventListener('click', () => { initAudio(); readName(); Lobby.bots = botsChk.checked; hostLocal(); });
+const addrEl = document.getElementById('addr');
+document.getElementById('btnJoinLocal').addEventListener('click', () => { initAudio(); readName(); joinLocal(addrEl.value); });
+addrEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') { initAudio(); readName(); joinLocal(addrEl.value); } });
+// игру открыли по адресу хоста (не localhost) — скорее всего, чтобы войти к нему: подставить адрес
+if (servedByServer() && !/^(localhost|127\.0\.0\.1)(:|$)/.test(location.host)) addrEl.value = location.host;
 document.getElementById('btnHost').addEventListener('click', () => { initAudio(); readName(); Lobby.bots = botsChk.checked; hostGame(); });
 document.getElementById('btnJoin').addEventListener('click', () => { initAudio(); readName(); joinGame(document.getElementById('code').value); });
 document.getElementById('code').addEventListener('keydown', (e) => {

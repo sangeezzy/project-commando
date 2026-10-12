@@ -26,6 +26,8 @@ const peerOptions = () => ({ debug: 1, config: { iceServers: iceServers() } });
 
 const Net = {
   peer: null, conn: null, conns: new Map(), code: '', sendT: 0, connected: false,
+  mode: null,                                   // 'peer' — через интернет (PeerJS), 'ws' — прямое подключение (server.py)
+  ws: null, wsConns: new Map(), addrs: [],
   inp: { fire: false, press: 0, acts: [] },     // гость: накопленный ввод до следующего пакета
 };
 
@@ -54,6 +56,7 @@ function peerAvailable() {
 
 // ---------- Хост ----------
 function hostGame() {
+  Net.mode = 'peer';
   if (!peerAvailable()) return;
   cleanupNet();
   setStatus('Создаём комнату…');
@@ -144,7 +147,7 @@ function onGuestLeft(c) {
 }
 
 function lobbyChanged() {
-  if (G.role === 'host') broadcast({ t: 'lobby', slots: Lobby.slots, bots: Lobby.bots, code: Net.code });
+  if (G.role === 'host') broadcast({ t: 'lobby', slots: Lobby.slots, bots: Lobby.bots, code: Net.code, addrs: Net.addrs });
   if (G.state === 'lobby') renderLobby();
 }
 
@@ -187,6 +190,7 @@ function sendSnapshot() {
 // ---------- Гость ----------
 function joinGame(code) {
   if (!peerAvailable()) return;
+  Net.mode = 'peer';
   code = code.trim().toUpperCase();
   if (code.length !== 5) { setStatus('Введите 5-значный код комнаты'); return; }
   cleanupNet();
@@ -209,24 +213,7 @@ function joinGame(code) {
       cleanupNet();
     }, 20000);
     c.on('open', () => c.send({ t: 'hello', name: G.myName }));
-    c.on('data', (d) => {
-      if (!d || typeof d !== 'object') return;
-      if (d.t === 'full' || d.t === 'busy') {
-        setStatus(d.t === 'full' ? 'Комната заполнена' : 'Игра уже идёт — дождитесь конца раунда');
-        clearTimeout(timeout); cleanupNet(); return;
-      }
-      if (d.t === 'welcome') {
-        clearTimeout(timeout);
-        Net.connected = true; Net.code = code;
-        G.role = 'guest'; G.mySlot = d.slot; G.seq = -1;
-        enterLobby();
-        return;
-      }
-      if (G.role !== 'guest') return;
-      if (d.t === 'lobby') { Lobby.slots = d.slots; Lobby.bots = d.bots; if (G.state === 'lobby') renderLobby(); }
-      else if (d.t === 'start') { hideMenu(); if (G.state === 'lobby') G.state = 'play'; }
-      else if (d.t === 's') applySnapshot(d);
-    });
+    c.on('data', (d) => onGuestData(d, timeout, code));
     c.on('close', () => { if (G.role === 'guest') leaveToMenu('Соединение с хостом потеряно'); });
   });
   peer.on('error', (e) => {
@@ -235,6 +222,122 @@ function joinGame(code) {
     if (G.role === 'guest') leaveToMenu(msg);
     else { setStatus(msg); cleanupNet(); }
   });
+}
+
+// Сообщение от хоста (одинаково для PeerJS и прямого подключения)
+function onGuestData(d, timeout, code) {
+  if (!d || typeof d !== 'object') return;
+  if (d.t === 'full' || d.t === 'busy') {
+    setStatus(d.t === 'full' ? 'Комната заполнена' : 'Игра уже идёт — дождитесь конца раунда');
+    clearTimeout(timeout); cleanupNet(); return;
+  }
+  if (d.t === 'welcome') {
+    clearTimeout(timeout);
+    Net.connected = true; Net.code = code;
+    G.role = 'guest'; G.mySlot = d.slot; G.seq = -1;
+    enterLobby();
+    return;
+  }
+  if (G.role !== 'guest') return;
+  if (d.t === 'lobby') { Lobby.slots = d.slots; Lobby.bots = d.bots; Net.addrs = d.addrs || Net.addrs; if (G.state === 'lobby') renderLobby(); }
+  else if (d.t === 'start') { hideMenu(); if (G.state === 'lobby') G.state = 'play'; }
+  else if (d.t === 's') applySnapshot(d);
+}
+
+// ---------- Прямое подключение: WebSocket через server.py (без интернета и сторонних серверов) ----------
+// Хост открывает игру с запущенного у себя server.py (start.bat), гости — по адресу хоста (http://IP:8000).
+// Сервер только пересылает сообщения; игровой протокол тот же, что и через PeerJS.
+const servedByServer = () => location.protocol === 'http:' || location.protocol === 'https:';
+const wsUrl = (addr) => `ws://${addr}/ws`;
+
+function hostLocal() {
+  if (!servedByServer()) {
+    setStatus('Для прямого подключения запустите игру через start.bat — она откроется по адресу http://localhost:8000.');
+    return;
+  }
+  cleanupNet();
+  setStatus('Создаём комнату на этом компьютере…');
+  const ws = new WebSocket(wsUrl(location.host));
+  Net.ws = ws; Net.mode = 'ws';
+  ws.onopen = () => ws.send(JSON.stringify({ t: 'host' }));
+  ws.onmessage = (ev) => {
+    let m;
+    try { m = JSON.parse(ev.data); } catch (e) { return; }
+    if (m.t === 'error') {
+      setStatus(m.e === 'host-exists' ? 'На этом сервере комната уже создана (игра открыта в другой вкладке?).' : 'Ошибка сервера: ' + m.e);
+      cleanupNet(); return;
+    }
+    if (m.t === 'hosted') {
+      Net.addrs = m.addrs || [];
+      G.role = 'host'; G.mySlot = 0;
+      Lobby.slots = emptySlots();
+      Object.assign(Lobby.slots[0], { human: true, name: G.myName });
+      enterLobby();
+      return;
+    }
+    if (m.t === 'join') { Net.wsConns.set(m.id, wsConn(ws, m.id)); return; }
+    if (m.t === 'leave') {
+      const c = Net.wsConns.get(m.id);
+      if (c) { Net.wsConns.delete(m.id); c.open = false; onGuestLeft(c); }
+      return;
+    }
+    if (m.t === 'msg') { const c = Net.wsConns.get(m.from); if (c) onHostData(c, m.d); }
+  };
+  ws.onclose = () => {
+    if (Net.ws !== ws) return;
+    if (G.role === 'host') leaveToMenu('Связь с сервером игры потеряна — окно start.bat закрыто?');
+    else { setStatus('Сервер игры не отвечает — запустите start.bat.'); cleanupNet(); }
+  };
+}
+
+// Гость на сервере хоста — для кода хоста выглядит как соединение PeerJS (send, close, open)
+function wsConn(ws, id) {
+  return {
+    id, open: true,
+    send(d) { if (ws.readyState === 1) ws.send(JSON.stringify({ t: 'to', id, d })); },
+    close() { if (ws.readyState === 1) ws.send(JSON.stringify({ t: 'kick', id })); this.open = false; },
+  };
+}
+
+function joinLocal(addr) {
+  addr = (addr || '').trim().replace(/^[a-z]+:\/\//i, '').replace(/\/.*$/, '');
+  if (!addr) { setStatus('Введите адрес хоста, например 192.168.1.5:8000'); return; }
+  if (!/:\d+$/.test(addr)) addr += ':8000';
+  cleanupNet();
+  setStatus(`Подключаемся к ${addr}…`);
+  let ws;
+  try { ws = new WebSocket(wsUrl(addr)); } catch (e) { setStatus('Неверный адрес: ' + addr); return; }
+  Net.ws = ws; Net.mode = 'ws';
+  const conn = {
+    open: false,
+    send(d) { if (ws.readyState === 1) ws.send(JSON.stringify({ t: 'msg', d })); },
+    close() { try { ws.close(); } catch (e) { /* ignore */ } },
+  };
+  Net.conn = conn;
+  const timeout = setTimeout(() => {
+    if (Net.connected || Net.ws !== ws) return;
+    setStatus(`Нет ответа от ${addr}. Проверьте: хост запустил start.bat; адрес открывается в браузере; фаервол хоста разрешил Python.`);
+    cleanupNet();
+  }, 8000);
+  ws.onopen = () => ws.send(JSON.stringify({ t: 'guest' }));
+  ws.onmessage = (ev) => {
+    let m;
+    try { m = JSON.parse(ev.data); } catch (e) { return; }
+    if (m.t === 'error') {
+      clearTimeout(timeout);
+      setStatus(m.e === 'no-host' ? 'Сервер найден, но комнаты ещё нет: хост должен нажать «Создать комнату» в блоке «Прямое подключение».' : 'Ошибка сервера: ' + m.e);
+      cleanupNet(); return;
+    }
+    if (m.t === 'joined') { conn.open = true; conn.send({ t: 'hello', name: G.myName }); return; }
+    if (m.t === 'hostgone') { clearTimeout(timeout); if (G.role === 'guest') leaveToMenu('Хост закрыл комнату'); else { setStatus('Хост закрыл комнату'); cleanupNet(); } return; }
+    if (m.t === 'msg') onGuestData(m.d, timeout, addr);
+  };
+  ws.onclose = () => {
+    if (Net.ws !== ws) return;
+    clearTimeout(timeout);
+    if (G.role === 'guest') leaveToMenu('Соединение с хостом потеряно');
+    else if (!Net.connected) { setStatus(`Не удалось подключиться к ${addr}. Хост запустил start.bat? Фаервол хоста разрешил Python?`); cleanupNet(); }
+  };
 }
 
 function guestSendInput() {
@@ -384,6 +487,10 @@ async function netCheck(report) {
 }
 
 function cleanupNet() {
+  const ws = Net.ws;
+  Net.ws = null;
+  try { if (ws) ws.close(); } catch (e) { /* ignore */ }
+  Net.wsConns.clear(); Net.mode = null;
   try { if (Net.conn) Net.conn.close(); } catch (e) { /* ignore */ }
   for (const c of Net.conns.values()) { try { c.close(); } catch (e) { /* ignore */ } }
   try { if (Net.peer) Net.peer.destroy(); } catch (e) { /* ignore */ }

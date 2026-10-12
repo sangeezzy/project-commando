@@ -1,4 +1,7 @@
 @echo off
+chcp 65001 >nul
 cd /d "%~dp0"
-start "" http://localhost:8000/index.html
-python -m http.server 8000
+rem Сервер игры: раздаёт файлы и связывает игроков для прямого подключения (нужен Python 3)
+start "" http://localhost:8000/
+python server.py 8000
+pause

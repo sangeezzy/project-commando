@@ -3,7 +3,8 @@
 Запуск из корня проекта:
     python tools/run_tests.py                 # все юнит-тесты
     python tools/run_tests.py --only m4,cover
-    python tools/run_tests.py --net           # + сетевой тест: хост и 2 гостя через PeerJS (нужен интернет, ~40 с)
+    python tools/run_tests.py --net           # + сетевой тест через PeerJS (нужен интернет, ~40 с)
+    python tools/run_tests.py --only netlocal # только прямое подключение (server.py, без интернета; входит в обычный прогон)
 
 Chrome ищется в стандартных местах; путь можно задать переменной CHROME.
 Если интернет идёт через прокси (HTTPS_PROXY/HTTP_PROXY), сетевой тест передаёт его в Chrome.
@@ -175,6 +176,42 @@ def run_net(chrome):
     Report.check('финальная фаза дошла до конца', bool(r.get('final')), r.get('log'))
 
 
+def run_netlocal(chrome):
+    """Прямое подключение: server.py (раздаёт игру и пересылает сообщения), хост и 2 гостя через WebSocket. Интернет не нужен."""
+    print('\n[netlocal] прямое подключение через server.py: хост + 2 гостя (около 30 с)')
+    port = free_port()
+    rep = Path(tempfile.mkdtemp()) / 'report.json'
+    srv = subprocess.Popen([sys.executable, str(ROOT / 'server.py'), str(port), '--report', str(rep)],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    prof = tempfile.mkdtemp()
+    cmd = [chrome, '--headless=new', '--disable-gpu', f'--user-data-dir={prof}', '--remote-debugging-port=0',
+           '--autoplay-policy=no-user-gesture-required', '--window-size=1800,1100', '--no-proxy-server',
+           f'http://127.0.0.1:{port}/tools/net.html?mode=ws']
+    time.sleep(1)
+    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    r = None
+    try:
+        deadline = time.time() + 90
+        while time.time() < deadline:
+            time.sleep(1)
+            try:
+                r = json.loads(rep.read_text(encoding='utf-8'))
+            except (OSError, ValueError):
+                continue
+            if r.get('final'):
+                break
+    finally:
+        proc.kill()
+        srv.kill()
+        shutil.rmtree(prof, ignore_errors=True)
+    if not r or 'checks' not in r:
+        Report.check('отчёт получен', False, r)
+        return
+    for c in r['checks']:
+        Report.check(c['name'], c['ok'], c.get('got'))
+    Report.check('финальная фаза дошла до конца', bool(r.get('final')), r.get('log'))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--only', help='через запятую: имена юнит-тестов (net — только сетевой)')
@@ -182,10 +219,15 @@ def main():
     args = ap.parse_args()
     chrome = find_chrome()
     names = args.only.split(',') if args.only else list(UNIT_TESTS)
+    netlocal = 'netlocal' in names or not args.only
+    if 'netlocal' in names:
+        names.remove('netlocal')
     if 'net' in names:
         names.remove('net')
         args.net = True
     run_unit(chrome, names)
+    if netlocal:
+        run_netlocal(chrome)
     if args.net:
         run_net(chrome)
     print(f'\nИтого: {Report.total - Report.failed}/{Report.total} проверок прошло')

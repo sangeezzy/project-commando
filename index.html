@@ -27,7 +27,10 @@
   button:disabled { opacity:.35; cursor:default; }
   #code { width:110px; text-transform:uppercase; text-align:center; letter-spacing:.3em; }
   #name { width:220px; text-align:center; }
-  #btnJoin { min-width:110px; }
+  #btnJoin, #btnJoinLocal { min-width:110px; }
+  #addr { width:300px; text-align:center; }
+  .block { display:flex; flex-direction:column; align-items:center; gap:8px; width:100%; padding:10px; border:1px solid var(--line); border-radius:4px; }
+  .btitle { color:var(--fg); font-family:Consolas, monospace; font-size:13px; }
   label { color:var(--dim); font-family:Consolas, monospace; font-size:13px; }
   #status, #lobbyStatus { min-height:20px; color:var(--warn); font-family:Consolas, monospace; font-size:13px; text-align:center; }
   .help { color:var(--dim); font-family:Consolas, monospace; font-size:12px; text-align:center; line-height:1.8; }
@@ -62,12 +65,26 @@
     <div class="sub">тестовый полигон · реалистичный режим · кооператив до 4 игроков</div>
     <div class="row"><label for="name">Позывной</label><input type="text" id="name" maxlength="16" autocomplete="off" spellcheck="false"></div>
     <label><input type="checkbox" id="botsChk" checked> Заполнять пустые места союзными ботами</label>
-    <button id="btnHost">СОЗДАТЬ КОМНАТУ</button>
-    <div class="row">
-      <input type="text" id="code" placeholder="КОД" maxlength="5" autocomplete="off" spellcheck="false">
-      <button id="btnJoin">ВОЙТИ</button>
-    </div>
     <button id="btnSolo">ИГРАТЬ ОДНОМУ</button>
+    <div class="block">
+      <div class="btitle">Прямое подключение — без интернета и сторонних серверов</div>
+      <button id="btnHostLocal">СОЗДАТЬ КОМНАТУ НА ЭТОМ КОМПЬЮТЕРЕ</button>
+      <div class="row">
+        <input type="text" id="addr" placeholder="адрес хоста, например 192.168.1.5:8000" autocomplete="off" spellcheck="false">
+        <button id="btnJoinLocal">ВОЙТИ</button>
+      </div>
+      <div class="help">Хост запускает игру через <b>start.bat</b> — в его окне видны адреса для друзей.<br>
+        Друзья открывают этот адрес в браузере (http://адрес:8000) и жмут «Войти».<br>
+        Работает в одной сети, через Radmin VPN / ZeroTier / Tailscale или с пробросом порта 8000 на роутере хоста.</div>
+    </div>
+    <div class="block">
+      <div class="btitle">Через интернет (PeerJS)</div>
+      <button id="btnHost">СОЗДАТЬ КОМНАТУ</button>
+      <div class="row">
+        <input type="text" id="code" placeholder="КОД" maxlength="5" autocomplete="off" spellcheck="false">
+        <button id="btnJoin">ВОЙТИ</button>
+      </div>
+    </div>
     <div id="status"></div>
     <details id="netBox">
       <summary>Сеть: проверка и свой TURN-сервер</summary>
