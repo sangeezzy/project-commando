@@ -1,0 +1,49 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>bot</title></head>
+<body>
+<!-- Прогон миссии ботами: героем игрока тоже управляет ИИ (autopilot). ?st=1|2&t=секунд_игры
+     st=1 — пещеры: цель — доехать до этапа 2. st=2 — поселение: цель — победить босса и вернуться на базу.
+     При гибели отряда — перезапуск с контрольной точки (считается в wipes). -->
+<iframe id="f" style="width:1000px;height:640px;border:0"></iframe>
+<pre id="out">WAIT</pre>
+<script>
+const q = new URLSearchParams(location.search);
+const st = +(q.get('st') || 1), T = +(q.get('t') || 240);
+const f = document.getElementById('f');
+f.src = new URL(`../index.html?autotest=1&auto=1&lv=1&st=${st}&nobrief=1&ch=${q.get('ch') || 0}`, location.href).href;
+f.onload = () => {
+  const w = f.contentWindow;
+  const errors = [];
+  w.addEventListener('error', (e) => errors.push(String(e.message) + ' @' + (e.filename || '').split('/').pop() + ':' + e.lineno));
+  let frames = 0, wipes = 0;
+  const log = [];
+  let lastCp = '';
+  // const/let верхнего уровня не видны как свойства window — берём через eval
+  const G = w.eval('G'), map = () => w.eval('map');
+  const reached = () => st === 1 ? G.stage === 2 : (map() && map().hub && G.progress[1].done);
+  const chunk = () => {
+    try {
+      for (let i = 0; i < 600 && frames < T * 60 && !reached(); i++) {
+        G.time += 1 / 60;
+        w.update(1 / 60);
+        frames++;
+        if (G.state === 'over') { wipes++; log.push(`вайп ${(frames / 60).toFixed(0)}с на ${G.cp}`); w.restartFromCheckpoint(); }
+        if (G.cp !== lastCp) { lastCp = G.cp; log.push(`КТ ${lastCp} @${(frames / 60).toFixed(0)}с`); }
+      }
+    } catch (e) { errors.push(String(e) + ' ' + (e.stack || '').split('\n').slice(0, 3).join(' | ')); frames = T * 60; }
+    if (frames < T * 60 && !reached()) { setTimeout(chunk, 0); return; }
+    const m = G.m || {};
+    const out = {
+      reached: !!reached(), errors, t: +(frames / 60).toFixed(1), wipes, log, stage: G.stage, lv: G.lv, cp: G.cp,
+      flags: m && { met: m.met, ordered: m.ordered, outCleared: m.outCleared, cenCleared: m.cenCleared, boss: m.boss, alarm: m.alarm },
+      out: G.enemies.filter((e) => !e.dead && e.zone === 'out').length, cen: G.enemies.filter((e) => !e.dead && e.zone === 'cen').length,
+      players: G.players.map((p) => [p.ch, Math.round(p.x / 32), Math.round(p.y / 32), p.down ? 'down' : p.hp, p.ride]),
+      debris: G.objs.filter((o) => o.k === 'debris').map((o) => o.name + ':' + o.prog + (o.done ? '✓' : '')),
+      progress: G.progress && G.progress[1],
+    };
+    document.getElementById('out').textContent = 'RESULT ' + JSON.stringify(out);
+  };
+  setTimeout(chunk, 100);
+};
+</script>
+</body></html>

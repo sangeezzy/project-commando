@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Project Commando</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Russo+One&display=swap" rel="stylesheet">
+<style>
+  :root { --fg:#e8e4d8; --dim:#a09c90; --warn:#ffb030; --ok:#9fe870; --line:rgba(232,228,216,.25); --bg:#1b1c1d; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; background:var(--bg); overflow:hidden; color:var(--fg); font-family:'Russo One', Consolas, sans-serif; }
+  canvas { display:block; width:100vw; height:100vh; }
+  canvas.playing { cursor:none; }
+  #menu { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; padding:16px; overflow:auto;
+    background: radial-gradient(ellipse at center, rgba(40,42,38,.92), rgba(18,19,20,.98)); }
+  .hidden { display:none !important; }
+  .screen { display:flex; flex-direction:column; align-items:center; gap:12px; width:100%; max-width:560px; }
+  h1 { margin:0; font-size:clamp(32px, 7vw, 60px); letter-spacing:.06em; text-align:center; }
+  h2 { margin:0; font-size:26px; letter-spacing:.08em; }
+  .sub { color:var(--dim); font-family:Consolas, monospace; font-size:14px; text-align:center; margin-bottom:6px; }
+  .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; justify-content:center; }
+  button, input[type=text] { font-family:inherit; font-size:15px; color:var(--fg); background:rgba(15,16,17,.8);
+    border:1px solid var(--line); padding:10px 16px; border-radius:3px; letter-spacing:.05em; }
+  button { cursor:pointer; min-width:240px; }
+  button:hover:not(:disabled) { background:rgba(232,228,216,.1); }
+  button:disabled { opacity:.35; cursor:default; }
+  #code { width:110px; text-transform:uppercase; text-align:center; letter-spacing:.3em; }
+  #name { width:220px; text-align:center; }
+  #btnJoin { min-width:110px; }
+  label { color:var(--dim); font-family:Consolas, monospace; font-size:13px; }
+  #status, #lobbyStatus { min-height:20px; color:var(--warn); font-family:Consolas, monospace; font-size:13px; text-align:center; }
+  .help { color:var(--dim); font-family:Consolas, monospace; font-size:12px; text-align:center; line-height:1.8; }
+  .help b { color:var(--fg); }
+  #slots { display:flex; flex-direction:column; gap:6px; width:100%; }
+  .slot { display:flex; align-items:center; gap:10px; padding:9px 12px; border:1px solid var(--line); border-radius:3px;
+    background:rgba(15,16,17,.7); font-family:Consolas, monospace; font-size:14px; }
+  .slot.mine { border-color:var(--c); }
+  .slot.empty { color:var(--dim); }
+  .slot .dot { width:10px; height:10px; border-radius:50%; background:var(--c); flex:none; }
+  .slot .who { flex:1; }
+  .slot .st { color:var(--dim); }
+  .slot .st.ok { color:var(--ok); }
+  #btnStart { border-color:rgba(159,232,112,.6); }
+  #btnReady.on { background:rgba(159,232,112,.18); border-color:rgba(159,232,112,.6); }
+  #btnLeave { min-width:120px; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="menu">
+  <div class="screen" id="mainMenu">
+    <h1>PROJECT COMMANDO</h1>
+    <div class="sub">тестовый полигон · реалистичный режим · кооператив до 4 игроков</div>
+    <div class="row"><label for="name">Позывной</label><input type="text" id="name" maxlength="16" autocomplete="off" spellcheck="false"></div>
+    <label><input type="checkbox" id="botsChk" checked> Заполнять пустые места союзными ботами</label>
+    <button id="btnHost">СОЗДАТЬ КОМНАТУ</button>
+    <div class="row">
+      <input type="text" id="code" placeholder="КОД" maxlength="5" autocomplete="off" spellcheck="false">
+      <button id="btnJoin">ВОЙТИ</button>
+    </div>
+    <button id="btnSolo">ИГРАТЬ ОДНОМУ</button>
+    <div id="status"></div>
+    <div class="help">
+      <b>WASD</b> — движение · <b>мышь</b> — прицел · <b>ЛКМ</b> — огонь · <b>ПКМ</b> — прицелиться · <b>R</b> — перезарядка · <b>V</b> — режим<br>
+      <b>Q/E</b> — выглянуть · <b>F</b> — дверь · <b>G</b> — выбить · <b>L</b> — фонарь · <b>C</b> — присесть · <b>Shift</b> — бег<br>
+      <b>Tab</b> — характеристики M4A1 · <b>H</b> — управление · <b>Enter</b> — заново · <b>Esc</b> — в меню
+    </div>
+  </div>
+
+  <div class="screen hidden" id="lobby">
+    <h2>ОТРЯД</h2>
+    <div class="sub" id="lobbyCode"></div>
+    <div id="slots"></div>
+    <label><input type="checkbox" id="lobbyBots"> Пустые места занимают союзные боты</label>
+    <div class="row">
+      <button id="btnReady">ГОТОВ</button>
+      <button id="btnStart">НАЧАТЬ</button>
+    </div>
+    <button id="btnLeave">ВЫЙТИ</button>
+    <div id="lobbyStatus"></div>
+    <div class="help">Начать можно, когда все игроки нажали «Готов». Код комнаты продиктуйте друзьям — они вводят его в главном меню.</div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="js/util.js"></script>
+<script src="js/data.js"></script>
+<script src="js/world.js"></script>
+<script src="js/level.js"></script>
+<script src="js/core.js"></script>
+<script src="js/light.js"></script>
+<script src="js/doors.js"></script>
+<script src="js/fx.js"></script>
+<script src="js/weapon.js"></script>
+<script src="js/ai.js"></script>
+<script src="js/player.js"></script>
+<script src="js/net.js"></script>
+<script src="js/render.js"></script>
+<script src="js/hud.js"></script>
+<script src="js/menu.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>

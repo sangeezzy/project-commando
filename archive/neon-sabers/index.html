@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Neon Sabers</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Russo+One&display=swap" rel="stylesheet">
+<style>
+  :root { --cyan:#33ccff; --pink:#ff2bd6; --amber:#ffb000; --bg:#05030a; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; background:var(--bg); overflow:hidden; color:#e9e6ff;
+    font-family: 'Russo One', 'Consolas', sans-serif; }
+  canvas { display:block; width:100vw; height:100vh; }
+  canvas.playing { cursor:none; }
+  #menu { position:fixed; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:14px; background: radial-gradient(ellipse at center, rgba(40,10,60,.85), rgba(5,3,10,.97)); padding:16px; }
+  #menu.hidden { display:none; }
+  h1 { margin:0; font-size:clamp(36px, 8vw, 84px); font-weight:800; letter-spacing:.08em; color:#fff;
+    text-shadow: 0 0 8px var(--pink), 0 0 24px var(--pink), 0 0 48px var(--pink); }
+  .sub { color:var(--cyan); letter-spacing:.3em; font-size:13px; text-shadow:0 0 8px var(--cyan); margin-bottom:10px; text-align:center; }
+  .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; justify-content:center; }
+  button, input { font-family:inherit; font-size:15px; color:#fff; background:rgba(10,5,20,.8);
+    border:2px solid var(--cyan); padding:10px 18px; border-radius:4px; letter-spacing:.08em;
+    box-shadow: 0 0 10px rgba(51,204,255,.35), inset 0 0 10px rgba(51,204,255,.15); }
+  button { cursor:pointer; min-width:260px; transition: background .15s, box-shadow .15s; }
+  button:hover { background:rgba(51,204,255,.15); box-shadow: 0 0 18px rgba(51,204,255,.7), inset 0 0 12px rgba(51,204,255,.3); }
+  button.cls { min-width:180px; border-color:#6a5a8a; box-shadow:none; color:#aaa; }
+  button.cls.sel { border-color:var(--amber); color:#fff; box-shadow:0 0 14px rgba(255,176,0,.6); }
+  #code { width:120px; text-transform:uppercase; text-align:center; letter-spacing:.3em; border-color:var(--pink);
+    box-shadow:0 0 10px rgba(255,43,214,.35); }
+  #btnJoin { min-width:130px; border-color:var(--pink); box-shadow:0 0 10px rgba(255,43,214,.35); }
+  .desc { max-width:560px; text-align:center; color:#b9b0d6; font-size:12px; line-height:1.6; min-height:40px; font-family:Consolas, monospace; }
+  #status { min-height:20px; color:var(--amber); font-size:13px; text-align:center; }
+  .help { margin-top:12px; color:#7d74a0; font-size:12px; text-align:center; line-height:1.8; font-family:Consolas, monospace; max-width:640px; }
+  .help b { color:#cfc6ff; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="menu">
+  <h1>NEON SABERS</h1>
+  <div class="sub">КООПЕРАТИВ • ДАЛЁКАЯ-ДАЛЁКАЯ ГАЛАКТИКА • НЕОН</div>
+
+  <div class="row">
+    <button class="cls sel" data-cls="jedi">ДЖЕДАЙ</button>
+    <button class="cls" data-cls="smuggler">КОНТРАБАНДИСТ</button>
+  </div>
+  <div class="desc" id="clsDesc"></div>
+
+  <button id="btnHost">СОЗДАТЬ КОМНАТУ</button>
+  <div class="row">
+    <input id="code" placeholder="КОД" maxlength="5" autocomplete="off" spellcheck="false">
+    <button id="btnJoin">ВОЙТИ</button>
+  </div>
+  <button id="btnSolo">ОДИНОЧНАЯ ИГРА</button>
+  <div id="status"></div>
+
+  <div class="help">
+    <b>WASD</b> — движение · <b>МЫШЬ</b> — прицел · <b>ЛКМ</b> — атака · <b>ПКМ</b> — способность<br>
+    <b>SHIFT</b> — спринт (громко) · <b>ALT</b> — красться (бесшумно) · <b>ПРОБЕЛ</b> — рывок (неуязвимость)<br>
+    <b>F</b> — зажечь/погасить меч (джедай) · <b>R</b> — заново · <b>ESC</b> — в меню<br>
+    Враги слышат шаги даже из-за угла, а видишь их только рядом с собой.<br>
+    Одно попадание = смерть. Стой рядом с павшим напарником, чтобы поднять его.<br>
+    Игра начинается на базе: встань на площадку миссии. После зачистки отряд сам вернётся на базу.
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="game.js"></script>
+</body>
+</html>

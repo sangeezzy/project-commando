@@ -1,0 +1,144 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>net</title></head>
+<body>
+<!-- Сетевой тест: хост и два гостя в трёх фреймах через настоящий PeerJS.
+     Лобби и «Готов», старт с ботом на пустом месте, синхронизация мира, движение и огонь гостя, двери, урон,
+     выход гостя (место занимает бот), перезапуск. Нужен http-сервер (run_tests.py --net) и интернет. Отчёт — POST на /report. -->
+<style>iframe{width:600px;height:380px;border:0}</style>
+<iframe id="h"></iframe><iframe id="g1"></iframe><iframe id="g2"></iframe>
+<script>
+const frames = ['h', 'g1', 'g2'].map((id) => document.getElementById(id));
+const [H, G1, G2] = frames;
+const log = [], checks = [];
+const check = (name, ok, got) => checks.push({ name, ok: !!ok, got });
+const E = (f, code) => f.contentWindow.eval(code);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const until = async (fn, ms, step = 200) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { try { if (fn()) return true; } catch (e) { /* ещё рано */ } await sleep(step); } return false; };
+const post = (final) => fetch('/report', { method: 'POST', body: JSON.stringify({ final, log, checks }) }).catch(() => {});
+
+function load(f) {
+  return new Promise((res) => {
+    f.onload = () => {
+      // симуляция по таймеру (в headless requestAnimationFrame нерегулярен), кадры не рисуем
+      E(f, `window.__manualTick = true; window.__errors = [];
+        addEventListener('error', (e) => __errors.push(String(e.message) + ' @' + (e.filename || '').split('/').pop() + ':' + e.lineno));
+        setInterval(() => { if (map && G.state !== 'menu' && G.state !== 'lobby') { G.time += 1 / 60; update(1 / 60); } }, 16);`);
+      res();
+    };
+    f.src = new URL('../index.html', location.href).href;
+  });
+}
+
+async function main() {
+  await Promise.all(frames.map(load));
+  log.push('загружено');
+  E(H, "document.getElementById('name').value = 'Хост'; document.getElementById('botsChk').checked = true; document.getElementById('btnHost').click()");
+  if (!await until(() => E(H, 'Net.code'), 15000)) { check('комната создана', false); return post(true); }
+  const code = E(H, 'Net.code');
+  log.push('код ' + code);
+  E(G1, "document.getElementById('name').value = 'Первый'; readName(); joinGame('" + code + "')");
+  await until(() => E(G1, 'Net.connected'), 15000);
+  E(G2, "document.getElementById('name').value = 'Второй'; readName(); joinGame('" + code + "')");
+  const joined = await until(() => E(H, 'Lobby.slots.filter((s) => s.human).length') === 3, 20000);
+  check('два гостя вошли в лобби', joined, E(H, 'Lobby.slots.map((s) => s.name)'));
+  await sleep(500);
+  check('гости видят лобби и имена', E(G1, "G.state") === 'lobby' && E(G2, 'Lobby.slots.filter((s) => s.human).length') === 3);
+  check('у гостей видно, что пустое место займёт бот', E(G1, 'Lobby.bots') === true);
+
+  // «Готов»: пока не готовы все — начать нельзя
+  E(H, "document.getElementById('btnReady').click()");
+  E(H, "document.getElementById('btnStart').click()");
+  await sleep(300);
+  check('хост готов, гости нет — старт не идёт', E(H, 'G.state') === 'lobby' && E(H, "document.getElementById('btnStart').disabled"));
+  E(G1, "document.getElementById('btnReady').click()");
+  E(G2, "document.getElementById('btnReady').click()");
+  const ready = await until(() => E(H, 'lobbyReady()'), 5000);
+  check('гости нажали «Готов» — хост видит', ready, E(H, 'Lobby.slots.map((s) => s.ready)'));
+  await sleep(300);
+  check('у гостя отмечена его готовность', E(G1, 'Lobby.slots[G.mySlot].ready') === true);
+  E(H, "document.getElementById('btnStart').click()");
+  const started = await until(() => E(G1, 'G.state') === 'play' && E(G1, 'map && G.players.length') === 4 && E(G2, 'map && G.players.length') === 4, 10000);
+  check('игра началась у всех', started, [E(G1, 'G.state'), E(G2, 'G.state')]);
+  check('в отряде 3 человека и 1 союзный бот', E(H, 'G.players.filter((q) => q.ai).length') === 1 && E(G1, 'G.players.filter((q) => q.ai).length') === 1);
+  check('противники совпадают', E(G1, 'G.enemies.length') === E(H, 'G.enemies.length') && E(H, 'G.enemies.length') === 8);
+  await sleep(500);
+
+  // гость идёт — хост видит
+  const g1slot = E(G1, 'G.mySlot');
+  const hp = (f, slot) => E(f, `G.players.find((q) => q.slot === ${slot})`);
+  E(G1, 'keys.KeyW = true');
+  await sleep(1200);
+  E(G1, 'keys.KeyW = false');
+  await sleep(500);
+  const dpos = Math.hypot(E(H, `G.players.find((q) => q.slot === ${g1slot}).x`) - E(G1, 'me().x'), E(H, `G.players.find((q) => q.slot === ${g1slot}).y`) - E(G1, 'me().y'));
+  check('хост видит, где гость', dpos < 20, Math.round(dpos));
+  const dpos2 = Math.hypot(E(G2, `G.players.find((q) => q.slot === ${g1slot}).x`) - E(G1, 'me().x'), E(G2, `G.players.find((q) => q.slot === ${g1slot}).y`) - E(G1, 'me().y'));
+  check('второй гость тоже видит первого', dpos2 < 24, Math.round(dpos2));
+
+  // огонь гостя: курок выполняет хост, патроны убывают у всех
+  const mag0 = E(H, `G.players.find((q) => q.slot === ${g1slot}).gun.mag`);
+  E(G1, 'mouse.l = true; mouse.lPressed = true');
+  await sleep(400);
+  E(G1, 'mouse.l = false');
+  await sleep(500);
+  const mag1 = E(H, `G.players.find((q) => q.slot === ${g1slot}).gun.mag`);
+  check('гость стреляет — хост тратит его патроны', mag1 < mag0, [mag0, mag1]);
+  check('гость видит свои патроны', E(G1, 'me().gun.mag') === mag1, [E(G1, 'me().gun.mag'), mag1]);
+
+  // дверь: гость встаёт к незапертой двери и жмёт F
+  E(G1, 'me().x = me().px = 13.5 * TILE; me().y = me().py = 17.5 * TILE; me().a = -Math.PI / 2');
+  await sleep(400);
+  E(G1, "pressed.KeyF = true");
+  const opened = await until(() => E(H, 'map.doorAt.get(16 * map.w + 13).open'), 3000);
+  check('гость открыл дверь (F) — у хоста открыта', opened);
+  await sleep(400);
+  check('у второго гостя тоже открыта (проход и свет)', E(G2, 'map.doorAt.get(16 * map.w + 13).open && tileAt(13, 16) === T.FLOOR'));
+
+  // урон по гостю считает хост — у гостя падает здоровье и есть отметка попадания
+  E(H, `damagePerson(G.players.find((q) => q.slot === ${g1slot}), 30, 30 * TILE, 30 * TILE, 0, null)`);
+  await until(() => E(G1, 'me().hp') < 100, 3000);
+  check('урон по гостю виден у гостя', E(G1, 'me().hp') <= 70 && E(G1, 'G.hurt.length') > 0, [E(G1, 'me().hp'), E(G1, 'G.hurt.length')]);
+
+  // ранение по сети: гость падает, хост держит F рядом — поднимает; и наоборот
+  // (к этому моменту противники, сбежавшись на выстрелы гостя, могли перебить отряд — убираем их и продолжаем раунд)
+  E(H, "G.enemies = []; for (const q of G.players) Object.assign(q, { dead: false, down: false, hp: 100 }); G.state = 'play'");
+  await sleep(500);
+  E(H, `{ const g = G.players.find((q) => q.slot === ${g1slot}); g.hp = 100; g.dead = false; goDown(g, 0); }`);
+  await until(() => E(G1, 'me().down') === true, 3000);
+  check('гость видит, что ранен (истекает кровью)', E(G1, 'me().down && me().bleed > 0'), E(G1, 'me().bleed'));
+  E(H, `{ const g = G.players.find((q) => q.slot === ${g1slot}); const h = me(); h.dead = false; h.down = false; h.hp = 100; h.x = h.px = g.x + 20; h.y = h.py = g.y; }`);
+  E(H, 'keys.KeyF = true');
+  const upG = await until(() => E(G1, 'me().down') === false, 8000);
+  E(H, 'keys.KeyF = false');
+  check('хост поднял гостя (F держать)', upG && E(G1, 'me().hp') === 25, E(G1, '[me().down, me().hp]'));
+  E(H, 'goDown(me(), 0)');
+  await sleep(300);
+  E(G1, `{ const h = G.players.find((q) => q.slot === 0); me().x = me().px = h.x + 20; me().y = me().py = h.y; }`);
+  await sleep(400);
+  E(G1, 'keys.KeyF = true');
+  const upH = await until(() => E(H, 'me().down') === false, 8000);
+  E(G1, 'keys.KeyF = false');
+  check('гость поднял хоста (F держать по сети)', upH && E(H, 'me().hp') === 25, E(H, '[me().down, me().hp]'));
+
+  // второй гость уходит — его место занимает бот
+  const g2slot = E(G2, 'G.mySlot');
+  E(G2, "leaveToMenu('')");
+  const bot = await until(() => E(H, `G.players.find((q) => q.slot === ${g2slot}).ai`) === true, 8000);
+  check('гость вышел — его место занял бот', bot);
+  await sleep(600);
+  check('у оставшегося гостя он тоже бот', E(G1, `G.players.find((q) => q.slot === ${g2slot}).ai`) === true);
+
+  // перезапуск хостом
+  const seq0 = E(G1, 'G.seq');
+  E(H, 'restartRange()');
+  const restarted = await until(() => E(G1, 'G.seq') !== seq0 && E(G1, 'G.players.length') === 4, 6000);
+  check('перезапуск у гостя', restarted && E(G1, 'me().hp') === 100 && !E(G1, 'map.doorAt.get(16 * map.w + 13).open'));
+
+  const errs = frames.flatMap((f, i) => E(f, '__errors').map((e) => ['H', 'G1', 'G2'][i] + ': ' + e));
+  check('без ошибок в консоли', !errs.length, errs.slice(0, 6));
+  post(true);
+}
+main().catch((e) => { check('сценарий', false, String(e) + ' ' + e.stack); post(true); });
+setInterval(() => post(false), 3000);
+</script>
+</body></html>

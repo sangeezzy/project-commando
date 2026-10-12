@@ -1,0 +1,45 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>mapview</title>
+<style>body{margin:0;background:#000;color:#fff;font:12px Consolas}</style></head>
+<body>
+<!-- Схема карты этапа: ?lv=1&st=2&s=8 (s — пикселей на клетку). Для проверки раскладки: headless --screenshot. -->
+<canvas id="c"></canvas>
+<script>const G = { time: 0 };</script>
+<script src="../js/util.js"></script>
+<script src="../js/data.js"></script>
+<script src="../js/world.js"></script>
+<script src="../js/levels.js"></script>
+<script>
+const q = new URLSearchParams(location.search);
+const lv = +(q.get('lv') || 1), st = +(q.get('st') || 1), S = +(q.get('s') || 8);
+buildStageMap(lv, st);
+const c = document.getElementById('c'), g = c.getContext('2d');
+c.width = map.w * S; c.height = map.h * S;
+const col = { [T.FLOOR]: null, [T.WALL]: '#2a2030', [T.LOW]: '#806070', [T.DEBRIS]: '#c08040', [T.GATE]: '#ff3344' };
+for (let y = 0; y < map.h; y++) for (let x = 0; x < map.w; x++) {
+  const i = y * map.w + x, t = map.grid[i];
+  if (t === T.FLOOR) g.fillStyle = map.dark[i] ? '#14142a' : ({ [FM.SAND]: '#4a3a20', [FM.CAMP]: '#203040', [FM.INDOOR]: '#3a2a40', [FM.PLAZA]: '#204040' }[map.fl[i]] || '#303038');
+  else g.fillStyle = col[t];
+  g.fillRect(x * S, y * S, S, S);
+}
+g.strokeStyle = 'rgba(255,255,255,0.08)';
+for (let x = 0; x < map.w; x += 10) { g.beginPath(); g.moveTo(x * S, 0); g.lineTo(x * S, c.height); g.stroke(); }
+for (let y = 0; y < map.h; y += 10) { g.beginPath(); g.moveTo(0, y * S); g.lineTo(c.width, y * S); g.stroke(); }
+const ecol = { S: '#b4ff3a', D: '#e8cf9a', C: '#ffd27a', K: '#8fb0ff', W: '#d07dff' };
+g.font = '10px Consolas';
+for (const e of map.ents) {
+  const x = e.x * S, y = e.y * S;
+  if (e.kind === 'enemy') {
+    g.fillStyle = ecol[e.t] || '#f00'; g.beginPath(); g.arc(x, y, S * 0.45, 0, 7); g.fill();
+    if (e.patrol) { g.strokeStyle = g.fillStyle; g.setLineDash([3, 3]); g.beginPath(); e.patrol.forEach(([px, py], k) => k ? g.lineTo((px + .5) * S, (py + .5) * S) : g.moveTo((px + .5) * S, (py + .5) * S)); g.closePath(); g.stroke(); g.setLineDash([]); }
+  } else {
+    const m = { spawn: ['#33ccff', 'P'], speeder: ['#ffffff', 'SP'], ally: ['#4da6ff', 'cl'], camera: ['#ff3344', 'cam'], npc: ['#ffe14d', e.role], item: ['#c77dff', 'ART'],
+      console: ['#ff3344', 'ST'], table: ['#ffb000', 'TBL'], crate: ['#4da6ff', 'SCN'], marker: ['#3dff8a', e.name], rv: ['#3dff8a', 'RV'], container: ['#ff5a5a', 'BOSS'],
+      pad: ['#9d8cff', 'PAD'], cpspawn: ['#3dff8a', 'cp:' + e.cp], mercspot: ['#ffe14d', 'm'], debris: ['#ffb000', e.id], gate: ['#ff3344', e.id] }[e.kind];
+    if (!m) continue;
+    g.fillStyle = m[0]; g.fillRect(x - 2, y - 2, 4, 4); g.fillText(m[1] || e.kind, x + 3, y - 3);
+  }
+}
+document.title = 'done';
+</script>
+</body></html>

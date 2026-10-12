@@ -1,0 +1,462 @@
+'use strict';
+// ---------- Отрисовка мира ----------
+
+const fogC = document.createElement('canvas'), fogX = fogC.getContext('2d');
+const VIS_RAYS = 720;
+
+const onScreen = (x, y, pad = 60) => Math.abs(x - G.cam.x) < VW / 2 / G.zoom + pad && Math.abs(y - G.cam.y) < VH / 2 / G.zoom + pad;
+
+// Видит ли игрок человека: прямая видимость (с учётом присевших за укрытием) и поле зрения
+function playerSees(p, o) {
+  const eye = eyeOf(p);
+  const d = Math.hypot(o.x - eye.x, o.y - eye.y);
+  if (d > NEAR_SENSE && Math.abs(angDiff(Math.atan2(o.y - eye.y, o.x - eye.x), p.a)) > PLAYER_FOV) return false;
+  if (sightLine(eye, o)) return true;
+  // высунувшийся из-за угла: видна голова
+  return Math.abs(o.lean || 0) > 0.25 && sightLine(eye, { x: o.lx, y: o.ly, crouch: o.crouch });
+}
+
+function render(dt = 1 / 60) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = '#1b1c1d';
+  ctx.fillRect(0, 0, VW, VH);
+  if (!map || G.state === 'menu' || G.state === 'lobby') return;   // меню и лобби — DOM поверх
+  const p = viewer();                 // чьими глазами: свой боец, после гибели — живой товарищ
+  const sh = G.shake, z = G.zoom;
+  const offX = Math.round(VW / 2 - G.cam.x * z + rand(-sh, sh)), offY = Math.round(VH / 2 - G.cam.y * z + rand(-sh, sh));
+  ctx.setTransform(z, 0, 0, z, offX, offY);
+  {
+    // видимый кусок заранее отрисованной карты (координаты мира)
+    const wx = -offX / z, wy = -offY / z, mc = map.canvas;
+    const x0 = Math.max(0, wx), y0 = Math.max(0, wy), x1 = Math.min(mc.width, wx + VW / z), y1 = Math.min(mc.height, wy + VH / z);
+    if (x1 > x0 && y1 > y0) ctx.drawImage(mc, x0, y0, x1 - x0, y1 - y0, x0, y0, x1 - x0, y1 - y0);
+  }
+  for (const d of G.decals) if (onScreen(d.x, d.y)) drawDecal(d);
+  for (const q of G.parts) if (q.shape === 5) drawPart(q);
+  for (const d of map.doors) if (onScreen(d.cx, d.cy)) drawDoor(d);
+  for (const k of map.keys) if (!k.taken && onScreen(k.x, k.y)) drawKey(k);
+  for (const o of allPeople()) if (o.dead && onScreen(o.x, o.y)) drawBody(o);
+  for (const e of G.enemies) {
+    if (e.dead || !onScreen(e.x, e.y)) { e.va = 0; continue; }
+    const v = p && (p.dead || playerSees(p, e)) ? 1 : 0;
+    e.va = (e.va || 0) + (v - (e.va || 0)) * Math.min(1, dt * 16);
+    if (e.va > 0.02) drawPerson(e, e.va);
+  }
+  // свой отряд виден всегда (связь, знаем, где свои)
+  for (const o of G.players) if (!o.dead && onScreen(o.x, o.y)) drawPerson(o, 1);
+  for (const q of G.parts) if (q.shape !== 5) drawPart(q);
+  const view = p && !p.dead ? viewPolygon(p) : null;
+  drawLighting(offX, offY, view);
+  // светится само: вспышки выстрелов; значки внимания — только у тех, кого можно разглядеть
+  ctx.setTransform(z, 0, 0, z, offX, offY);
+  drawLampDaylight();
+  drawMuzzle();
+  if (p && !p.dead) for (const o of allPeople()) if (o !== p && lampOn(o) && onScreen(o.x, o.y) && los(p.x, p.y, o.x, o.y)) drawLampGlare(o, p);
+  for (const e of G.enemies) if (!e.dead && e.va > 0.3 && perceivedAt(e.x, e.y) > LIGHT.seeMin) drawAwareness(e);
+  if (view) drawFog(offX, offY, p, view);
+  drawTeamTags();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  drawHUD();
+}
+
+// ---------- Двери и ключи ----------
+// Створка поворачивается вокруг петли внутрь помещения; выбитая деревянная лежит на полу
+function drawDoor(d) {
+  const DT = DOOR_TYPES[d.type];
+  const X = d.x * TILE, Y = d.y * TILE;
+  ctx.save();
+  if (d.broken) {
+    ctx.translate(d.cx + (d.horiz ? 4 : d.swing * 16), d.cy + (d.horiz ? d.swing * 16 : 4));
+    ctx.rotate((d.horiz ? 0 : Math.PI / 2) + 0.35 * d.swing);
+    ctx.fillStyle = DT.color; ctx.globalAlpha = 0.85;
+    ctx.fillRect(-TILE / 2 + 2, -DT.thick / 2, TILE - 4, DT.thick);
+    ctx.strokeStyle = DT.edge; ctx.lineWidth = 1; ctx.strokeRect(-TILE / 2 + 2.5, -DT.thick / 2, TILE - 5, DT.thick);
+    ctx.restore();
+    return;
+  }
+  // петля — у левого (или верхнего) края проёма
+  const hx = d.horiz ? X + 1 : d.cx, hy = d.horiz ? d.cy : Y + 1;
+  ctx.translate(hx, hy);
+  ctx.rotate((d.horiz ? 0 : Math.PI / 2) + (d.horiz ? 1 : -1) * d.swing * d.ang * Math.PI / 2);
+  const L = TILE - 2, th = DT.thick;
+  ctx.fillStyle = 'rgba(0,0,0,0.25)';
+  ctx.fillRect(2, -th / 2 + 2, L, th);                 // тень
+  ctx.fillStyle = DT.color;
+  ctx.fillRect(0, -th / 2, L, th);
+  ctx.strokeStyle = DT.edge; ctx.lineWidth = 1;
+  ctx.strokeRect(0.5, -th / 2 + 0.5, L - 1, th - 1);
+  if (d.type === 'armored') {
+    // бронедверь: рёбра жёсткости
+    ctx.beginPath(); for (let x = 6; x < L - 2; x += 6) { ctx.moveTo(x, -th / 2 + 1); ctx.lineTo(x, th / 2 - 1); } ctx.stroke();
+  } else if (d.type === 'metal') {
+    ctx.fillStyle = 'rgba(255,255,255,0.12)'; ctx.fillRect(1, -th / 2 + 1, L - 2, 1.5);
+  } else {
+    ctx.beginPath(); ctx.moveTo(1, 0); ctx.lineTo(L - 1, 0); ctx.globalAlpha = 0.4; ctx.stroke(); ctx.globalAlpha = 1;
+  }
+  // ручка и замок: цвет бирки ключа, если заперта
+  ctx.fillStyle = '#c8c0a0';
+  ctx.fillRect(L - 6, -th / 2 - 1.5, 3, th + 3);
+  if (d.locked) {
+    ctx.fillStyle = KEY_COLORS[d.key] || '#d0b030';
+    ctx.beginPath(); ctx.arc(L - 4.5, 0, 2.2, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawKey(k) {
+  const t = G.time * 2 + k.x;
+  ctx.save();
+  ctx.translate(k.x, k.y);
+  // слабый блик, чтобы ключ находился глазами
+  ctx.fillStyle = `rgba(255,240,180,${0.12 + 0.08 * Math.sin(t)})`;
+  ctx.beginPath(); ctx.arc(0, 0, 9, 0, Math.PI * 2); ctx.fill();
+  ctx.rotate(0.6);
+  ctx.strokeStyle = '#c9a646'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(-4, 0, 3, 0, Math.PI * 2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-1, 0); ctx.lineTo(7, 0); ctx.moveTo(5, 0); ctx.lineTo(5, 2.5); ctx.moveTo(7, 0); ctx.lineTo(7, 2.5); ctx.stroke();
+  ctx.fillStyle = k.color;
+  ctx.fillRect(-9, -2, 3, 4);                          // бирка
+  ctx.restore();
+}
+
+// Метки своих поверх тумана: цвет места и имя (бот — «бот»)
+function drawTeamTags() {
+  const mine = me();
+  ctx.save();
+  ctx.font = '11px Consolas, monospace';
+  ctx.textAlign = 'center';
+  for (const o of G.players) {
+    if (o === mine || !onScreen(o.x, o.y)) continue;
+    const c = SLOT_COLORS[o.slot] || '#fff';
+    ctx.globalAlpha = o.dead ? 0.5 : 0.95;
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    const label = o.name + (o.dead ? ' †' : o.down ? ` — ранен ${Math.ceil(o.bleed)} с` : '');
+    ctx.fillText(label, o.x + 1, o.y - 19);
+    ctx.fillStyle = o.down ? '#ff6050' : c;
+    ctx.fillText(label, o.x, o.y - 20);
+    if (o.down && o.rev > 0) {
+      ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(o.x - 16, o.y - 32, 32, 4);
+      ctx.fillStyle = '#9fe870'; ctx.fillRect(o.x - 16, o.y - 32, 32 * o.rev, 4);
+    }
+    ctx.beginPath(); ctx.moveTo(o.x - 4, o.y - 16); ctx.lineTo(o.x + 4, o.y - 16); ctx.lineTo(o.x, o.y - 12); ctx.closePath(); ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawDecal(d) {
+  if (d.casing) {
+    ctx.save(); ctx.translate(d.x, d.y); ctx.rotate(d.rot);
+    ctx.fillStyle = '#a88a3c'; ctx.fillRect(-2, -0.8, 4, 1.6);
+    ctx.restore();
+    return;
+  }
+  let r = d.r;
+  if (d.grow) r *= Math.min(1, 0.3 + (G.time - (d.t0 || (d.t0 = G.time))) / 6);
+  ctx.fillStyle = d.c;
+  ctx.beginPath(); ctx.arc(d.x, d.y, r, 0, Math.PI * 2); ctx.fill();
+}
+
+function drawPart(q) {
+  const k = q.life / q.max;
+  if (q.shape === 4) {
+    ctx.strokeStyle = q.color; ctx.globalAlpha = 0.35 * k; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(q.x, q.y); ctx.lineTo(q.x1, q.y1); ctx.stroke();
+    ctx.globalAlpha = 1;
+    return;
+  }
+  if (q.shape === 5) {
+    ctx.save(); ctx.translate(q.x, q.y); ctx.rotate(q.rot);
+    ctx.globalAlpha = Math.min(1, q.life); ctx.fillStyle = q.color;
+    ctx.fillRect(-4, -1.8, 8, 3.6); ctx.globalAlpha = 1;
+    ctx.restore();
+    return;
+  }
+  if (q.shape === 3) {
+    ctx.fillStyle = q.color; ctx.globalAlpha = k;
+    ctx.beginPath(); ctx.arc(q.x, q.y, q.size * (2 - k), 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = 1;
+    return;
+  }
+  ctx.globalAlpha = Math.min(1, k * 1.5);
+  if (q.shape === 1) {
+    ctx.strokeStyle = q.color; ctx.lineWidth = q.size;
+    ctx.beginPath(); ctx.moveTo(q.x, q.y); ctx.lineTo(q.x - q.vx * 0.02, q.y - q.vy * 0.02); ctx.stroke();
+  } else if (q.shape === 2) {
+    ctx.save(); ctx.translate(q.x, q.y); ctx.rotate(q.rot);
+    ctx.fillStyle = q.color; ctx.fillRect(-2, -0.8, 4, 1.6);
+    ctx.restore();
+  } else {
+    ctx.fillStyle = q.color;
+    ctx.fillRect(q.x - q.size / 2, q.y - q.size / 2, q.size, q.size);
+  }
+  ctx.globalAlpha = 1;
+}
+
+// Блик чужого фонаря: виден издалека, ослепляет, если светят прямо на игрока
+function drawLampGlare(o, p) {
+  const lx = o.x + Math.cos(o.a) * 20, ly = o.y + Math.sin(o.a) * 20;
+  const toP = Math.abs(angDiff(Math.atan2(p.y - o.y, p.x - o.x), o.a));
+  // сам источник лучше виден в темноте; большая слепящая вспышка — только если темно вокруг игрока
+  const k = 0.3 * (0.3 + 0.7 * glareDarkness(o.x, o.y)) + 0.7 * lampAngular(toP) * glareDarkness(p.x, p.y);
+  if (k < 0.03) return;
+  const r = 6 + 22 * k;
+  const g = ctx.createRadialGradient(lx, ly, 0, lx, ly, r);
+  g.addColorStop(0, `rgba(255,255,240,${0.95 * k + 0.05})`);
+  g.addColorStop(0.25, `rgba(255,250,220,${0.5 * k})`);
+  g.addColorStop(1, 'rgba(255,250,220,0)');
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(lx, ly, r, 0, Math.PI * 2); ctx.fill();
+}
+
+function drawMuzzle() {
+  if (!G.muzzle) return;
+  for (const m of G.muzzle) {
+    ctx.save(); ctx.translate(m.x, m.y); ctx.rotate(m.a);
+    ctx.fillStyle = 'rgba(255,230,150,0.9)';
+    ctx.beginPath(); ctx.moveTo(0, -3); ctx.lineTo(14, 0); ctx.lineTo(0, 3); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = 'rgba(255,200,100,0.35)';
+    ctx.beginPath(); ctx.arc(2, 0, 9, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+}
+
+// ---------- Люди сверху ----------
+// ---------- Анимация бойцов: плавные переходы между позами ----------
+// o.an — коэффициенты смешивания 0..1, догоняют целевую позу за доли секунды (время в секундах — постоянные τ).
+const ANIM = { crouch: 0.12, low: 0.09, reload: 0.08, ads: 0.08, death: 0.45 };
+const approach = (cur, target, dt, tau) => cur + (target - cur) * (1 - Math.exp(-dt / tau));
+const smooth01 = (t) => { t = clamp(t, 0, 1); return t * t * (3 - 2 * t); };
+
+function animTargets(o) {
+  const reloading = o.gun.reloadT > 0;
+  const ads = o.side === 'p' ? o.ads || 0 : o.st === 2 && o.seeing && !o.sprint && !reloading ? 1 : 0;
+  return { crouch: o.crouch ? 1 : 0, low: o.sprint ? 1 : 0, reload: reloading ? 1 : 0, ads };
+}
+
+function updateAnim(o, dt) {
+  const t = animTargets(o);
+  if (!o.an) { o.an = { ...t }; return; }
+  o.an.crouch = approach(o.an.crouch, t.crouch, dt, ANIM.crouch);
+  o.an.low = approach(o.an.low, t.low, dt, ANIM.low);
+  o.an.reload = approach(o.an.reload, t.reload, dt, ANIM.reload);
+  // у игрока прицел и так плавный (ADS_TIME), у противника — сглаживаем
+  o.an.ads = o.side === 'p' ? t.ads : approach(o.an.ads, t.ads, dt, ANIM.ads);
+}
+
+// Где магазин во время перезарядки: 0 — в оружии, 1 — вынут (плавно выходит и входит)
+function magOut(g) {
+  if (!(g.reloadT > 0)) return 0;
+  const f = 1 - g.reloadT / g.reloadDur;
+  if (f < 0.15) return 0;
+  if (f < 0.35) return smooth01((f - 0.15) / 0.2);
+  if (f < 0.65) return 1;
+  if (f < 0.8) return 1 - smooth01((f - 0.65) / 0.15);
+  return 0;
+}
+
+const lerp = (a, b, k) => a + (b - a) * k;
+
+function drawPerson(o, alpha) {
+  if (o.down) { drawDowned(o, alpha); return; }
+  if (!o.an) updateAnim(o, 0);
+  const an = o.an;
+  const isP = o.side === 'p';
+  const uni = isP ? PLAYER_COL : ENEMY_COL;
+  const s = 1 - 0.1 * an.crouch;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.translate(o.x, o.y);
+  // тень
+  ctx.fillStyle = 'rgba(0,0,0,0.25)';
+  ctx.beginPath(); ctx.ellipse(3, 3, 11 * s, 11 * s, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.rotate(o.a);
+  ctx.scale(s, s);
+  if (an.crouch > 0.02) {
+    // колени выдвигаются вперёд
+    ctx.fillStyle = uni;
+    ctx.globalAlpha = alpha * Math.min(1, an.crouch * 1.5);
+    const k = an.crouch;
+    ctx.beginPath(); ctx.ellipse(2 + 6 * k, -5, 4, 3, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(1 + 4 * k, 6, 4, 3, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = alpha;
+  }
+  if (o.act && o.act.kind === 'kick') {
+    // удар ногой: нога выстреливает вперёд и возвращается
+    const k = Math.sin(Math.PI * clamp(o.act.t / o.act.dur, 0, 1));
+    ctx.fillStyle = uni;
+    ctx.beginPath(); ctx.ellipse(4 + 12 * k, 3, 4 + 4 * k, 3.2, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#2a2622';
+    ctx.beginPath(); ctx.ellipse(8 + 16 * k, 3, 3.2, 2.6, 0, 0, Math.PI * 2); ctx.fill();   // ботинок
+  }
+  const g = o.gun;
+  const ads = an.ads;
+  const ln = o.leanPx || 0;                 // выглядывание: плечи наполовину, голова и оружие целиком
+  ctx.translate(0, ln * 0.5);
+  // оружие опущено: на бегу сильнее, при перезарядке — к себе
+  const lowK = Math.max(an.low, an.reload);
+  const rot = an.low * 0.75 + an.reload * 0.5 * (1 - an.low);
+  const mo = magOut(g);
+  // винтовка: длина ~0,76 м со сложенным прикладом
+  ctx.save();
+  ctx.translate(2 - ads * 1, 5 - ads * 4);
+  ctx.rotate(rot);
+  ctx.fillStyle = '#1a1a1a';
+  ctx.fillRect(-4, -1.6, 28, 3.2);                 // ствольная коробка и цевьё
+  ctx.fillRect(-8, -2, 5, 4);                      // приклад
+  if (mo < 0.98) {
+    ctx.globalAlpha = alpha * (1 - mo);
+    ctx.fillStyle = '#2a2a2a'; ctx.fillRect(6, 1.4 + mo * 6, 3.5, 4.5);   // магазин выходит вниз
+    ctx.globalAlpha = alpha;
+  }
+  ctx.fillStyle = '#333'; ctx.fillRect(4, -2.6, 6, 1.2);         // прицел
+  ctx.restore();
+  // руки: передняя — на цевье (с оружием опускается), задняя — на рукоятке, при перезарядке тянется к магазину
+  ctx.fillStyle = isP ? '#5e6b42' : '#4a4038';
+  const fx = lerp(15 - ads, 9, lowK), fy = lerp(5 - ads * 4, 9, lowK);
+  ctx.beginPath(); ctx.arc(fx, fy, 3, 0, Math.PI * 2); ctx.fill();
+  const reach = an.reload * Math.min(1, mo * 1.5 + 0.3);
+  const bx = lerp(3, 8, reach), by = lerp(7 - ads * 3, 11, reach);
+  ctx.beginPath(); ctx.arc(bx, by, 3, 0, Math.PI * 2); ctx.fill();
+  // плечи и разгрузка
+  ctx.fillStyle = uni;
+  ctx.beginPath(); ctx.ellipse(0, 0, 6.5, 11, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,0.45)'; ctx.lineWidth = 1; ctx.stroke();
+  ctx.fillStyle = isP ? '#55603c' : '#3a332c';
+  ctx.fillRect(-4.5, -6.5, 9, 13);
+  ctx.fillStyle = 'rgba(0,0,0,0.25)';
+  ctx.fillRect(1.5, -5.5, 2.5, 3); ctx.fillRect(1.5, 2.5, 2.5, 3);   // подсумки
+  if (isP && o.slot >= 0) { ctx.fillStyle = SLOT_COLORS[o.slot]; ctx.fillRect(-3, -10.5, 4, 3); }   // повязка: цвет места в отряде
+  // голова в шлеме: присев — чуть наклоняется вперёд; при выглядывании — дальше вбок
+  ctx.translate(0, ln * 0.5);
+  const hx = 0.5 + an.crouch * 1.5;
+  ctx.fillStyle = isP ? '#6a7350' : '#3f3a33';
+  ctx.beginPath(); ctx.arc(hx, 0, 5.4, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.stroke();
+  ctx.fillStyle = 'rgba(255,255,255,0.12)';
+  ctx.beginPath(); ctx.arc(hx - 1, -1.5, 2, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+
+function drawAwareness(e) {
+  if (e.st === 0 && e.notice < 0.05) return;
+  const x = e.x, y = e.y - 22;
+  const fight = e.st === 2;
+  ctx.save();
+  ctx.font = 'bold 14px Consolas, monospace';
+  ctx.textAlign = 'center';
+  if (fight) {
+    ctx.fillStyle = '#ff5040';
+    ctx.fillText('!', x, y + 4);
+  } else {
+    ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(x, y, 6, 0, Math.PI * 2); ctx.stroke();
+    ctx.strokeStyle = e.notice > 0.4 ? '#ffb030' : '#e8e0a0'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(x, y, 6, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Math.max(0.08, e.notice)); ctx.stroke();
+    ctx.fillStyle = ctx.strokeStyle; ctx.fillText('?', x, y + 4);
+  }
+  ctx.restore();
+}
+
+// Падение: боец оседает и смещается по направлению попадания, тело проявляется
+const deathK = (o) => smooth01((G.time - (o.deadT ?? -99)) / ANIM.death);
+
+// Раненый: лежит ничком головой туда, куда ползёт; оружие рядом
+function drawDowned(o, alpha) {
+  const uni = o.side === 'p' ? PLAYER_COL : ENEMY_COL;
+  const wob = Math.sin(G.time * 6 + o.id) * (o.speed > 2 ? 1.2 : 0.3);
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.translate(o.x, o.y);
+  ctx.rotate(o.a);
+  ctx.fillStyle = 'rgba(0,0,0,0.25)';
+  ctx.beginPath(); ctx.ellipse(2, 3, 16, 8, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = uni;
+  ctx.fillRect(-16, -4 + wob, 12, 3.5); ctx.fillRect(-16, 1 - wob, 12, 3.5);       // ноги
+  ctx.beginPath(); ctx.ellipse(0, 0, 9, 6.5, 0, 0, Math.PI * 2); ctx.fill();      // туловище
+  ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fillRect(-4, -4, 8, 8);
+  ctx.fillStyle = uni;
+  ctx.fillRect(4, -7 - wob, 9, 3); ctx.fillRect(4, 4 + wob, 9, 3);                // руки вперёд
+  ctx.fillStyle = o.side === 'p' ? '#6a7350' : '#3f3a33';
+  ctx.beginPath(); ctx.arc(11, 0, 5, 0, Math.PI * 2); ctx.fill();                 // голова
+  ctx.fillStyle = '#1a1a1a'; ctx.fillRect(-2, 8, 24, 2.6);                         // винтовка рядом
+  if (o.slot >= 0) { ctx.fillStyle = SLOT_COLORS[o.slot]; ctx.fillRect(-2, -8, 4, 3); }
+  ctx.restore();
+}
+
+function drawBody(o) {
+  const k = deathK(o);
+  if (k < 1) {
+    // стоящий боец заваливается: тает и сдвигается по направлению попадания
+    ctx.save();
+    ctx.translate(Math.cos(o.deadA) * 8 * k, Math.sin(o.deadA) * 8 * k);
+    drawPerson(o, 1 - k);
+    ctx.restore();
+  }
+  ctx.save();
+  ctx.globalAlpha = k;
+  ctx.translate(o.x + Math.cos(o.deadA) * 6, o.y + Math.sin(o.deadA) * 6);
+  ctx.rotate(o.deadA + (o.id % 2 ? 0.4 : -0.4));
+  const uni = o.side === 'p' ? PLAYER_COL : ENEMY_COL;
+  ctx.fillStyle = uni;
+  ctx.fillRect(-14, -5, 18, 10);                      // туловище
+  ctx.fillRect(4, -5, 12, 4); ctx.fillRect(4, 1, 13, 4);   // ноги
+  ctx.beginPath(); ctx.ellipse(-12, 0, 6, 9, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = o.side === 'p' ? '#6a7350' : '#3f3a33';
+  ctx.beginPath(); ctx.arc(-19, 0, 5, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#1a1a1a';
+  ctx.rotate(0.9); ctx.fillRect(-6, 12, 26, 3);         // выпавшая винтовка
+  ctx.restore();
+  ctx.globalAlpha = 1;
+}
+
+// ---------- Туман: всё, чего не видно из глаз бойца ----------
+// Многоугольник прямой видимости бойца (координаты мира)
+function viewPolygon(body) {
+  const p = { ...eyeOf(body), a: body.a };      // смотрим глазами (при выглядывании — из-за угла)
+  // присевший не видит поверх своего укрытия
+  const opq = p.crouch
+    ? (tx, ty, t) => { const k = tileAt(tx, ty); return opaqueT(k) || (k === T.LOW && t < COVER_NEAR); }
+    : opaqueTile;
+  const maxR = Math.hypot(VW, VH) / G.zoom;
+  const poly = new Path2D();
+  for (let i = 0; i < VIS_RAYS; i++) {
+    const a = (i / VIS_RAYS) * Math.PI * 2;
+    const dx = Math.cos(a), dy = Math.sin(a);
+    const hit = castRay(p.x, p.y, dx, dy, maxR, opq);
+    // закрытая дверь стоит посреди проёма — её створку видно целиком
+    const door = tileAt(Math.floor((p.x + dx * (hit + 1)) / TILE), Math.floor((p.y + dy * (hit + 1)) / TILE)) === T.DOOR;
+    const d = Math.min(maxR, hit + (door ? 22 : 6));
+    if (i === 0) poly.moveTo(p.x + dx * d, p.y + dy * d); else poly.lineTo(p.x + dx * d, p.y + dy * d);
+  }
+  poly.closePath();
+  return poly;
+}
+
+function drawFog(offX, offY, p, poly) {
+  if (fogC.width !== VW || fogC.height !== VH) { fogC.width = VW; fogC.height = VH; }
+  const g = fogX;
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.globalCompositeOperation = 'source-over';
+  g.clearRect(0, 0, VW, VH);
+  g.fillStyle = 'rgba(12,14,16,0.82)';
+  g.fillRect(0, 0, VW, VH);
+  const z = G.zoom, maxR = Math.hypot(VW, VH) / z;
+  g.setTransform(z, 0, 0, z, offX, offY);
+  const ox = p.lx ?? p.x, oy = p.ly ?? p.y;
+  g.globalCompositeOperation = 'destination-out';
+  // вне поля зрения (сзади и по бокам) — полутень
+  g.fillStyle = 'rgba(0,0,0,0.5)';
+  g.fill(poly);
+  g.save();
+  g.clip(poly);
+  g.fillStyle = '#000';
+  g.beginPath(); g.moveTo(ox, oy); g.arc(ox, oy, maxR, p.a - PLAYER_FOV, p.a + PLAYER_FOV); g.closePath(); g.fill();
+  g.beginPath(); g.arc(ox, oy, NEAR_SENSE, 0, Math.PI * 2); g.fill();
+  g.restore();
+  g.globalCompositeOperation = 'source-over';
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.drawImage(fogC, 0, 0);
+  ctx.restore();
+}
