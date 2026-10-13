@@ -1,0 +1,87 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>prof</title>
+<style>html,body{margin:0;overflow:hidden;background:#000}iframe{border:0;width:100vw;height:100vh;display:block}</style></head>
+<body>
+<!-- Профиль кадра: сцена боя (отряд с ботами, противники в тревоге), полная отрисовка со светом.
+     ?scene=fight|dark  &n=кадров  &raf=1 — настоящие кадры с выводом на экран (иначе подряд, без вывода).
+     Запуск: python tools/prof.py. Итог — JSON в элементе out и POST /report. -->
+<iframe id="f"></iframe>
+<pre id="out"></pre>
+<script>
+const q = new URLSearchParams(location.search);
+const scene = q.get('scene') || 'fight', N = +(q.get('n') || 600);
+const f = document.getElementById('f');
+f.src = new URL('../index.html?autotest=1&bots=1', location.href).href;
+f.onload = async () => {
+  const w = f.contentWindow;
+  w.__manualTick = true;
+  const out = { scene, n: N, w: 0, h: 0, fn: {}, frame: {} };
+  try {
+    w.eval('resize()');
+    out.w = w.eval('VW'); out.h = w.eval('VH');
+    // обёртки: время включительно (вложенные вызовы входят в родителя) и число вызовов
+    const names = ['update', 'render', 'updateWorld', 'updateAI', 'updateBullets', 'updateDoors', 'stepNoises', 'updateExposure', 'updateAnim',
+      'updateIntel', 'updateSquads', 'checkBodies', 'perceive', 'makeNoise', 'findCover', 'bfsFrom', 'soundField', 'weightedField', 'fieldTo',
+      'los', 'sightLine', 'castRay', 'lightAt', 'seenBrightness', 'glareAt', 'exposureKey',
+      'drawLighting', 'drawFog', 'viewPolygon', 'lightPoly', 'drawLamp', 'drawPerson', 'drawHUD', 'drawDecal', 'drawPart', 'playerSees',
+      'drawDoor', 'drawBody', 'drawLampGlare', 'drawLampDaylight', 'drawIntel', 'drawTeamTags', 'drawAwareness', 'drawMuzzle',
+      'fight', 'hunt', 'idle', 'planFlank', 'flankStep', 'tryCornerPeek', 'peekStep', 'suppressStep', 'coverToward', 'hiddenSpotNear', 'exposedTo',
+      'fireMoveCheck', 'freeSpotNear', 'coverNear', 'followLeader', 'downedToHelp', 'reviveStep', 'lookAround', 'doorFront', 'startDoorFire', 'moveDir', 'fieldStep'];
+    // ?skip=имя,имя — отключить функции (проверить, куда уходит время)
+    for (const nm of (q.get('skip') || '').split(',').filter(Boolean)) w[nm] = () => {};
+    for (const nm of names) {
+      const fn = w[nm];
+      if (typeof fn !== 'function') continue;
+      const rec = out.fn[nm] = { ms: 0, calls: 0, max: 0 };
+      let depth = 0;
+      w[nm] = function (...a) {
+        rec.calls++;
+        if (depth++) { try { return fn.apply(this, a); } finally { depth--; } }   // рекурсия: время один раз
+        const t0 = performance.now();
+        try { return fn.apply(this, a); } finally { const d = performance.now() - t0; rec.ms += d; if (d > rec.max) rec.max = d; depth--; }
+      };
+    }
+    w.eval(`
+      for (const p of G.players) { p.hp = 1e9; }
+      ${scene === 'dark' ? "{ const p = me(); p.x = p.px = 10.5 * TILE; p.y = p.py = 8.5 * TILE; p.lamp = true; }" : ''}
+      for (const e of G.enemies) alertEnemy(e, me().x, me().y, true);
+      for (let i = 0; i < 60; i++) { G.time += 1/60; update(1/60); render(1/60); }   // прогрев: разовые затраты (шейдеры, холсты) — не в замер
+    `);
+    for (const k in out.fn) { out.fn[k].ms = 0; out.fn[k].calls = 0; out.fn[k].max = 0; }
+    const ft = [];
+    // мышь гуляет, игрок медленно поворачивается — как в игре; отряд бессмертен
+    const prep = w.eval(`(i) => { mouse.x = VW / 2 + Math.cos(i / 40) * 300; mouse.y = VH / 2 + Math.sin(i / 40) * 200;
+      for (const p of G.players) if (p.hp < 1e6) p.hp = 1e9; }`);
+    const frame = w.eval('() => { G.time += 1 / 60; update(1 / 60); render(1 / 60); }');
+    if (q.get('raf')) {
+      // настоящие кадры: каждый выводится на экран (вместе с растеризацией), частота не ограничена (флаги Chrome в prof.py)
+      const t0 = performance.now();
+      let last = t0, i = 0;
+      await new Promise((done) => {
+        const step = () => {
+          const now = performance.now();
+          if (i) ft.push(now - last);
+          last = now;
+          if (i++ >= N) { done(); return; }
+          prep(i); frame();
+          w.requestAnimationFrame(step);
+        };
+        w.requestAnimationFrame(step);
+      });
+      out.fps = (ft.length * 1000) / (last - t0);
+    } else for (let i = 0; i < N; i++) {
+      prep(i);
+      const t0 = performance.now();
+      frame();
+      ft.push(performance.now() - t0);
+    }
+    const n = ft.length;
+    ft.sort((a, b) => a - b);
+    out.frame = { avg: ft.reduce((s, x) => s + x, 0) / n, p50: ft[n >> 1], p95: ft[Math.floor(n * 0.95)], max: ft[n - 1] };
+    out.state = w.eval('({ st: G.state, alive: G.enemies.filter((e) => !e.dead).length, bullets: G.bullets.length, decals: G.decals.length, parts: G.parts.length })');
+  } catch (e) { out.err = String(e) + ' ' + e.stack; }
+  document.getElementById('out').textContent = JSON.stringify(out);
+  fetch('/report', { method: 'POST', body: JSON.stringify(out) }).catch(() => {});
+};
+</script>
+</body></html>

@@ -180,27 +180,43 @@ const overAmount = (v) => clamp((v - 1) / LIGHT.overRange, 0, 1) * LIGHT.overexp
 // ---------- Отрисовка света ----------
 const lightC = document.createElement('canvas'), lightX = lightC.getContext('2d');
 
-// Многоугольник, куда достаёт свет из точки (стены задерживают), в координатах мира
+// Многоугольник, куда достаёт свет из точки (стены задерживают), в координатах мира.
+// Кэш: за кадр фонарь рисуется дважды (буфер света и дневной контур), стоящий — с того же места много кадров
+const lightPolyCache = new Map();
 function lightPoly(x, y, r, rays) {
-  const poly = new Path2D();
+  const key = `${x},${y},${r},${rays},${map.ver}`;
+  let poly = lightPolyCache.get(key);
+  if (poly) return poly;
+  if (lightPolyCache.size > 48) lightPolyCache.clear();
+  poly = new Path2D();
   for (let i = 0; i < rays; i++) {
     const a = (i / rays) * Math.PI * 2, dx = Math.cos(a), dy = Math.sin(a);
     const d = Math.min(r, castRay(x, y, dx, dy, r) + 4);
     if (i === 0) poly.moveTo(x + dx * d, y + dy * d); else poly.lineTo(x + dx * d, y + dy * d);
   }
   poly.closePath();
+  lightPolyCache.set(key, poly);
   return poly;
 }
 
-// k — общая сила (1 — свет в буфере освещения, меньше — дневной контур луча)
-function drawLamp(g, p, k = 1) {
+// Пятно фонаря (луч вправо, центр — боец), нарисованное один раз с размытием: размытие — самая дорогая операция canvas,
+// а форма пятна от кадра к кадру не меняется. Пересобирается, только если поменялись настройки фонаря.
+const LAMP_SPRITE_K = 0.5;       // пикселей заготовки на пиксель мира (пятно мягкое — полного разрешения не нужно)
+let lampSprite = null;
+function lampSpriteFor() {
   const R = LIGHT.lampRange;
-  g.save();
-  g.clip(lightPoly(p.x, p.y, R, 360));
+  const key = [R, LIGHT.lampCore, LIGHT.lampEdge, LIGHT.lampPower, LIGHT.lampSpill, LIGHT.lampSpillR].join();
+  if (lampSprite && lampSprite.key === key) return lampSprite.c;
+  const s = LAMP_SPRITE_K, size = Math.ceil(2 * R * s);
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const g = c.getContext('2d');
+  g.setTransform(s, 0, 0, s, size / 2, size / 2);
+  g.globalCompositeOperation = 'lighter';
   // рассеянный конус: слои от узкого ядра к широкому ореолу, плюс размытие
-  g.filter = g === ctx ? 'blur(8px)' : 'blur(3px)';    // буфер света в 4 раза мельче экрана
-  const gr = g.createRadialGradient(p.x, p.y, 0, p.x, p.y, R);
-  for (let i = 0; i <= 10; i++) gr.addColorStop(i / 10, `rgba(255,255,255,${LIGHT.lampPower * lampRadial((i / 10) * R) * k})`);
+  g.filter = `blur(${Math.max(1, Math.round(6 * s))}px)`;
+  const gr = g.createRadialGradient(0, 0, 0, 0, 0, R);
+  for (let i = 0; i <= 10; i++) gr.addColorStop(i / 10, `rgba(255,255,255,${LIGHT.lampPower * lampRadial((i / 10) * R)})`);
   g.fillStyle = gr;
   const N = 8;
   let prev = 1;
@@ -209,14 +225,28 @@ function drawLamp(g, p, k = 1) {
     const f = lampAngular(half - 1e-6);
     g.globalAlpha = Math.max(0, prev - f);
     prev = f;
-    g.beginPath(); g.moveTo(p.x, p.y); g.arc(p.x, p.y, R, p.a - half, p.a + half); g.closePath(); g.fill();
+    g.beginPath(); g.moveTo(0, 0); g.arc(0, 0, R, -half, half); g.closePath(); g.fill();
   }
   // отражённый свет вокруг бойца
   g.globalAlpha = 1;
-  const sp = g.createRadialGradient(p.x, p.y, 0, p.x, p.y, LIGHT.lampSpillR);
-  sp.addColorStop(0, `rgba(255,255,255,${LIGHT.lampSpill * k})`); sp.addColorStop(1, 'rgba(255,255,255,0)');
+  const sp = g.createRadialGradient(0, 0, 0, 0, 0, LIGHT.lampSpillR);
+  sp.addColorStop(0, `rgba(255,255,255,${LIGHT.lampSpill})`); sp.addColorStop(1, 'rgba(255,255,255,0)');
   g.fillStyle = sp;
-  g.fillRect(p.x - LIGHT.lampSpillR, p.y - LIGHT.lampSpillR, LIGHT.lampSpillR * 2, LIGHT.lampSpillR * 2);
+  g.fillRect(-LIGHT.lampSpillR, -LIGHT.lampSpillR, LIGHT.lampSpillR * 2, LIGHT.lampSpillR * 2);
+  lampSprite = { key, c };
+  return c;
+}
+
+// k — общая сила (1 — свет в буфере освещения, меньше — дневной контур луча)
+function drawLamp(g, p, k = 1) {
+  const R = LIGHT.lampRange;
+  g.save();
+  g.clip(lightPoly(p.x, p.y, R, 360));
+  g.translate(p.x, p.y);
+  g.rotate(p.a);
+  g.globalAlpha = k;
+  g.imageSmoothingEnabled = true;
+  g.drawImage(lampSpriteFor(), -R, -R, 2 * R, 2 * R);
   g.restore();
 }
 
@@ -264,7 +294,7 @@ function drawLighting(offX, offY, view) {
   if (view && gain > 1.01) {
     // вне видимости делим на усиление: после brightness(gain) там останется обычная яркость без засветки
     const outside = new Path2D();
-    outside.rect(-1e5, -1e5, 2e5, 2e5);
+    outside.rect(-offX / z - 8, -offY / z - 8, VW / z + 16, VH / z + 16);     // экран в координатах мира
     outside.addPath(view);
     const c = Math.round(255 / gain);
     g.globalCompositeOperation = 'multiply';
@@ -274,17 +304,34 @@ function drawLighting(offX, offY, view) {
   g.setTransform(1, 0, 0, 1, 0, 0);
   g.globalCompositeOperation = 'source-over';
 
+  // фильтры — на маленьком буфере (в LQ² раз меньше пикселей), на экран — только растянуть без фильтра.
+  // Без усиления (обычный день) фильтр не нужен, а засветки нет: в 8-битном буфере L ≤ 1, значит g·L ≤ 1
+  const lit = Math.abs(gain - 1) < 1e-3 ? lightC : lightPass(0, w, h, `brightness(${gain})`);
   ctx.save();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.imageSmoothingEnabled = true;
   ctx.globalCompositeOperation = 'multiply';
-  ctx.filter = `brightness(${gain})`;
-  ctx.drawImage(lightC, 0, 0, w * LQ, h * LQ);
-  // засветка (g·L − 1) / R: brightness(k) + contrast(c) дают c·k·L + 0,5 − 0,5c, откуда c = 1 + 2/R, k = g / (R·c)
-  const R = LIGHT.overRange, c = 1 + 2 / R;
-  ctx.globalCompositeOperation = 'lighter';
-  ctx.filter = `brightness(${gain / (R * c)}) contrast(${c})`;
-  ctx.globalAlpha = LIGHT.overexpose;
-  ctx.drawImage(lightC, 0, 0, w * LQ, h * LQ);
+  ctx.drawImage(lit, 0, 0, w, h, 0, 0, w * LQ, h * LQ);
+  if (gain > 1 + 1e-3) {
+    // засветка (g·L − 1) / R: brightness(k) + contrast(c) дают c·k·L + 0,5 − 0,5c, откуда c = 1 + 2/R, k = g / (R·c)
+    const R = LIGHT.overRange, c = 1 + 2 / R;
+    const over = lightPass(1, w, h, `brightness(${gain / (R * c)}) contrast(${c})`);
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = LIGHT.overexpose;
+    ctx.drawImage(over, 0, 0, w, h, 0, 0, w * LQ, h * LQ);
+  }
   ctx.restore();
+}
+
+// Буфер света через фильтр в отдельный маленький холст (i — какой из двух)
+const lightPassC = [0, 1].map(() => { const c = document.createElement('canvas'); return { c, g: c.getContext('2d') }; });
+function lightPass(i, w, h, filter) {
+  const { c, g } = lightPassC[i];
+  if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.globalCompositeOperation = 'copy';
+  g.filter = filter;
+  g.drawImage(lightC, 0, 0);
+  g.filter = 'none';
+  return c;
 }

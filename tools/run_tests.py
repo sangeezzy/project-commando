@@ -49,6 +49,7 @@ UNIT_TESTS = {
     'voice': '',
     'netaddr': '',
     'allies': 'bots=1',
+    'relay': '',
 }
 
 try:
@@ -231,11 +232,13 @@ def tls_proxy(port_to, cert, key):
     return port
 
 
-def run_netlocal(chrome, server='py', tls=False):
+def run_netlocal(chrome, server='py', tls=False, mode='ws'):
     """Прямое подключение: сервер хоста (server.py или server.ps1 — без Python), хост и 2 гостя через WebSocket.
-    tls — через https-прокси (как туннель tunnel.bat): страница по https, соединение wss. Интернет не нужен."""
-    title = {'py': 'server.py', 'ps1': 'server.ps1 (без Python)'}[server] + (' через https (как туннель)' if tls else '')
-    print(f'\n[netlocal] прямое подключение, {title}: хост + 2 гостя (около 30 с)')
+    tls — через https-прокси (как туннель tunnel.bat или онлайн-сервер): страница по https, соединение wss. Интернет не нужен.
+    mode='room' — онлайн-комната по коду (/ws?room=КОД, как на онлайн-сервере cloud/worker.js) и проверки протокола комнат."""
+    title = {'py': 'server.py', 'ps1': 'server.ps1 (без Python)'}[server] + (' через https' if tls else '')
+    what = 'онлайн-комната по коду' if mode == 'room' else 'прямое подключение'
+    print(f'\n[netlocal] {what}, {title}: хост + 2 гостя (около 30 с)')
     port = free_port()
     tmp = Path(tempfile.mkdtemp())
     rep = tmp / 'report.json'
@@ -269,7 +272,7 @@ def run_netlocal(chrome, server='py', tls=False):
     cmd = [chrome, '--headless=new', '--disable-gpu', f'--user-data-dir={prof}', '--remote-debugging-port=0',
            '--autoplay-policy=no-user-gesture-required', '--window-size=1800,1100', '--no-proxy-server',
            '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream',   # «микрофон» для голосового чата
-           '--ignore-certificate-errors', f'{base}/tools/net.html?mode=ws']
+           '--ignore-certificate-errors', f'{base}/tools/net.html?mode={mode}']
     proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     r = None
     try:
@@ -314,6 +317,8 @@ def main():
         run_netlocal(chrome, 'ps1')
         run_netlocal(chrome, 'py')
         run_netlocal(chrome, 'ps1', tls=True)
+        run_netlocal(chrome, 'py', tls=True, mode='room')
+        run_netlocal(chrome, 'ps1', mode='room')
     if args.net:
         run_net(chrome)
     print(f'\nИтого: {Report.total - Report.failed}/{Report.total} проверок прошло')

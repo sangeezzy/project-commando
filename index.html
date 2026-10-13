@@ -25,7 +25,7 @@
   button { cursor:pointer; min-width:240px; }
   button:hover:not(:disabled) { background:rgba(232,228,216,.1); }
   button:disabled { opacity:.35; cursor:default; }
-  #code { width:110px; text-transform:uppercase; text-align:center; letter-spacing:.3em; }
+  #code, #ocode { width:110px; text-transform:uppercase; text-align:center; letter-spacing:.3em; }
   #name { width:220px; text-align:center; }
   #btnJoin, #btnJoinLocal { min-width:110px; }
   #addr { width:300px; text-align:center; }
@@ -53,6 +53,7 @@
   .netrow { display:flex; gap:8px; justify-content:center; margin-top:6px; }
   .netrow button { min-width:0; flex:1; font-size:13px; }
   .netrow input { flex:1; }
+  #invite { width:340px; max-width:100%; font-size:13px; }
   #netReport { white-space:pre-wrap; color:var(--fg); font-size:12px; min-height:0; margin:6px 0; }
 </style>
 </head>
@@ -67,6 +68,15 @@
     <label><input type="checkbox" id="botsChk" checked> Заполнять пустые места союзными ботами</label>
     <button id="btnSolo">ИГРАТЬ ОДНОМУ</button>
     <div class="block">
+      <div class="btitle">Онлайн — через интернет по коду комнаты</div>
+      <button id="btnHostOnline">СОЗДАТЬ ОНЛАЙН-КОМНАТУ</button>
+      <div class="row">
+        <input type="text" id="ocode" placeholder="КОД" maxlength="5" autocomplete="off" spellcheck="false">
+        <button id="btnJoinOnline">ВОЙТИ</button>
+      </div>
+      <div class="help" id="onlineHelp"></div>
+    </div>
+    <div class="block">
       <div class="btitle">Прямое подключение — без интернета и сторонних серверов</div>
       <button id="btnHostLocal">СОЗДАТЬ КОМНАТУ НА ЭТОМ КОМПЬЮТЕРЕ</button>
       <div class="row">
@@ -79,7 +89,7 @@
         Друзья открывают адрес или ссылку в браузере и жмут «Войти» (адрес подставится сам).</div>
     </div>
     <div class="block">
-      <div class="btitle">Через интернет (PeerJS)</div>
+      <div class="btitle">Через интернет напрямую (PeerJS, запасной вариант)</div>
       <button id="btnHost">СОЗДАТЬ КОМНАТУ</button>
       <div class="row">
         <input type="text" id="code" placeholder="КОД" maxlength="5" autocomplete="off" spellcheck="false">
@@ -88,7 +98,12 @@
     </div>
     <div id="status"></div>
     <details id="netBox">
-      <summary>Сеть: проверка и свой TURN-сервер</summary>
+      <summary>Сеть: онлайн-сервер, проверка, свой TURN-сервер</summary>
+      <div class="help">Онлайн-сервер (для «Онлайн»): пусто — сервер, с которого открыта игра. Свой — после deploy.bat: https://project-commando.<i>имя</i>.workers.dev</div>
+      <div class="netrow">
+        <input type="text" id="relayAddr" placeholder="https://….workers.dev" autocomplete="off" spellcheck="false">
+        <button id="btnRelaySave">СОХРАНИТЬ</button>
+      </div>
       <div class="netrow"><button id="btnNetCheck">ПРОВЕРИТЬ СЕТЬ</button></div>
       <pre id="netReport"></pre>
       <div class="help">Если соединение не устанавливается («прямое соединение не удалось»), нужен TURN-ретранслятор.<br>
@@ -111,6 +126,7 @@
   <div class="screen hidden" id="lobby">
     <h2>ОТРЯД</h2>
     <div class="sub" id="lobbyCode"></div>
+    <div class="row hidden" id="inviteRow"><input type="text" id="invite" readonly><button id="btnCopyInvite">КОПИРОВАТЬ</button></div>
     <div id="slots"></div>
     <label><input type="checkbox" id="lobbyBots"> Пустые места занимают союзные боты</label>
     <div class="row"><label><input type="checkbox" id="voiceChk"> Голосовой чат (микрофон): рядом слышно без рации, <b>B</b> — рация, <b>M</b> — микрофон</label></div>

@@ -7,7 +7,7 @@
 <style>iframe{width:600px;height:380px;border:0}</style>
 <iframe id="h"></iframe><iframe id="g1"></iframe><iframe id="g2"></iframe>
 <script>
-const MODE = new URLSearchParams(location.search).get('mode') || 'peer';   // peer — через PeerJS, ws — прямое подключение (server.py)
+const MODE = new URLSearchParams(location.search).get('mode') || 'peer';   // peer — через PeerJS, ws — прямое подключение (server.py), room — онлайн-комната по коду
 const frames = ['h', 'g1', 'g2'].map((id) => document.getElementById(id));
 const [H, G1, G2] = frames;
 const log = [], checks = [];
@@ -30,6 +30,50 @@ function load(f) {
   });
 }
 
+// Протокол комнат сервера напрямую: две комнаты сразу, занятый код, нет комнаты, неверный код, общая комната
+function wsOpen(q) {
+  const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws' + q);
+  ws.got = [];
+  ws.onmessage = (e) => ws.got.push(String(e.data));
+  return new Promise((res) => { ws.onopen = () => res(ws); ws.onerror = () => res(ws); });
+}
+async function roomProtocol() {
+  const a = await wsOpen('?room=QA111'), b = await wsOpen('?room=QA222');
+  a.send('H'); b.send('H');
+  await until(() => a.got.length && b.got.length, 3000, 50);
+  check('сервер: две онлайн-комнаты одновременно', a.got[0] === 'O|' && b.got[0] === 'O|', [a.got, b.got]);
+  const dup = await wsOpen('?room=QA111');
+  dup.send('H');
+  const ga = await wsOpen('?room=QA111');
+  ga.send('G');
+  const none = await wsOpen('?room=QA333');
+  none.send('G');
+  const bad = await wsOpen('?room=x!');
+  bad.send('G');
+  await until(() => dup.got.length && ga.got.length && none.got.length && bad.got.length, 3000, 50);
+  check('сервер: код занят — host-exists', dup.got[0] === 'E|host-exists', dup.got);
+  check('сервер: нет комнаты — no-host, неверный код — bad-room', none.got[0] === 'E|no-host' && bad.got[0] === 'E|bad-room', [none.got, bad.got]);
+  await until(() => a.got.length > 1, 2000, 50);
+  check('сервер: гость входит в свою комнату (W у гостя, J только у её хоста)', /^W\d+$/.test(ga.got[0]) && /^J\d+$/.test(a.got[1]) && b.got.length === 1, [ga.got, a.got, b.got]);
+  ga.send('M|{"x":1}');
+  a.send('A|{"y":2}');
+  await until(() => a.got.length > 2 && ga.got.length > 1, 2000, 50);
+  check('сервер: пересылка в комнате (гость → хост F, хост → всем M)', a.got[2] === 'F' + ga.got[0].slice(1) + '|{"x":1}' && ga.got[1] === 'M|{"y":2}', [a.got, ga.got]);
+  a.close();
+  await until(() => ga.got.includes('X'), 2000, 50);
+  check('сервер: хост ушёл — гостю X, код снова свободен', ga.got.includes('X'), ga.got);
+  const again = await wsOpen('?room=QA111');
+  again.send('H');
+  await until(() => again.got.length, 2000, 50);
+  check('сервер: освободившийся код можно занять заново', again.got[0] === 'O|', again.got);
+  const def = await wsOpen('');
+  def.send('G');
+  await until(() => def.got.length, 2000, 50);
+  check('сервер: общая комната (/ws без кода) отдельно от онлайн-комнат', def.got[0] === 'E|no-host', def.got);
+  for (const w of [b, dup, ga, none, bad, again, def]) w.close();
+  await sleep(300);
+}
+
 async function main() {
   await Promise.all(frames.map(load));
   log.push('загружено, режим ' + MODE);
@@ -40,13 +84,24 @@ async function main() {
     check(`проверка сети: внешний адрес (STUN) ${nc.srflx ? 'определён' : 'НЕ определён'} с этой машины (справочно: зависит от сети и прокси)`, true, nc);
     check(`проверка сети: TURN PeerJS ${nc.relay ? 'доступен' : 'НЕ доступен'} с этого компьютера (справочно)`, true, nc);
   }
-  const hostBtn = MODE === 'ws' ? 'btnHostLocal' : 'btnHost';
+  if (MODE === 'room') await roomProtocol();
+  const hostBtn = { ws: 'btnHostLocal', room: 'btnHostOnline', peer: 'btnHost' }[MODE];
   E(H, `document.getElementById('name').value = 'Хост'; document.getElementById('botsChk').checked = true; document.getElementById('${hostBtn}').click()`);
   if (!await until(() => E(H, "G.role === 'host' && G.state === 'lobby'"), 15000)) { check('комната создана', false, E(H, "document.getElementById('status').textContent")); return postFinal(); }
   const code = E(H, 'Net.code');
   log.push(MODE === 'ws' ? 'адреса ' + E(H, 'Net.addrs.join(", ")') : 'код ' + code);
+  if (MODE === 'room') {
+    check('онлайн-комната: код из 5 знаков, в лобби — код', /^[A-Z0-9]{5}$/.test(code) && E(H, "document.getElementById('lobbyCode').textContent").includes(code),
+      [code, E(H, "document.getElementById('lobbyCode').textContent")]);
+    check('ссылка-приглашение с кодом', E(H, `inviteLink('${code}')`).endsWith('/?room=' + code), E(H, `inviteLink('${code}')`));
+    // неверный код — понятная ошибка, гость остаётся в меню
+    E(G2, "joinOnline('ZZZZ9')");
+    await until(() => E(G2, "document.getElementById('status').textContent").includes('не найдена'), 5000);
+    check('неверный код — «комната не найдена»', E(G2, "document.getElementById('status').textContent").includes('не найдена') && E(G2, "G.role") === 'none',
+      E(G2, "document.getElementById('status').textContent"));
+  }
   if (MODE === 'ws') check('хост видит адреса для друзей', E(H, "document.getElementById('lobbyCode').textContent").includes('http://'), E(H, "document.getElementById('lobbyCode').textContent"));
-  const join = MODE === 'ws' ? `joinLocal('${location.host}')` : `joinGame('${code}')`;
+  const join = { ws: `joinLocal('${location.host}')`, room: `joinOnline('${code.toLowerCase()}')`, peer: `joinGame('${code}')` }[MODE];
   E(G1, "document.getElementById('name').value = 'Первый'; readName(); " + join);
   await until(() => E(G1, 'Net.connected'), 15000);
   E(G2, "document.getElementById('name').value = 'Второй'; readName(); " + join);

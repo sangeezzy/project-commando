@@ -1,7 +1,6 @@
 'use strict';
 // ---------- Отрисовка мира ----------
 
-const fogC = document.createElement('canvas'), fogX = fogC.getContext('2d');
 const VIS_RAYS = 720;
 
 const onScreen = (x, y, pad = 60) => Math.abs(x - G.cam.x) < VW / 2 / G.zoom + pad && Math.abs(y - G.cam.y) < VH / 2 / G.zoom + pad;
@@ -455,31 +454,29 @@ function viewPolygon(body) {
   return poly;
 }
 
+// Туман прямо на экран, без промежуточного полноэкранного холста: вне видимости — 0,82, в видимости вне поля зрения
+// (сзади и по бокам) — полутень 0,41, в поле зрения и вплотную (NEAR_SENSE) — чисто
 function drawFog(offX, offY, p, poly) {
-  if (fogC.width !== VW || fogC.height !== VH) { fogC.width = VW; fogC.height = VH; }
-  const g = fogX;
-  g.setTransform(1, 0, 0, 1, 0, 0);
-  g.globalCompositeOperation = 'source-over';
-  g.clearRect(0, 0, VW, VH);
-  g.fillStyle = 'rgba(12,14,16,0.82)';
-  g.fillRect(0, 0, VW, VH);
   const z = G.zoom, maxR = Math.hypot(VW, VH) / z;
-  g.setTransform(z, 0, 0, z, offX, offY);
   const ox = p.lx ?? p.x, oy = p.ly ?? p.y;
-  g.globalCompositeOperation = 'destination-out';
-  // вне поля зрения (сзади и по бокам) — полутень
-  g.fillStyle = 'rgba(0,0,0,0.5)';
-  g.fill(poly);
-  g.save();
-  g.clip(poly);
-  g.fillStyle = '#000';
-  g.beginPath(); g.moveTo(ox, oy); g.arc(ox, oy, maxR, p.a - PLAYER_FOV, p.a + PLAYER_FOV); g.closePath(); g.fill();
-  g.beginPath(); g.arc(ox, oy, NEAR_SENSE, 0, Math.PI * 2); g.fill();
-  g.restore();
-  g.globalCompositeOperation = 'source-over';
-  g.setTransform(1, 0, 0, 1, 0, 0);
   ctx.save();
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.drawImage(fogC, 0, 0);
+  ctx.setTransform(z, 0, 0, z, offX, offY);
+  // рамка — экран в координатах мира (огромный прямоугольник растеризатор обрабатывает заметно дольше)
+  const sx = -offX / z - 8, sy = -offY / z - 8, sw = VW / z + 16, sh = VH / z + 16;
+  const outside = new Path2D();
+  outside.rect(sx, sy, sw, sh);
+  outside.addPath(poly);
+  ctx.fillStyle = 'rgba(12,14,16,0.82)';
+  ctx.fill(outside, 'evenodd');
+  // поле зрения вместе с кругом вплотную — один контур «замочная скважина»: сектор впереди, дуга малого радиуса сзади
+  const seen = new Path2D();
+  seen.rect(sx, sy, sw, sh);
+  seen.moveTo(ox + Math.cos(p.a - PLAYER_FOV) * maxR, oy + Math.sin(p.a - PLAYER_FOV) * maxR);
+  seen.arc(ox, oy, maxR, p.a - PLAYER_FOV, p.a + PLAYER_FOV);
+  seen.arc(ox, oy, NEAR_SENSE, p.a + PLAYER_FOV, p.a - PLAYER_FOV + Math.PI * 2);
+  seen.closePath();
+  ctx.clip(poly);
+  ctx.fillStyle = 'rgba(12,14,16,0.41)';
+  ctx.fill(seen, 'evenodd');
   ctx.restore();
 }

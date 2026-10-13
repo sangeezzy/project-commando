@@ -26,7 +26,8 @@ const peerOptions = () => ({ debug: 1, config: { iceServers: iceServers() } });
 
 const Net = {
   peer: null, conn: null, conns: new Map(), code: '', sendT: 0, connected: false,
-  mode: null,                                   // 'peer' — через интернет (PeerJS), 'ws' — прямое подключение (server.py)
+  mode: null,                                   // 'peer' — через интернет (PeerJS), 'ws' — через сервер (server.py / ретранслятор)
+  online: false,                                // ws по коду комнаты на онлайн-сервере, а не общая комната сервера хоста
   ws: null, wsConns: new Map(), addrs: [],
   inp: { fire: false, press: 0, acts: [] },     // гость: накопленный ввод до следующего пакета
 };
@@ -39,6 +40,11 @@ function send(msg) {
   if (Net.conn && Net.conn.open) { try { Net.conn.send(msg); } catch (e) { /* канал закрыт */ } }
 }
 function broadcast(msg) {
+  // через сервер — одно сообщение «всем гостям» (A|) вместо копии каждому: меньше трафика у хоста и запросов у ретранслятора
+  if (Net.mode === 'ws') {
+    if (Net.ws && Net.ws.readyState === 1 && [...Net.conns.values()].some((c) => c.open)) Net.ws.send('A|' + JSON.stringify(msg));
+    return;
+  }
   for (const c of Net.conns.values()) if (c.open) { try { c.send(msg); } catch (e) { /* ignore */ } }
 }
 
@@ -278,23 +284,64 @@ function wsTarget(input) {
   return { url: (secure ? 'wss://' : 'ws://') + s + '/ws', host: s, secure };
 }
 
+// Онлайн: сервер-ретранслятор в интернете (cloud/worker.js на Cloudflare или server.py на VPS) — комнаты по коду.
+// Адрес: свой из меню «Сеть» (localStorage pcr-relay) → RELAY_URL → сервер, с которого открыта игра.
+const RELAY_URL = '';            // после deploy.bat можно вписать сюда https://project-commando.<имя>.workers.dev
+function relayAddr() {
+  let s = '';
+  try { s = (localStorage.getItem('pcr-relay') || '').trim(); } catch (e) { /* ignore */ }
+  if (s && !/^[a-z]+:\/\//i.test(s) && !/:\d+(\/|$)/.test(s)) s = 'https://' + s;   // имя без схемы и порта — https (workers.dev)
+  return s || RELAY_URL || (servedByServer() ? location.host : '');
+}
+const relayIsLocal = () => /^(localhost|127\.0\.0\.1)(:|$)/.test((wsTarget(relayAddr()) || {}).host || '');
+// Ссылка-приглашение: игра с онлайн-сервера, код подставится сам (?room=КОД)
+function inviteLink(code) {
+  const tg = wsTarget(relayAddr());
+  return tg ? (tg.secure ? 'https://' : 'http://') + tg.host + '/?room=' + code : '';
+}
+const NO_RELAY = 'Онлайн-сервер не задан: откройте игру по ссылке онлайн-сервера (deploy.bat) или укажите его адрес в «Сеть».';
+
+function hostOnline(tries = 0) {
+  const tg = wsTarget(relayAddr());
+  if (!tg) { setStatus(NO_RELAY); return; }
+  const code = randomCode();
+  // код занят другой комнатой — взять другой
+  hostWs(tg, code, (err) => err === 'host-exists' && tries < 5 && (hostOnline(tries + 1), true));
+}
+
 function hostLocal() {
   if (!servedByServer()) {
     setStatus('Для прямого подключения запустите игру через start.bat — она откроется по адресу http://localhost:8000.');
     return;
   }
+  hostWs(wsTarget(location.host), '', null);
+}
+
+// Хост на сервере: общая комната сервера хоста (code = '') или комната по коду на онлайн-сервере
+function hostWs(tg, code, onErr) {
   cleanupNet();
-  setStatus('Создаём комнату на этом компьютере…');
-  const ws = new WebSocket(wsTarget(location.host).url);
-  Net.ws = ws; Net.mode = 'ws';
+  const online = !!code;
+  setStatus(online ? `Создаём онлайн-комнату на ${tg.host}…` : 'Создаём комнату на этом компьютере…');
+  let ws;
+  try { ws = new WebSocket(tg.url + (online ? '?room=' + code : '')); } catch (e) { setStatus('Неверный адрес сервера: ' + tg.host); return; }
+  Net.ws = ws; Net.mode = 'ws'; Net.online = online;
+  const timeout = setTimeout(() => {
+    if (Net.ws === ws && G.role !== 'host') { setStatus(`Сервер ${tg.host} не отвечает. Проверьте интернет и адрес сервера («Сеть»).`); cleanupNet(); }
+  }, 10000);
   ws.onopen = () => ws.send('H');
   ws.onmessage = (ev) => {
     const m = String(ev.data), k = m[0];
     if (k === 'E') {
-      setStatus(m.slice(2) === 'host-exists' ? 'На этом сервере комната уже создана (игра открыта в другой вкладке?).' : 'Ошибка сервера: ' + m.slice(2));
+      clearTimeout(timeout);
+      const err = m.slice(2);
       cleanupNet();
+      if (onErr && onErr(err)) return;
+      setStatus(err !== 'host-exists' ? 'Ошибка сервера: ' + err
+        : online ? 'Не удалось подобрать свободный код комнаты — попробуйте ещё раз.' : 'На этом сервере комната уже создана (игра открыта в другой вкладке?).');
     } else if (k === 'O') {
+      clearTimeout(timeout);
       Net.addrs = m.slice(2) ? m.slice(2).split(',') : [];
+      Net.code = code;
       G.role = 'host'; G.mySlot = 0;
       Lobby.slots = emptySlots();
       Object.assign(Lobby.slots[0], { human: true, name: G.myName });
@@ -315,8 +362,9 @@ function hostLocal() {
   };
   ws.onclose = () => {
     if (Net.ws !== ws) return;
-    if (G.role === 'host') leaveToMenu('Связь с сервером игры потеряна — окно сервера (start.bat) закрыто?');
-    else { setStatus('Сервер игры не отвечает — запустите start.bat.'); cleanupNet(); }
+    clearTimeout(timeout);
+    if (G.role === 'host') leaveToMenu(online ? 'Связь с онлайн-сервером потеряна. Проверьте интернет.' : 'Связь с сервером игры потеряна — окно сервера (start.bat) закрыто?');
+    else { setStatus(online ? `Не удалось подключиться к онлайн-серверу ${tg.host}.` : 'Сервер игры не отвечает — запустите start.bat.'); cleanupNet(); }
   };
 }
 
@@ -332,18 +380,33 @@ function wsConn(ws, id) {
 function joinLocal(addr) {
   const tg = wsTarget(addr);
   if (!tg) { setStatus('Введите адрес хоста: 192.168.1.5:8000, 26.x.x.x:8000 или ссылку https://… от tunnel.bat'); return; }
+  joinWs(tg, '');
+}
+
+function joinOnline(code) {
+  code = (code || '').trim().toUpperCase();
+  if (!/^[A-Z0-9]{5}$/.test(code)) { setStatus('Введите 5-значный код комнаты'); return; }
+  const tg = wsTarget(relayAddr());
+  if (!tg) { setStatus(NO_RELAY); return; }
+  joinWs(tg, code);
+}
+
+// Гость на сервере: сервер хоста (code = '') или комната по коду на онлайн-сервере
+function joinWs(tg, code) {
   cleanupNet();
-  setStatus(`Подключаемся к ${tg.host}…`);
+  const online = !!code;
+  setStatus(online ? `Ищем комнату ${code} на ${tg.host}…` : `Подключаемся к ${tg.host}…`);
   let ws;
-  try { ws = new WebSocket(tg.url); } catch (e) { setStatus('Неверный адрес: ' + addr); return; }
-  Net.ws = ws; Net.mode = 'ws';
+  try { ws = new WebSocket(tg.url + (online ? '?room=' + code : '')); } catch (e) { setStatus('Неверный адрес: ' + tg.host); return; }
+  Net.ws = ws; Net.mode = 'ws'; Net.online = online;
   const conn = {
     open: false,
     send(d) { if (ws.readyState === 1) ws.send('M|' + JSON.stringify(d)); },
     close() { try { ws.close(); } catch (e) { /* ignore */ } },
   };
   Net.conn = conn;
-  const hint = tg.secure ? 'Ссылка туннеля ещё действует (окно tunnel.bat у хоста открыто)?'
+  const hint = online ? 'Проверьте интернет и адрес онлайн-сервера («Сеть»).'
+    : tg.secure ? 'Ссылка туннеля ещё действует (окно tunnel.bat у хоста открыто)?'
     : 'Хост запустил start.bat? Адрес открывается в браузере? Фаервол хоста разрешил доступ?';
   const timeout = setTimeout(() => {
     if (Net.connected || Net.ws !== ws) return;
@@ -355,7 +418,9 @@ function joinLocal(addr) {
     const m = String(ev.data), k = m[0];
     if (k === 'E') {
       clearTimeout(timeout);
-      setStatus(m.slice(2) === 'no-host' ? 'Сервер найден, но комнаты ещё нет: хост должен нажать «Создать комнату на этом компьютере».' : 'Ошибка сервера: ' + m.slice(2));
+      const err = m.slice(2);
+      setStatus(err === 'no-host' ? (online ? `Комната ${code} не найдена. Проверьте код; хост должен быть в лобби.` : 'Сервер найден, но комнаты ещё нет: хост должен нажать «Создать комнату на этом компьютере».')
+        : err === 'full' ? 'Комната заполнена' : err === 'bad-room' ? 'Неверный код комнаты' : 'Ошибка сервера: ' + err);
       cleanupNet();
     } else if (k === 'W') {
       conn.open = true;
@@ -366,7 +431,7 @@ function joinLocal(addr) {
     } else if (k === 'M') {
       let d;
       try { d = JSON.parse(m.slice(2)); } catch (e) { return; }
-      onGuestData(d, timeout, tg.host);
+      onGuestData(d, timeout, code || tg.host);
     }
   };
   ws.onclose = () => {
@@ -527,7 +592,7 @@ function cleanupNet() {
   const ws = Net.ws;
   Net.ws = null;
   try { if (ws) ws.close(); } catch (e) { /* ignore */ }
-  Net.wsConns.clear(); Net.mode = null;
+  Net.wsConns.clear(); Net.mode = null; Net.online = false;
   try { if (Net.conn) Net.conn.close(); } catch (e) { /* ignore */ }
   for (const c of Net.conns.values()) { try { c.close(); } catch (e) { /* ignore */ } }
   try { if (Net.peer) Net.peer.destroy(); } catch (e) { /* ignore */ }

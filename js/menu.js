@@ -29,7 +29,11 @@ function enterLobby() {
 function renderLobby() {
   const isHost = G.role !== 'guest';
   const nHum = Lobby.slots.filter((s) => s.human).length;
+  const invite = G.role === 'host' && Net.online && !relayIsLocal() ? inviteLink(Net.code) : '';
+  document.getElementById('inviteRow').classList.toggle('hidden', !invite);
+  document.getElementById('invite').value = invite;
   document.getElementById('lobbyCode').textContent = G.role === 'solo' ? 'ИГРА ОДНОМУ'
+    : Net.online ? `ОНЛАЙН · КОД КОМНАТЫ: ${Net.code} · ИГРОКОВ: ${nHum} из 4` + (invite ? ' · ссылка для друзей (код подставится сам):' : '')
     : Net.mode === 'ws' ? `ПРЯМОЕ ПОДКЛЮЧЕНИЕ · ДРУЗЬЯМ: ${(Net.addrs || []).map((a) => 'http://' + a).join('  или  ') || location.host}` +
       ` (через интернет — ссылка из tunnel.bat) · ИГРОКОВ: ${nHum} из 4`
     : `КОД КОМНАТЫ: ${Net.code} · ИГРОКОВ: ${nHum} из 4`;
@@ -113,6 +117,34 @@ document.getElementById('btnJoinLocal').addEventListener('click', () => { initAu
 addrEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') { initAudio(); readName(); joinLocal(addrEl.value); } });
 // игру открыли по адресу хоста (не localhost) — скорее всего, чтобы войти к нему: подставить адрес
 if (servedByServer() && !/^(localhost|127\.0\.0\.1)(:|$)/.test(location.host)) addrEl.value = location.host;
+// Онлайн: комнаты по коду на онлайн-сервере
+const ocodeEl = document.getElementById('ocode');
+document.getElementById('btnHostOnline').addEventListener('click', () => { initAudio(); readName(); Lobby.bots = botsChk.checked; hostOnline(); });
+document.getElementById('btnJoinOnline').addEventListener('click', () => { initAudio(); readName(); joinOnline(ocodeEl.value); });
+ocodeEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') { initAudio(); readName(); joinOnline(ocodeEl.value); } });
+// ссылка-приглашение …/?room=КОД — код подставлен
+{ const r = new URLSearchParams(location.search).get('room'); if (r) ocodeEl.value = r.toUpperCase().slice(0, 5); }
+document.getElementById('btnCopyInvite').addEventListener('click', () => {
+  const el = document.getElementById('invite');
+  el.select();
+  (navigator.clipboard ? navigator.clipboard.writeText(el.value) : Promise.reject()).catch(() => document.execCommand('copy'));
+});
+const relayEl = document.getElementById('relayAddr'), onlineHelpEl = document.getElementById('onlineHelp');
+function renderOnlineHelp() {
+  const a = relayAddr();
+  const setup = 'Для игры через интернет хост один раз запускает deploy.bat (бесплатный Cloudflare) и шлёт друзьям ссылку https://….workers.dev, или укажите адрес сервера в «Сеть».';
+  onlineHelpEl.textContent = !a ? 'Онлайн-сервер не задан. ' + setup
+    : relayIsLocal() ? `Сейчас комнаты создаются на сервере этого компьютера (${a}) — друзьям он доступен только по сети или через tunnel.bat. ` + setup
+    : `Онлайн-сервер: ${a}. Хост создаёт комнату и диктует код (или шлёт ссылку из лобби); друзья открывают игру с этого сервера и вводят код.`;
+}
+try { relayEl.value = localStorage.getItem('pcr-relay') || ''; } catch (e) { /* ignore */ }
+document.getElementById('btnRelaySave').addEventListener('click', () => {
+  const v = relayEl.value.trim();
+  try { if (v) localStorage.setItem('pcr-relay', v); else localStorage.removeItem('pcr-relay'); } catch (e) { /* ignore */ }
+  renderOnlineHelp();
+  netReportEl.textContent = v ? 'Онлайн-сервер сохранён. Тот же сервер нужен у всех игроков.' : 'Онлайн-сервер: тот, с которого открыта игра.';
+});
+renderOnlineHelp();
 document.getElementById('btnHost').addEventListener('click', () => { initAudio(); readName(); Lobby.bots = botsChk.checked; hostGame(); });
 document.getElementById('btnJoin').addEventListener('click', () => { initAudio(); readName(); joinGame(document.getElementById('code').value); });
 document.getElementById('code').addEventListener('keydown', (e) => {

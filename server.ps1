@@ -1,5 +1,6 @@
 ﻿# Сервер игры PROJECT COMMANDO для прямого подключения — без Python: PowerShell + встроенный C# (есть в любой Windows 10/11).
 # То же, что server.py: раздаёт файлы игры и пересылает игровые сообщения между хостом и гостями по WebSocket (/ws).
+# /ws — общая комната сервера (прямое подключение), /ws?room=КОД — комната по коду (онлайн-режим).
 #   powershell -NoProfile -ExecutionPolicy Bypass -File server.ps1 [-Port 8000] [-Open] [-Report файл]
 param([int]$Port = 8000, [switch]$Open, [string]$Report = '')
 $ErrorActionPreference = 'Stop'
@@ -19,9 +20,23 @@ using System.Threading;
 public static class PCServer {
     static string Root, Report;
     static readonly object Lk = new object();
-    static Conn Host;
-    static readonly Dictionary<int, Conn> Guests = new Dictionary<int, Conn>();
-    static int NextId = 1;
+    const int MaxGuests = 7, MaxRooms = 500;
+    class Room { public string Code = ""; public Conn Host; public readonly Dictionary<int, Conn> Guests = new Dictionary<int, Conn>(); public int NextId = 1;
+        public string Label { get { return Code == "" ? "Комната" : "Комната " + Code; } } }
+    static readonly Dictionary<string, Room> Rooms = new Dictionary<string, Room> { { "", new Room() } };
+
+    // Комната по коду (null — неверный код или слишком много комнат); пустые удаляются после выхода
+    static Room RoomFor(string code) {
+        lock (Lk) {
+            Room r;
+            if (Rooms.TryGetValue(code, out r)) return r;
+            if (code.Length < 4 || code.Length > 8 || !code.All(ch => (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9')) || Rooms.Count > MaxRooms) return null;
+            r = new Room { Code = code }; Rooms[code] = r; return r;
+        }
+    }
+    static void DropIfEmpty(Room r) {
+        lock (Lk) { if (r.Code != "" && r.Guests.Count == 0 && (r.Host == null || r.Host.Closed) && Rooms.ContainsKey(r.Code) && Rooms[r.Code] == r) Rooms.Remove(r.Code); }
+    }
 
     class Conn {
         public TcpClient C; public NetworkStream S; public bool Closed;
@@ -89,6 +104,9 @@ public static class PCServer {
             var rl = lines[0].Split(' ');
             if (rl.Length < 2) { c.Close(); return; }
             string method = rl[0], path = Uri.UnescapeDataString(rl[1].Split('?')[0]);
+            string code = "";
+            int qi = rl[1].IndexOf('?');
+            if (qi >= 0) foreach (var kv in rl[1].Substring(qi + 1).Split('&')) if (kv.StartsWith("room=")) code = Uri.UnescapeDataString(kv.Substring(5)).ToUpperInvariant();
             var hdr = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (var ln in lines.Skip(1)) { int i = ln.IndexOf(':'); if (i > 0) hdr[ln.Substring(0, i).Trim()] = ln.Substring(i + 1).Trim(); }
             string up;
@@ -99,8 +117,11 @@ public static class PCServer {
                 s.Write(resp, 0, resp.Length);
                 var conn = new Conn { C = c, S = s };
                 int port = ((IPEndPoint)c.Client.LocalEndPoint).Port;
-                Serve(conn, string.Join(",", LocalAddrs().Select(a => a + ":" + port)));
-                conn.Close();
+                var room = RoomFor(code);
+                try {
+                    if (room == null) conn.Send("E|bad-room");
+                    else Serve(room, conn, code == "" ? string.Join(",", LocalAddrs().Select(a => a + ":" + port)) : "");
+                } finally { conn.Close(); if (room != null) DropIfEmpty(room); }
                 return;
             }
             if (method == "POST" && path == "/report" && !string.IsNullOrEmpty(Report)) {
@@ -167,48 +188,48 @@ public static class PCServer {
 
     // Протокол (заголовок перед JSON игры): хост H, T<id>|…, A|…, K<id>; гость G, M|…
     // сервер → хосту O|адреса, J<id>, L<id>, F<id>|…, E|…; гостю W<id>, M|…, X, E|…
-    static void Serve(Conn k, string addrs) {
+    static void Serve(Room r, Conn k, string addrs) {
         string hello = Recv(k);
         if (hello == "H") {
-            lock (Lk) { if (Host != null && !Host.Closed) { k.Send("E|host-exists"); return; } Host = k; }
+            lock (Lk) { if (r.Host != null && !r.Host.Closed) { k.Send("E|host-exists"); return; } r.Host = k; }
             k.Send("O|" + addrs);
-            Console.WriteLine("Хост создал комнату");
+            Console.WriteLine(r.Label + ": хост создал комнату");
             try {
                 while (true) {
                     string m = Recv(k); if (m == null) break;
-                    if (m.StartsWith("A|")) { string body = "M|" + m.Substring(2); Conn[] gs; lock (Lk) gs = Guests.Values.ToArray(); foreach (var g in gs) g.Send(body); }
+                    if (m.StartsWith("A|")) { string body = "M|" + m.Substring(2); Conn[] gs; lock (Lk) gs = r.Guests.Values.ToArray(); foreach (var g in gs) g.Send(body); }
                     else if (m.StartsWith("T")) {
                         int bar = m.IndexOf('|'); int id; Conn g = null;
-                        if (bar > 1 && int.TryParse(m.Substring(1, bar - 1), out id)) lock (Lk) Guests.TryGetValue(id, out g);
+                        if (bar > 1 && int.TryParse(m.Substring(1, bar - 1), out id)) lock (Lk) r.Guests.TryGetValue(id, out g);
                         if (g != null) g.Send("M|" + m.Substring(bar + 1));
                     } else if (m.StartsWith("K")) {
                         int id; Conn g = null;
-                        if (int.TryParse(m.Substring(1), out id)) lock (Lk) { if (Guests.TryGetValue(id, out g)) Guests.Remove(id); }
+                        if (int.TryParse(m.Substring(1), out id)) lock (Lk) { if (r.Guests.TryGetValue(id, out g)) r.Guests.Remove(id); }
                         if (g != null) g.Close();
                     }
                 }
             } finally {
                 Conn[] gs = new Conn[0];
-                lock (Lk) { if (Host == k) { Host = null; gs = Guests.Values.ToArray(); Guests.Clear(); } }
-                if (gs.Length > 0 || Host == null) Console.WriteLine("Хост вышел — комната закрыта");
+                lock (Lk) { if (r.Host == k) { r.Host = null; gs = r.Guests.Values.ToArray(); r.Guests.Clear(); } }
+                if (gs.Length > 0 || r.Host == null) Console.WriteLine(r.Label + ": хост вышел — комната закрыта");
                 foreach (var g in gs) { g.Send("X"); g.Close(); }
             }
         } else if (hello == "G") {
             int id; Conn host;
-            lock (Lk) { host = Host; if (host == null || host.Closed) { k.Send("E|no-host"); return; } id = NextId++; Guests[id] = k; }
+            lock (Lk) { host = r.Host; if (host == null || host.Closed) { k.Send("E|no-host"); return; } if (r.Guests.Count >= MaxGuests) { k.Send("E|full"); return; } id = r.NextId++; r.Guests[id] = k; }
             k.Send("W" + id);
             host.Send("J" + id);
-            Console.WriteLine("Гость " + id + " подключился");
+            Console.WriteLine(r.Label + ": гость " + id + " подключился");
             try {
                 while (true) {
                     string m = Recv(k); if (m == null) break;
-                    if (m.StartsWith("M|")) { Conn h; lock (Lk) h = Host; if (h != null) h.Send("F" + id + "|" + m.Substring(2)); }
+                    if (m.StartsWith("M|")) { Conn h; lock (Lk) h = r.Host; if (h != null) h.Send("F" + id + "|" + m.Substring(2)); }
                 }
             } finally {
                 bool was; Conn h;
-                lock (Lk) { was = Guests.Remove(id); h = Host; }
+                lock (Lk) { was = r.Guests.Remove(id); h = r.Host; }
                 if (was && h != null) h.Send("L" + id);
-                Console.WriteLine("Гость " + id + " отключился");
+                Console.WriteLine(r.Label + ": гость " + id + " отключился");
             }
         }
     }
