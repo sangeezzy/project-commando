@@ -171,9 +171,22 @@ async function main() {
   const dpos2 = Math.hypot(E(G2, `G.players.find((q) => q.slot === ${g1slot}).x`) - E(G1, 'me().x'), E(G2, `G.players.find((q) => q.slot === ${g1slot}).y`) - E(G1, 'me().y'));
   check('второй гость тоже видит первого', dpos2 < 24, Math.round(dpos2));
 
-  // огонь гостя: курок выполняет хост, патроны убывают у всех
+  // частота снимков у гостя: 60 Гц при прямом подключении и PeerJS, 30 Гц на онлайн-сервере
+  E(G1, 'window.__sn = 0; { const f = applySnapshot; applySnapshot = (s) => { __sn++; f(s); }; }');
+  await sleep(2000);
+  const hz = E(G1, '__sn') / 2, wantHz = MODE === 'room' ? 30 : 60;
+  check(`снимки хоста ~${wantHz} раз в секунду`, hz > wantHz * 0.75 && hz < wantHz * 1.25, hz);
+
+  // огонь гостя: курок выполняет хост, патроны убывают у всех; нажатие уходит хосту сразу, не дожидаясь пакета ввода
   const mag0 = E(H, `G.players.find((q) => q.slot === ${g1slot}).gun.mag`);
+  E(G1, "{ const s0 = send; send = (m) => { if (m.t === 'i' && m.pr && !window.__sentAt) window.__sentAt = Date.now(); s0(m); }; }");
+  E(H, "{ const o0 = onHostData; onHostData = (c, d) => { if (d.t === 'i' && d.pr && !window.__gotAt) window.__gotAt = Date.now(); o0(c, d); }; }");
   E(G1, 'mouse.l = true; mouse.lPressed = true');
+  const tFire = Date.now();
+  await until(() => E(H, `G.players.find((q) => q.slot === ${g1slot}).gun.mag`) < mag0, 1000, 2);
+  const fireMs = Date.now() - tFire;
+  log.push(`выстрел гостя: отправлен через ${E(G1, '__sentAt') - tFire} мс, получен хостом через ${E(H, '__gotAt') - tFire}, выстрел через ${fireMs}`);
+  check('выстрел гостя доходит до хоста быстро (нажатие отправляется сразу)', fireMs < 70, fireMs + ' мс');
   await sleep(400);
   E(G1, 'mouse.l = false');
   await sleep(500);
@@ -215,6 +228,30 @@ async function main() {
   const upH = await until(() => E(H, 'me().down') === false, 8000);
   E(G1, 'keys.KeyF = false');
   check('гость поднял хоста (F держать по сети)', upH && E(H, 'me().hp') === 25, E(H, '[me().down, me().hp]'));
+
+  // интерполяция: хост идёт вправо, второй гость видит его с небольшим отставанием и без рывков
+  E(H, 'G.enemies = []; { const h = me(); h.x = h.px = 36.5 * TILE; h.y = h.py = 29.5 * TILE; h.down = false; h.hp = 100; }');
+  await sleep(600);
+  E(H, "window.__tr = []; { const f = update; update = (dt) => { f(dt); __tr.push([Date.now(), me().x]); }; }");
+  E(G2, "window.__tr = []; { const f = update; update = (dt) => { f(dt); const h = G.players.find((q) => q.slot === 0); __tr.push([Date.now(), h.x]); }; }");
+  E(H, 'keys.KeyD = true');
+  await sleep(1500);
+  E(H, 'keys.KeyD = false');
+  const trH = E(H, '__tr'), trG = E(G2, '__tr');
+  // отставание: когда хост был там, где его сейчас показывает гость (x растёт — ищем по нему)
+  const lags = [];
+  for (const [t, x] of trG.slice(Math.floor(trG.length * 0.3), Math.floor(trG.length * 0.9))) {
+    const i = trH.findIndex((s) => s[1] >= x);
+    if (i > 0) lags.push(t - trH[i][0]);
+  }
+  lags.sort((a, b) => a - b);
+  const lag = lags[lags.length >> 1];
+  check(`другой боец у гостя отстаёт немного (интерполяция; ${MODE === 'room' ? '30' : '60'} Гц)`, lags.length > 20 && lag < (MODE === 'room' ? 110 : 80), [lag + ' мс', lags.length]);
+  const steps = [];
+  for (let i = Math.floor(trG.length * 0.3); i < Math.floor(trG.length * 0.9); i++) steps.push(trG[i][1] - trG[i - 1][1]);
+  const med = [...steps].sort((a, b) => a - b)[steps.length >> 1];
+  check('движение другого бойца у гостя плавное (шаги кадров ровные, без рывков)', med > 0 && Math.max(...steps) < med * 3 && steps.filter((d) => d <= 0).length <= steps.length * 0.1,
+    [med.toFixed(2), Math.max(...steps).toFixed(2), steps.filter((d) => d <= 0).length, steps.length]);
 
   // второй гость уходит — его место занимает бот
   const g2slot = E(G2, 'G.mySlot');

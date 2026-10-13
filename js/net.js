@@ -5,8 +5,12 @@
 // Основа — сеть прототипа Commando (archive/commando/js/net.js).
 
 const PEER_PREFIX = 'project-commando-real-v1-';
-const SNAP_MS = 50;            // хост → гости, 20 Гц
-const INPUT_MS = 33;           // гость → хост, 30 Гц
+// Частота обмена (хост → гости снимки, гость → хост ввод), мс: прямое подключение и PeerJS — 60 Гц;
+// онлайн-сервер — 30 Гц (каждое входящее сообщение там — запрос в бесплатном лимите Cloudflare)
+const NET_HZ = { direct: 60, peer: 60, online: 30 };
+function netRate() {
+  return 1000 / (Net.mode === 'ws' ? (Net.online ? NET_HZ.online : NET_HZ.direct) : NET_HZ.peer);
+}
 
 // Серверы для установки прямого соединения (ICE). STUN — узнать свой внешний адрес; TURN — ретранслятор,
 // если прямое соединение не пробивается (строгий NAT, фаервол). По умолчанию — как в PeerJS (Google STUN + TURN PeerJS),
@@ -192,7 +196,7 @@ function personState(o) {
 
 function sendSnapshot() {
   broadcast({
-    t: 's', seq: G.seq, gs: G.state,
+    t: 's', seq: G.seq, gs: G.state, tm: Math.round(performance.now()),     // tm — время хоста: гость по нему интерполирует
     P: allPeople().map(personState),
     D: map.doors.map((d) => (d.open ? 1 : 0) | (d.locked ? 2 : 0) | (d.broken ? 4 : 0)),
     K: map.keys.map((k) => (k.taken ? 1 : 0)),
@@ -443,6 +447,7 @@ function joinWs(tg, code) {
 }
 
 function guestSendInput() {
+  Net.inp.sentFire = Net.inp.fire; Net.inp.sentF = !!keys.KeyF;
   const p = me();
   if (!p || p.dead) { Net.inp.acts = []; Net.inp.press = 0; return; }   // раненый тоже шлёт: ползёт
   send({ t: 'i', seq: G.seq, x: r1(p.x), y: r1(p.y), a: r2(p.a), c: p.crouch ? 1 : 0, ads: r2(p.ads), lw: p.leanWant | 0,
@@ -464,7 +469,9 @@ function resetGuestWorld(seq) {
 
 function applySnapshot(s) {
   const fresh = s.seq !== G.seq;
-  if (fresh) resetGuestWorld(s.seq);
+  if (fresh) { resetGuestWorld(s.seq); resetInterp(); }
+  const tm = s.tm ?? Math.round(performance.now());
+  interpClock(tm);
   if (G.state !== s.gs) G.stateT = 0;
   G.state = s.gs;
   const mine = G.mySlot;
@@ -476,7 +483,6 @@ function applySnapshot(s) {
     if (!o) {
       o = makePerson(side ? 'e' : 'p', x, y, a);
       o.id = id; o.slot = slot;
-      o.nx = x; o.ny = y;
     }
     const own = side === 0 && slot === mine && !(flags & 32);
     const wasDead = o.dead;
@@ -496,11 +502,11 @@ function applySnapshot(s) {
       // свой боец: позицию и стойку ведём сами; хост переставляет только на новом запуске
       if (fresh) { o.x = o.px = x; o.y = o.py = y; o.a = a; G.cam.x = x; G.cam.y = y; }
     } else {
-      o.nx = x; o.ny = y; o.a = a;
+      if (fresh) o.hist = null;
+      interpPush(o, tm, x, y, a);
       o.crouch = !!(flags & 2); o.sprint = !!(flags & 4); o.ads = ads; o.leanPx = leanPx; o.lean = Math.sign(leanPx);
-      const side2 = a + Math.PI / 2 * Math.sign(leanPx);
-      o.lxOff = Math.cos(side2) * Math.abs(leanPx); o.lyOff = Math.sin(side2) * Math.abs(leanPx);
-      if (fresh || Math.hypot(o.x - x, o.y - y) > M(4)) { o.x = x; o.y = y; }
+      o.leanSide = Math.sign(leanPx);        // смещение глаз считается от показанного (интерполированного) взгляда
+      if (fresh) { o.x = x; o.y = y; o.a = a; }
     }
     (side ? enemies : players).push(o);
   }
@@ -519,15 +525,61 @@ function applySnapshot(s) {
   for (const ev of s.fx) playFx(ev);
 }
 
-// Отправка по таймеру: хост — снимки, гость — ввод
+// Отправка по таймеру: хост — снимки, гость — ввод. Таймер накапливается (а не сбрасывается), с допуском в четверть
+// интервала: при 60 Гц и кадрах по ~16,7 мс иначе каждый второй кадр пропускался бы из-за дрожания dt.
+// Гость шлёт сразу, не дожидаясь таймера: нажатие курка, отпускание, действия (F, G, R, V, L), начало/конец удержания F.
 function netTick(dt) {
+  if (G.role !== 'host' && G.role !== 'guest') return;
+  const ms = netRate();
+  Net.sendT -= dt * 1000;
   if (G.role === 'host') {
-    Net.sendT -= dt * 1000;
-    if (Net.sendT <= 0) { if (Net.conns.size && map) sendSnapshot(); else G.fxOut = []; Net.sendT = SNAP_MS; }
-  } else if (G.role === 'guest') {
-    Net.sendT -= dt * 1000;
-    if (Net.sendT <= 0) { guestSendInput(); Net.sendT = INPUT_MS; }
+    if (Net.sendT > ms * 0.25) return;
+    if (Net.conns.size && map) sendSnapshot(); else G.fxOut = [];
+    Net.sendT = Math.max(Net.sendT + ms, ms * 0.5);
+  } else {
+    const I = Net.inp;
+    const urgent = I.press > 0 || I.acts.length > 0 || I.fire !== I.sentFire || !!keys.KeyF !== I.sentF;
+    if (!urgent && Net.sendT > ms * 0.25) return;
+    guestSendInput();
+    Net.sendT = urgent ? ms : Math.max(Net.sendT + ms, ms * 0.5);
   }
+}
+
+// ---------- Интерполяция у гостя ----------
+// Чужие бойцы показываются чуть в прошлом — между двумя снимками хоста, по его часам (tm), а не догоняют последнюю позицию:
+// плавно при любой частоте кадров и без лишнего отставания. Часы хоста: clk — разница «наше время − время хоста»
+// (вниз — сразу, вверх — медленно: держится у наименьшей задержки), snapDt — средний интервал снимков.
+const Interp = { clk: null, snapDt: 50, lastTm: 0 };
+function interpClock(tm) {
+  const s = performance.now() - tm;
+  if (Interp.clk === null || s < Interp.clk) Interp.clk = s; else Interp.clk += (s - Interp.clk) * 0.02;
+  if (Interp.lastTm) Interp.snapDt += (clamp(tm - Interp.lastTm, 5, 200) - Interp.snapDt) * 0.1;
+  Interp.lastTm = tm;
+}
+const interpDelay = () => Interp.snapDt * 1.5 + 15;       // запас на дрожание доставки: полтора интервала + 15 мс
+const interpTime = () => performance.now() - (Interp.clk || 0) - interpDelay();
+function resetInterp() { Interp.clk = null; Interp.snapDt = 50; Interp.lastTm = 0; }
+
+// Новая точка истории бойца (из снимка); телепорт (> 4 м) — без размазывания
+function interpPush(o, t, x, y, a) {
+  const h = o.hist || (o.hist = []);
+  const last = h[h.length - 1];
+  if (last && Math.hypot(last.x - x, last.y - y) > M(4)) h.length = 0;
+  if (last && t <= last.t) return;
+  h.push({ t, x, y, a });
+  if (h.length > 40) h.shift();
+}
+
+// Положение бойца на момент t (время хоста): между соседними точками; позже последней — стоит в последней
+function interpApply(o, t) {
+  const h = o.hist;
+  if (!h || !h.length) return;
+  while (h.length > 2 && h[1].t <= t) h.shift();               // старые точки больше не нужны
+  const A = h[0], B = h[1];
+  if (!B || t <= A.t) { const P = B && t > B.t ? B : A; o.x = P.x; o.y = P.y; o.a = P.a; return; }
+  const k = Math.min(1, (t - A.t) / (B.t - A.t));
+  o.x = A.x + (B.x - A.x) * k; o.y = A.y + (B.y - A.y) * k;
+  o.a = A.a + angDiff(B.a, A.a) * k;
 }
 
 // Понятные причины сбоев подключения

@@ -79,15 +79,16 @@ function updateWorld(dt) {
   updateLocalFx(dt);
 }
 
-// Гость: мир считает хост; здесь — свой боец, сглаживание чужих, анимация и эффекты
+// Гость: мир считает хост; здесь — свой боец, чужие — по истории снимков (интерполяция), анимация и эффекты
 function guestWorld(dt) {
   const p = me();
   if (p && !p.dead) { updateLean(p, dt); trackSpeed(p, dt); }
-  const k = Math.min(1, dt * 12);
+  const t = interpTime();
   for (const o of allPeople()) {
-    if (o === p || o.nx === undefined) continue;
-    o.x += (o.nx - o.x) * k; o.y += (o.ny - o.y) * k;
-    o.lx = o.x + (o.lxOff || 0); o.ly = o.y + (o.lyOff || 0);
+    if (o === p || !o.hist) continue;
+    interpApply(o, t);
+    const side = o.a + Math.PI / 2 * (o.leanSide || 0), d = Math.abs(o.leanPx || 0);
+    o.lx = o.x + Math.cos(side) * d; o.ly = o.y + Math.sin(side) * d;
   }
   for (const o of allPeople()) updateAnim(o, dt);
   updateDoors(dt);
