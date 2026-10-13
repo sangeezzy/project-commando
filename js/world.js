@@ -91,7 +91,7 @@ function walkable(tx, ty, doors) {
   if (t === T.FLOOR) return true;
   if (!doors || t !== T.DOOR) return false;
   const d = map.doorAt.get(ty * map.w + tx);
-  return !!d && !d.locked;
+  return !!d && (!d.locked || (doors === 'breach' && DOOR_TYPES[d.type].kick > 0));
 }
 const solidAt = (x, y) => solidTile(Math.floor(x / TILE), Math.floor(y / TILE));
 const opaqueAt = (x, y) => opaqueTile(Math.floor(x / TILE), Math.floor(y / TILE));
@@ -165,6 +165,7 @@ function drawWallTile(g, x, y, wm, rng) {
   const X = x * TILE, Y = y * TILE, m = MAT[wm];
   g.fillStyle = m.top;
   g.fillRect(X, Y, TILE, TILE);
+  if (wm === WM.VOID) return;                       // за пределами карты — просто темнота
   const open = (nx, ny) => tileAt(nx, ny) !== T.WALL;
   g.fillStyle = 'rgba(255,255,255,0.12)';
   if (open(x, y - 1)) g.fillRect(X, Y, TILE, 3);
@@ -391,10 +392,11 @@ function castRay(ox, oy, dx, dy, maxR, opq = opaqueTile) {
 
 // ---------- Пути ----------
 // BFS по клеткам: расстояние «по пути». По нему идёт звук шагов и ходят ИИ.
-// doors — закрытые незапертые двери проходимы (ИИ откроет); без него закрытая дверь — стена (так идёт звук шагов)
+// doors — закрытые незапертые двери проходимы (ИИ откроет); 'breach' — и запертые, которые можно выбить (бот в бою);
+// без него закрытая дверь — стена (так идёт звук шагов)
 function bfsFrom(x, y, maxD = 1e9, doors = false) {
   const { w, h } = map;
-  const ok = (i) => map.grid[i] === T.FLOOR || (doors && map.grid[i] === T.DOOR && !map.doorAt.get(i).locked);
+  const ok = (i) => map.grid[i] === T.FLOOR || (doors && map.grid[i] === T.DOOR && walkable(i % w, (i / w) | 0, doors));
   const f = new Int32Array(w * h).fill(1e9);
   const sx = Math.floor(x / TILE), sy = Math.floor(y / TILE);
   if (sx < 0 || sy < 0 || sx >= w || sy >= h) return { f, x, y, doors };

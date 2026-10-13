@@ -60,7 +60,7 @@ const tableNear = (o) => G.mapId === 'hub' && !!o && Math.hypot(o.x - (HUB_TABLE
 
 // Каждый кадр (хост, одиночка): хост стоит в проходе — счёт до перехода
 function updateHub(dt) {
-  if (G.mapId !== 'hub') { G.hubHold = null; return; }
+  if (G.mapId !== 'hub') return;              // счёт перехода на других картах ведут они сами («Штурм»); сброс — в startMap
   const host = G.players.find((q) => q.slot === 0 && !q.ai) || me();
   const i = host && !host.dead ? HUB_EXITS.findIndex((e) => inRect(host, e)) : -1;
   if (i < 0) { G.hubHold = null; return; }

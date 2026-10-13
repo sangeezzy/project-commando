@@ -47,7 +47,7 @@ function update(dt) {
   }
   if (pressed.Backspace && isAuth()) backToHub();          // хост: обратно в хаб
   const p = me();
-  if (p && G.state === 'play' && !loadoutOpen()) controlLocal(p, dt);
+  if (p && G.state === 'play' && !uiOpen()) controlLocal(p, dt);
   else clearPressed();
   if (isAuth()) updateWorld(dt);
   else guestWorld(dt);
@@ -82,8 +82,8 @@ function updateWorld(dt) {
   for (const p of G.players) {
     if (!p.dead) {
       if (!p.ai) updateGun(p, dt);           // ботам — в updateAI (раньше вызывалось дважды: стреляли и перезаряжались вдвое быстрее)
+      updateAct(p, dt);                    // действия (двери; у грузовика — и у ботов)
       if (!p.ai) {
-        updateAct(p, dt);
         if (p.net) applyRemoteFire(p);       // курок гостя (ввод пришёл по сети)
       }
       updateLean(p, dt);
@@ -91,7 +91,8 @@ function updateWorld(dt) {
     if (!p.net) trackSpeed(p, dt);
     p.supp = Math.max(0, p.supp - dt * 0.6); p.hurtT += dt;
   }
-  if (G.state === 'play') { updateAI(dt); stepNoises(dt); updateDowned(dt); updateHub(dt); }
+  if (G.state === 'play') { updateAI(dt); stepNoises(dt); updateDowned(dt); updateHub(dt); updateSurvival(dt); }
+  updateWeather(dt);
   for (const e of G.enemies) trackSpeed(e, dt);
   for (const o of allPeople()) if (!o.dead || o.side === 'p') updateAnim(o, dt);
   updateBullets(dt);
@@ -101,7 +102,7 @@ function updateWorld(dt) {
     // проигрыш: погибли все люди (раненые ещё живы — истекают кровью, их могут поднять)
     const humans = G.players.filter((q) => !q.ai);
     if (humans.length && humans.every((q) => q.dead)) { G.state = 'dead'; G.stateT = 0; }
-    else if (G.enemies.length && G.enemies.every((e) => e.dead)) { G.state = 'win'; G.stateT = 0; }
+    else if (!G.surv && G.enemies.length && G.enemies.every((e) => e.dead)) { G.state = 'win'; G.stateT = 0; }   // «Выживание», «Штурм» — победы нет (волны, локации)
   }
   updateLocalFx(dt);
 }
@@ -153,12 +154,15 @@ function updateLocalFx(dt) {
   if (G.muzzle) { for (const m of G.muzzle) m.t -= dt; G.muzzle = G.muzzle.filter((m) => m.t > 0); }
   const v = viewer();
   if (v && !v.dead) updateExposure(v, dt);
+  weatherFx(dt);
   if (p && !isAuth()) p.hurtT = (p.hurtT ?? 9) + dt;
   for (const h of G.hurt) h.t -= dt;
   G.hurt = G.hurt.filter((h) => h.t > 0);
   G.shake = Math.max(0, G.shake - dt * 25);
   if (G.hitmark) { G.hitmark.t -= dt; if (G.hitmark.t <= 0) G.hitmark = null; }
   if (G.toast) { G.toast.t -= dt; if (G.toast.t <= 0) G.toast = null; }
+  if (G.banner) { G.banner.t -= dt; if (G.banner.t <= 0) G.banner = null; }
+  if (G.radioMsg) { G.radioMsg.t -= dt; if (G.radioMsg.t <= 0) G.radioMsg = null; }
   if (G.barks) { for (const b of G.barks) b.t -= dt; G.barks = G.barks.filter((b) => b.t > 0); }
 }
 

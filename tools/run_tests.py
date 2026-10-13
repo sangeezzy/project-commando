@@ -42,6 +42,7 @@ UNIT_TESTS = {
     'lean': '',
     'npcpeek': '',
     'squad': '',
+    'breach': 'bots=1',
     'kneel': '',
     'bots': 'bots=1',
     'firemove': '',
@@ -56,6 +57,10 @@ UNIT_TESTS = {
     'aistack': '',
     'weapons': '',
     'maps': '',
+    'armor': '',
+    'weather': '',
+    'survival': 'bots=1',
+    'assault': 'bots=1',
 }
 
 try:

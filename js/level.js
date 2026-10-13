@@ -141,12 +141,14 @@ function addRangeEnemies(b) {
 
 // ---------- Хаб: отсюда — на карты ----------
 // Помещение 30×22 м; на севере — проходы на карты (встать и постоять 2 с — хост), перед ними — оружейный стол
-const HUB_W = 30, HUB_H = 22;
+const HUB_W = 38, HUB_H = 22;
 const HUB_EXITS = [
-  { map: 'big', name: 'КАРТА 1: ПОЛИГОН ×1,5', desc: 'увеличенный полигон без противников — пристрелка', x0: 5, y0: 1, x1: 9, y1: 2 },
-  { map: 'clear', name: 'КАРТА 2: ЗАЧИСТКА', desc: '8–12 противников, старт с края карты, уничтожить всех', x0: 20, y0: 1, x1: 24, y1: 2 },
+  { map: 'big', name: 'КАРТА 1: ПОЛИГОН ×1,5', desc: 'пустой — пристрелка', x0: 3, y0: 1, x1: 7, y1: 2 },
+  { map: 'clear', name: 'КАРТА 2: ЗАЧИСТКА', desc: '8–12 противников, уничтожить всех', x0: 12, y0: 1, x1: 16, y1: 2 },
+  { map: 'surv', name: 'КАРТА 3: ВЫЖИВАНИЕ', desc: 'волны, грузовик, броня, погода', x0: 21, y0: 1, x1: 25, y1: 2 },
+  { map: 'assault', name: 'КАРТА 4: ШТУРМ', desc: 'локация за локацией, всё сложнее', x0: 30, y0: 1, x1: 34, y1: 2 },
 ];
-const HUB_TABLE = { x0: 12, y0: 9, x1: 17, y1: 10 };
+const HUB_TABLE = { x0: 16, y0: 9, x1: 21, y1: 10 };
 function buildHub() {
   const b = new MapBuilder(HUB_W, HUB_H, 7);
   b.box(0, 0, HUB_W - 1, HUB_H - 1, WM.CONCRETE, FM.CONCRETE);
@@ -156,15 +158,17 @@ function buildHub() {
   for (const e of HUB_EXITS) for (let x = e.x0; x <= e.x1; x++) b.set(x, 0, T.FLOOR, FM.ASPHALT);
   b.prop('table', HUB_TABLE.x0, HUB_TABLE.y0, HUB_TABLE.x1, HUB_TABLE.y1, {});
   b.low(2, 16, 3, 16, WM.CRATE); b.low(2, 17, 2, 17, WM.CRATE);
-  b.low(26, 15, 27, 15, WM.SANDBAG); b.low(25, 18, 27, 18, WM.JERSEY);
+  b.low(32, 15, 33, 15, WM.SANDBAG); b.low(31, 18, 33, 18, WM.JERSEY);
   b.low(9, 6, 10, 6, WM.BARREL);
-  return finishMap(b, { name: 'ХАБ', start: { x: 15, y: 17 } });
+  return finishMap(b, { name: 'ХАБ', start: { x: 19, y: 17 } });
 }
 
 // Карта по идентификатору: hub — хаб, big — увеличенный пустой полигон, clear — полигон (противники — из missionSetup),
 // range — классический полигон (тесты, автотест)
-function buildMap(id) {
+function buildMap(id, seed = 0) {
   if (id === 'hub') return buildHub();
+  if (id === 'surv') return buildSurvival(seed);
+  if (id === 'assault') return buildAssault(seed);
   if (id === 'big') return buildRange({ scale: 1.5, enemies: false, name: 'ПОЛИГОН ×1,5' });
   if (id === 'clear') return buildRange({ enemies: false, name: 'ЗАЧИСТКА' });
   return buildRange();

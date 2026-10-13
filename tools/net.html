@@ -16,8 +16,9 @@ const log = [], checks = [];
 const check = (name, ok, got) => checks.push({ name, ok: !!ok, got });
 // пульс для диагностики зависаний: счётчик секунд и последняя проверка — в заголовке (run_tests читает через отладочный порт)
 let beat = 0;
-setInterval(() => { document.title = `net ${++beat} | проверок ${checks.length} | ${checks.length ? checks[checks.length - 1].name.slice(0, 60) : '-'}`; }, 1000);
-const E = (f, code) => f.contentWindow.eval(code);
+let lastE = '';     // последнее действие в окне (видно в пульсе: где встал сценарий)
+setInterval(() => { document.title = `net ${++beat} | проверок ${checks.length} | ${checks.length ? checks[checks.length - 1].name.slice(0, 60) : '-'} | ${lastE}`; }, 1000);
+const E = (f, code) => { lastE = f.id + ': ' + code.slice(0, 80); return f.contentWindow.eval(code); };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const until = async (fn, ms, step = 200) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { try { if (fn()) return true; } catch (e) { /* ещё рано */ } await sleep(step); } return false; };
 const post = (final) => fetch('/report', { method: 'POST', body: JSON.stringify({ final, log, checks }) }).catch(() => {});
@@ -143,7 +144,7 @@ async function main() {
 
   // хаб: после лобби все в хабе; гость берёт оружие у стола (решает хост); хост стоит в проходе 2 с — все на карту
   check('после лобби — хаб у всех', [H, G1, G2].every((f) => E(f, 'G.mapId') === 'hub'), [H, G1, G2].map((f) => E(f, 'G.mapId')));
-  E(G1, 'me().x = me().px = 14.5 * TILE; me().y = me().py = 12.5 * TILE');
+  E(G1, 'me().x = me().px = (HUB_TABLE.x0 + 2.5) * TILE; me().y = me().py = (HUB_TABLE.y1 + 2.5) * TILE');
   await sleep(400);
   E(G1, "pressed.KeyF = true");
   await sleep(200);
@@ -153,10 +154,10 @@ async function main() {
   const kitOk = await until(() => gKit() === 'akm,w1300,m1911' && E(G1, 'me().kit.map((k) => k && k.t).join()') === 'akm,w1300,m1911', 4000);
   check('гость у стола (F) взял АКМ + ружьё: у хоста и у гостя', loOpen && kitOk, [loOpen, gKit(), E(G1, 'me().kit.map((k) => k && k.t).join()')]);
   // гость в проходе — перехода нет (переходит только хост)
-  E(G1, 'me().x = me().px = 22.5 * TILE; me().y = me().py = 1.5 * TILE');
+  E(G1, "{ const ex = HUB_EXITS.find((q) => q.map === 'clear'); me().x = me().px = (ex.x0 + 2.5) * TILE; me().y = me().py = (ex.y0 + 0.5) * TILE; }");
   await sleep(2600);
   check('гость в проходе — перехода нет (только хост)', E(H, 'G.mapId') === 'hub');
-  E(H, 'me().x = me().px = 22.5 * TILE; me().y = me().py = 1.5 * TILE');
+  E(H, "{ const ex = HUB_EXITS.find((q) => q.map === 'clear'); me().x = me().px = (ex.x0 + 2.5) * TILE; me().y = me().py = (ex.y0 + 0.5) * TILE; }");
   const toMap = await until(() => [H, G1, G2].every((f) => E(f, 'G.mapId') === 'clear' && E(f, 'G.enemies.length') >= 8), 6000);
   check('хост 2 с в проходе — «Зачистка» у всех, противники совпадают', toMap && E(G1, 'G.enemies.length') === E(H, 'G.enemies.length'),
     [H, G1, G2].map((f) => [E(f, 'G.mapId'), E(f, 'G.enemies.length')]));
@@ -166,6 +167,24 @@ async function main() {
   const g1s0 = E(G1, 'G.mySlot');
   const swOk = await until(() => E(H, `G.players.find((q) => q.slot === ${g1s0}).gun.t`) === 'm1911' && E(G2, `G.players.find((q) => q.slot === ${g1s0}).gun.t`) === 'm1911', 4000);
   check('гость выхватил пистолет (3) — видно у хоста и у другого гостя', swOk);
+  // «Выживание» по сети: карта и погода у всех; грузовик приехал — у гостя стоянка непроходима; гость пополнился — броня у него
+  E(H, "launchMap('surv', 4242)");
+  const svOk = await until(() => [G1, G2].every((f) => E(f, "G.mapId === 'surv' && !!G.surv && !!G.weather")), 6000);
+  check('«Выживание»: карта, погода и волны — у гостей', svOk && E(G1, 'G.weather.kind') === E(H, 'G.weather.kind') && E(G1, 'map.w') === 80,
+    [E(G1, 'G.mapId'), E(G1, 'G.weather && G.weather.kind'), E(H, 'G.weather.kind')]);
+  E(H, "G.players.forEach((q) => { q.god = true; }); G.surv.wave = 2; G.surv.phase = 'break'; G.surv.t = 0");
+  await sleep(300);
+  E(H, 'G.enemies.forEach((e) => { e.dead = true; }); G.surv.toSpawn = 0');
+  const parked = await until(() => E(G1, "G.surv && G.surv.truck && G.surv.truck.state === 'park' && !walkable(map.surv.cx, map.surv.cy)"), 15000);
+  check('грузовик встал — у гостя стоянка непроходима', parked, E(G1, 'G.surv && G.surv.truck'));
+  await until(() => E(G1, "G.surv.medic && G.surv.medic.state === 'stand'"), 4000);
+  E(G1, '{ const r = truckRear(); me().x = me().px = r.x; me().y = me().py = r.y + M(0.3); }');
+  await sleep(400);
+  E(G1, "doAct(me(), 'supply')");
+  const armed = await until(() => E(G1, "!!me().armor && me().armor.cls === 'IIIA'"), 6000);
+  check('гость пополнился у заднего борта — броня IIIA у него', armed, E(G1, 'me().armor'));
+  E(H, 'G.players.forEach((q) => { q.god = false; })');
+
   // дальше — классический полигон (проверки ниже завязаны на его расстановку); снаряжение по умолчанию
   E(H, "G.kits = {}; launchMap('range', 0)");
   await until(() => [G1, G2].every((f) => E(f, 'G.mapId') === 'range' && E(f, 'G.enemies.length') === 8), 6000);

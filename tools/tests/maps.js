@@ -9,7 +9,7 @@ window.__result = (() => {
     startMap('hub', 0, squad, true);
     const p = me();
     check('хаб: без противников, отряд с ботами', G.mapId === 'hub' && G.enemies.length === 0 && G.players.length === 4, [G.mapId, G.enemies.length, G.players.length]);
-    check('у стола — F открывает выбор оружия', (() => { at(p, 14, 12); pressed.KeyF = true; step(1); return loadoutOpen(); })());
+    check('у стола — F открывает выбор оружия', (() => { at(p, HUB_TABLE.x0 + 2, HUB_TABLE.y1 + 2); pressed.KeyF = true; step(1); return loadoutOpen(); })());
     // выбор: АКМ + ружьё
     document.getElementById('lo1').value = 'akm'; document.getElementById('lo2').value = 'w1300';
     document.getElementById('loOk').click();

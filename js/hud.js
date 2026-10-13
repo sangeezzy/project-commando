@@ -43,7 +43,8 @@ function drawHUD() {
   const left = alive(G.enemies).length;
   box(14, 14, 330, 52);
   txt(map.name || 'ПОЛИГОН', 26, 36, 15);
-  if (G.mapId === 'hub') mono('стол (F) — оружие · проход — на карту (хост стоит 2 с)', 26, 56, HUD_DIM);
+  if (G.surv) drawSurvHud(p);
+  else if (G.mapId === 'hub') mono('стол (F) — оружие · проход — на карту (хост стоит 2 с)', 26, 56, HUD_DIM);
   else if (!G.enemies.length) mono('противников нет — пристрелка' + (isAuth() ? ' · Backspace — в хаб' : ''), 26, 56, HUD_DIM);
   else mono(`противников осталось: ${left} из ${G.enemies.length}` + (isAuth() && G.mapId !== 'range' ? ' · Backspace — в хаб' : ''), 26, 56, left ? HUD_DIM : '#9fe870');
   if (G.mapId === 'hub' && tableNear(p) && !p.dead && !loadoutOpen()) txt('F — оружейный стол', VW / 2, VH - 120, 15, HUD_WARN, 'center');
@@ -56,6 +57,18 @@ function drawHUD() {
   if (keys.KeyH) drawControls();
   if (keys.Tab || keys.KeyI) drawSpecs();
   if (G.toast) txt(G.toast.text, VW / 2, VH - 150, 16, HUD_WARN, 'center');
+  if (G.radioMsg) {
+    ctx.globalAlpha = Math.min(1, G.radioMsg.t);
+    box(VW / 2 - 300, VH - 260, 600, 26, 0.6);
+    mono('РАЦИЯ: «' + G.radioMsg.text + '»', VW / 2, VH - 242, '#e8c060', 'center', 13);
+    ctx.globalAlpha = 1;
+  }
+  if (G.banner) {
+    ctx.globalAlpha = Math.min(1, G.banner.t);
+    txt(G.banner.text, VW / 2, VH * 0.2, 26, '#f0d890', 'center');
+    if (G.banner.sub) mono(G.banner.sub, VW / 2, VH * 0.2 + 24, HUD_COL, 'center', 13);
+    ctx.globalAlpha = 1;
+  }
   // реплики (слышно): противников и своих ботов
   if (G.barks) G.barks.forEach((b, i) => { ctx.globalAlpha = Math.min(1, b.t); mono(`${b.foe ? 'Противник' : 'Свой'}: «${b.text}»`, VW / 2, VH - 200 - (G.barks.length - 1 - i) * 18, b.foe ? '#e8a080' : '#a0c8e8', 'center', 13); ctx.globalAlpha = 1; });
   if (G.state === 'dead' || G.state === 'win') drawEnd();
@@ -69,6 +82,13 @@ function drawHealth(p) {
   ctx.fillStyle = 'rgba(255,255,255,0.12)'; ctx.fillRect(x + 64, y + 2, 150, 8);
   ctx.fillStyle = p.hp < 35 ? HUD_RED : '#c8c4b0'; ctx.fillRect(x + 64, y + 2, 150 * k, 8);
   mono('ЗДОРОВЬЕ', x + 64, y - 6);
+  // броня: полоска прочности под здоровьем, класс справа; разбита — красным
+  if (p.armor) {
+    const ak = clamp(p.armor.hp / 100, 0, 1);
+    ctx.fillStyle = 'rgba(255,255,255,0.12)'; ctx.fillRect(x + 64, y + 13, 150, 5);
+    ctx.fillStyle = '#8fb4d8'; ctx.fillRect(x + 64, y + 13, 150 * ak, 5);
+    mono(`БРОНЯ ${p.armor.cls}` + (ak <= 0 ? ' — РАЗБИТА' : ''), x + 214, y - 6, ak <= 0 ? HUD_RED : '#8fb4d8', 'right', 11);
+  }
   const stance = p.sprint ? 'БЕГ' : p.crouch ? 'ПРИСЕД' : 'СТОЯ';
   const lean = p.lean < -0.3 ? ' · ВЫГЛЯДЫВАЕТ ВЛЕВО' : p.lean > 0.3 ? ' · ВЫГЛЯДЫВАЕТ ВПРАВО' : '';
   mono(stance + lean + (p.ads > 0.5 ? ' · ПРИЦЕЛ' : '') + (p.lamp ? ' · ФОНАРЬ' : ''), x + 64, y + 28, HUD_COL);
@@ -113,7 +133,7 @@ function drawWeapon(p) {
     const k = 1 - g.reloadT / g.reloadDur;
     ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.fillRect(x, y - 10, 256, 4);
     ctx.fillStyle = HUD_WARN; ctx.fillRect(x, y - 10, 256 * k, 4);
-    mono(W.cls === 'shotgun' ? 'ЗАРЯЖАЕТ ПО ПАТРОНУ (ОГОНЬ — ПРЕРВАТЬ)' : g.reloadEmpty ? 'ПЕРЕЗАРЯДКА (ЗАТВОР НА ЗАДЕРЖКЕ)' : 'ПЕРЕЗАРЯДКА', x, y - 16, HUD_WARN, 'left', 11);
+    mono(W.cls === 'shotgun' ? 'ЗАРЯЖАЕТ ПО ПАТРОНУ (ОГОНЬ — ПРЕРВАТЬ)' : g.quick ? 'БЫСТРАЯ ПЕРЕЗАРЯДКА — МАГАЗИН СБРОШЕН' : g.reloadEmpty ? 'ПЕРЕЗАРЯДКА (ЗАТВОР НА ЗАДЕРЖКЕ) · RR — быстрая' : 'ПЕРЕЗАРЯДКА · RR — быстрая', x, y - 16, HUD_WARN, 'left', 11);
   } else if (p.sw) {
     const k = clamp(p.sw.t / p.sw.dur, 0, 1);
     ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.fillRect(x, y - 10, 256, 4);
@@ -123,6 +143,29 @@ function drawWeapon(p) {
 }
 
 // Слоты снаряжения над панелью оружия: 1, 2 — полноразмерные, 3 — пистолет; в руках — подсвечен, патронов всего
+// «Выживание»: волна и что сейчас (волна — сколько осталось, перерыв — сколько ждать, грузовик — что делать), погода; подсказки у грузовика
+function drawSurvHud(p) {
+  const s = G.surv;
+  const line = s.mode === 'assault'
+    ? (s.phase === 'fight' ? `противников осталось: ${G.enemies.filter((e) => !e.dead).length}`
+      : s.phase === 'exit' ? 'локация зачищена — переход открыт (хост стоит в нём 2 с)'
+      : `ГРУЗОВИК · броня ${ARMOR_ORDER[Math.min(s.trucks, 4)]} · пополнение — задний борт (F), лечение — медик`)
+    : s.phase === 'wave' ? `ВОЛНА ${s.wave} · противников осталось: ${survLeft()}`
+    : s.phase === 'break' ? `перерыв · волна ${s.wave + 1} через ${Math.ceil(Math.max(0, s.t))} с`
+    : `ГРУЗОВИК · броня ${ARMOR_ORDER[Math.min(s.trucks, 4)]} · пополнение — задний борт (F), лечение — медик`;
+  mono(line, 26, 56, s.phase === 'wave' ? HUD_DIM : '#f0d890');
+  if (G.weather) mono(`погода: ${WEATHER[G.weather.kind].name}` + (isAuth() ? ' · Backspace — в хаб' : ''), 14, 102, '#a8c0d8', 'left', 11);
+  if (p.dead || uiOpen()) return;
+  if (nearRear(p)) txt('F — грузовик: пополнить или покинуть боевую зону', VW / 2, VH - 120, 15, HUD_WARN, 'center');
+  else if (nearMedic(p)) txt(p.hp < HP ? (s.medic.heal && s.medic.heal !== p.id ? 'медик занят — подождите' : 'F — лечиться у медика') : 'здоровье полное', VW / 2, VH - 120, 15, HUD_WARN, 'center');
+  if (p.act && (p.act.kind === 'supply' || p.act.kind === 'heal')) {
+    const k = clamp(p.act.t / p.act.dur, 0, 1), x = VW / 2 - 120, y = VH - 100;
+    ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.fillRect(x, y, 240, 6);
+    ctx.fillStyle = HUD_WARN; ctx.fillRect(x, y, 240 * k, 6);
+    mono(p.act.kind === 'supply' ? 'ПОПОЛНЕНИЕ…' : 'ЛЕЧЕНИЕ…', VW / 2, y - 6, HUD_WARN, 'center', 12);
+  }
+}
+
 function drawSlots(p, x, y) {
   if (!p.kit) return;
   for (let i = 0; i < 3; i++) {
@@ -154,7 +197,7 @@ function drawCrosshair(p) {
   ctx.fillStyle = 'rgba(240,240,230,0.9)';
   ctx.fillRect(x - 1, y - 1, 2, 2);
   if (G.hitmark) {
-    ctx.strokeStyle = G.hitmark.kill ? HUD_RED : '#fff';
+    ctx.strokeStyle = G.hitmark.kill ? HUD_RED : G.hitmark.armor ? '#8fb4d8' : '#fff';     // по броне (удержала) — голубая
     ctx.lineWidth = 2;
     ctx.beginPath();
     for (const [sx, sy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) { ctx.moveTo(x + sx * 5, y + sy * 5); ctx.lineTo(x + sx * 11, y + sy * 11); }
@@ -221,7 +264,7 @@ function drawSpecs() {
 function drawControls() {
   const rows = [
     ['WASD', 'движение'], ['Мышь', 'направление взгляда и прицел'], ['ЛКМ', 'огонь'],
-    ['ПКМ (держать)', 'прицелиться: точнее, медленнее'], ['R', 'перезарядка'], ['V', 'режим огня'], ['Q / E (держать)', 'выглянуть влево / вправо из-за укрытия'], ['F', 'взаимодействие: дверь открыть / закрыть / отпереть'], ['G', 'выбить дверь ногой (громко)'], ['F (держать)', 'рядом с раненым товарищем — поднять'], ['B (держать)', 'рация (в помещении связи нет)'], ['M', 'микрофон вкл/выкл'], ['L', 'фонарь на оружии (в темноте выдаёт вас)'],
+    ['ПКМ (держать)', 'прицелиться: точнее, медленнее'], ['R', 'перезарядка; R дважды — быстрая (магазин сбросить, −30% времени)'], ['V', 'режим огня'], ['Q / E (держать)', 'выглянуть влево / вправо из-за укрытия'], ['F', 'взаимодействие: дверь открыть / закрыть / отпереть'], ['G', 'выбить дверь ногой (громко)'], ['F (держать)', 'рядом с раненым товарищем — поднять'], ['B (держать)', 'рация (в помещении связи нет)'], ['M', 'микрофон вкл/выкл'], ['L', 'фонарь на оружии (в темноте выдаёт вас)'],
     ['C', 'присесть / встать (за низким укрытием — спрятаться)'], ['Shift', 'бег (не стреляет, громко)'],
     ['1 / 2 / 3', 'полноразмерное 1, 2 / пистолет (быстро; полноразмерное — в левой руке)'], ['X', 'удар ножом'],
     ['Колёсико мыши', 'приблизить / отдалить камеру'],
@@ -240,7 +283,13 @@ function drawEnd() {
   ctx.fillRect(0, 0, VW, VH);
   if (G.stateT < 0.6) return;
   const solo = G.players.filter((q) => !q.ai).length < 2;
-  txt(win ? 'ПОЛИГОН ЗАЧИЩЕН' : solo ? 'ВЫ ПОГИБЛИ' : 'ОТРЯД ПОГИБ', VW / 2, VH / 2 - 10, 40, win ? '#9fe870' : HUD_RED, 'center');
+  if (G.surv) {
+    // «Выживание»: кто-то ушёл на грузовике — эвакуированы, иначе погибли; сколько волн отбито
+    const s = G.surv;
+    txt(solo ? 'ВЫ ПОГИБЛИ' : 'ОТРЯД ПОГИБ', VW / 2, VH / 2 - 10, 40, HUD_RED, 'center');
+    mono(s.mode === 'assault' ? `зачищено локаций: ${Math.max(0, s.stage - 1)}` : `отбито волн: ${Math.max(0, s.wave - (s.phase === 'wave' ? 1 : 0))}`,
+      VW / 2, VH / 2 + 50, HUD_COL, 'center', 15);
+  } else txt(win ? 'ПОЛИГОН ЗАЧИЩЕН' : solo ? 'ВЫ ПОГИБЛИ' : 'ОТРЯД ПОГИБ', VW / 2, VH / 2 - 10, 40, win ? '#9fe870' : HUD_RED, 'center');
   mono(isAuth() ? 'Enter — заново (та же расстановка)' + (G.mapId !== 'range' ? ' · Backspace — в хаб' : '') + ' · Esc — в меню'
     : 'Enter — попросить хоста начать заново · Esc — в меню', VW / 2, VH / 2 + 26, HUD_COL, 'center', 14);
 }

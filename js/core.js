@@ -54,10 +54,11 @@ function ammoFor(type, side, ai) {
 
 // Снаряжение: kit[0], kit[1] — полноразмерные (второго может не быть), kit[2] — пистолет (всегда). В руках — kit[cur] (= o.gun).
 // off — какое полноразмерное сейчас в левой руке (выхвачен пистолет), −1 — нет
+// p1 = null — только пистолет (ранние волны «Выживания»)
 function giveKit(o, p1, p2) {
-  o.kit = [makeGun(p1, ammoFor(p1, o.side, o.ai)), p2 && p2 !== p1 ? makeGun(p2, ammoFor(p2, o.side, o.ai)) : null,
+  o.kit = [p1 ? makeGun(p1, ammoFor(p1, o.side, o.ai)) : null, p2 && p2 !== p1 ? makeGun(p2, ammoFor(p2, o.side, o.ai)) : null,
     makeGun('m1911', ammoFor('m1911', o.side, o.ai))];
-  o.cur = 0; o.gun = o.kit[0]; o.off = -1; o.sw = null; o.stowT = 0;
+  o.cur = p1 ? 0 : 2; o.gun = o.kit[o.cur]; o.off = -1; o.sw = null; o.stowT = 0;
   return o;
 }
 
@@ -79,6 +80,7 @@ function newPerson(side, x, y, a) {
     vx: 0, vy: 0, speed: 0, px: x, py: y,
     lean: 0, leanWant: 0, leanPx: 0, lx: x, ly: y,   // выглядывание: −1 влево … 1 вправо; lx, ly — глаза и ствол
     gun: null, kit: null, cur: 0, off: -1, sw: null, stowT: 0, melee: null,   // оружие: см. giveKit; melee — удар ножом
+    armor: null,                    // броня: { cls: 'IIIA'…'IV', hp: 0..100 } — giveArmor
     flashT: 0, supp: 0, stepT: 0, hurtT: 9, lamp: false,
     keys: new Set(), act: null,     // ключи; текущее действие (отпирает, бьёт дверь)
     slot: -1, name: '', ai: false,
@@ -131,9 +133,11 @@ function startRange(squad = null, bots = false) { startMap('range', 0, squad, bo
 // Запуск карты id (hub, big, clear, range). seed — всё случайное на карте (старт отряда, противники, наборы ботов):
 // тот же seed — та же расстановка (перезапуск с самой карты). Снаряжение людей — выбранное в хабе (G.kits по месту).
 function startMap(id, seed = 0, squad = null, bots = false) {
+  if (id === 'assault' && !(seed >>> 20)) seed = assaultSeed(seed, 1);     // «Штурм» из хаба — локация 1
   G.mapId = id; G.mapSeed = seed >>> 0;
-  buildMap(id);
+  buildMap(id, G.mapSeed);
   const rnd = makeRng(G.mapSeed || 1);
+  G.surv = null; G.weather = null; G.hubHold = null;
   const mission = id === 'clear' ? missionSetup(rnd) : null;
   if (mission) map.start = mission.start;
   nextId = 1;
@@ -166,6 +170,8 @@ function startMap(id, seed = 0, squad = null, bots = false) {
     if (e.kind !== 'enemy') continue;
     G.enemies.push(makeEnemy(e.x * TILE, e.y * TILE, e.a || 0, e.patrol));
   }
+  if (id === 'surv') survInit(rnd);           // волны, грузовик, погода
+  if (id === 'assault') assaultInit(rnd);     // локация: противники, погода, подкрепление; отряд — как в конце прошлой
   const p = me() || G.players[0];
   if (p) { G.cam.x = p.x; G.cam.y = p.y; }
   G.state = 'play'; G.stateT = 0;

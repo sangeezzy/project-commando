@@ -9,6 +9,7 @@
 // Шум. kind: 'shot' — выстрел (слышат все в радиусе, сразу бой); 'bang' — удар в дверь (сквозь стены);
 // 'step' — шаги, перезарядка, двери (по пути вокруг стен, закрытые двери глушат).
 function makeNoise(x, y, r, kind, src) {
+  r *= hearK();                       // дождь и гроза глушат
   if (r <= 0) return;
   if (kind === 'shot') {
     for (const e of aiList()) {
@@ -324,8 +325,9 @@ function checkBodies(e) {
     if (!los(eye.x, eye.y, b.x, b.y)) continue;
     if (d > NEAR_SENSE && lightAt(b.x, b.y) * gainFor(lightAt(e.x, e.y)) < LIGHT.seeMin) continue;
     e.bodies.add(b.id);
-    // нашёл тело: тревога, зовёт ближних, идёт к телу (уже известное тело — просто запомнил)
-    if (b.bodyFound) continue;
+    // нашёл тело: тревога, зовёт ближних, идёт к телу (уже известное тело — просто запомнил).
+    // Уже в бою — не удивляется и не кричит, бой не бросает: просто запомнил (для спокойных тело остаётся ненайденным)
+    if (b.bodyFound || e.st === 2) continue;
     b.bodyFound = true;
     bark(e, 'Тут труп! Тревога!');
     alertEnemy(e, b.x, b.y, true);
@@ -438,7 +440,7 @@ function perceive(e) {
   for (const t of foesOf(e)) {
     if (t.dead || t.down) continue;          // лежачий раненый — не угроза, патроны на него не тратят
     const d = Math.hypot(t.x - e.x, t.y - e.y);
-    if (d > ENEMY.sight || d >= bd) continue;
+    if (d > ENEMY.sight * visK() || d >= bd) continue;        // туман, дождь — видно не так далеко
     const off = Math.abs(angDiff(Math.atan2(t.y - e.y, t.x - e.x), e.a));
     if (off > ENEMY.fov[e.st] && d > NEAR_SENSE) continue;
     // тело за укрытием — может быть видна высунувшаяся голова (выглядывание)
@@ -466,6 +468,7 @@ function noticeTime(e, t, d, off, partial = false) {
   if (G.time - t.gun.lastShot < 0.6) T *= 0.25;   // вспышка выстрела
   if (e.st === 1) T *= 0.5;
   if (e.st === 2) T *= 0.2;
+  T *= 1 + (1 - visK()) * 1.5;           // плохая видимость — замечают дольше
   return T;
 }
 
@@ -496,7 +499,8 @@ function aiEmpty(e) {
   }
   const canR = canReload(g);
   if (alt >= 0 && (!canR || (close && at + 0.2 < reloadTime(g)))) { switchTo(e, alt); return; }
-  if (canR) startReload(e);
+  // угроза рядом, а магазинов с запасом (≥ 3) — быстрая: пустой магазин всё равно не жалко
+  if (canR) startReload(e, close && WEAPONS[g.t].cls !== 'shotgun' && g.pouch.length >= 3);
 }
 // Раз в 0,4 с: в бою — лучший ствол для дистанции (если заметно лучше и не посреди очереди); спокоен — к полноразмерному,
 // пустое — перезарядить. Каждый кадр: нож, если цель вплотную, а оружие не готово (или просто вплотную — изредка)
@@ -577,6 +581,7 @@ function updateAI(dt) {
     if (e.side === 'p') checkLeash(e);
     const hurt = e.side === 'p' && !e.seeing ? downedToHelp(e) : null;
     if (hurt && reviveStep(e, hurt, dt)) { /* поднимает раненого */ }
+    else if (e.side === 'p' && G.surv && survBotStep(e, dt)) { /* у грузовика: пополниться, вылечиться */ }
     else if (e.regroup && !e.seeing) followLeader(e, dt);
     else if (e.peek) peekStep(e, dt, seen);
     else if (e.flank) flankStep(e, dt, seen);
@@ -835,7 +840,8 @@ function hunt(e, dt) {
   if (e.searchT <= 0) {
     // место цели сместилось (разведданные, новый шум) — путь к старому месту больше не годится
     if (e.goal && Math.hypot(e.goal.x - e.lastX, e.goal.y - e.lastY) > M(3)) e.goal = null;
-    e.goal = e.goal || bfsFrom(e.lastX, e.lastY, 1e9, true);
+    // бот отряда — и через запертые двери, которые можно выбить (выбьет: противник за ней)
+    e.goal = e.goal || bfsFrom(e.lastX, e.lastY, 1e9, e.side === 'p' ? 'breach' : true);
     const step = fieldStep(e, e.goal);
     if (step !== null && Math.hypot(e.lastX - e.x, e.lastY - e.y) > M(1.5)) {
       const lead = stackLead(e, step);

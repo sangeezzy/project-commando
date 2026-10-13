@@ -38,7 +38,9 @@ function controlLocal(p, dt) {
   // рядом раненый товарищ — F (держать) поднимает его, а не открывает дверь
   const near = doorNear(p);
   const downNear = G.players.some((q) => q !== p && q.down && !q.dead && Math.hypot(q.x - p.x, q.y - p.y) < DOWN.reviveR);
-  if (pressed.KeyF && tableNear(p)) openLoadout();                  // хаб: оружейный стол — выбор снаряжения (у себя на экране)
+  if (pressed.KeyF && G.surv && nearRear(p)) openTruckMenu();          // «Выживание»: задний борт грузовика — меню
+  else if (pressed.KeyF && G.surv && nearMedic(p)) doAct(p, 'heal');    // …медик — лечиться
+  else if (pressed.KeyF && tableNear(p)) openLoadout();                  // хаб: оружейный стол — выбор снаряжения (у себя на экране)
   else if (pressed.KeyF && near && !downNear) doAct(p, 'door');
   if (pressed.KeyG && near) doAct(p, 'kick');
   const busy = !!p.act || !!p.reviving;     // отпирает, бьёт ногой или поднимает раненого — стоит на месте
@@ -74,7 +76,8 @@ function controlLocal(p, dt) {
   if (pressed.Digit2) doAct(p, 'w1');
   if (pressed.Digit3) doAct(p, 'w2');
   if (pressed.KeyX) doAct(p, 'knife');
-  if (pressed.KeyR) doAct(p, 'reload');
+  // R — перезарядка; второе нажатие подряд (RELOAD_QUICK.dbl) — быстрая: магазин сбросить целиком
+  if (pressed.KeyR) { doAct(p, G.time - (p.lastR ?? -9) < RELOAD_QUICK.dbl ? 'reloadq' : 'reload'); p.lastR = G.time; }
   if (pressed.KeyV) doAct(p, 'mode');          // B — рация (голосовой чат)
   if (isAuth()) { if (!busy) pullTrigger(p, mouse.l, mouse.lPressed, playerSpread(p)); }
   else { Net.inp.fire = mouse.l && !busy; if (mouse.lPressed) Net.inp.press++; predictFire(p, mouse.l && !busy, mouse.lPressed); }
@@ -99,9 +102,11 @@ function applyAct(p, k) {
   else if (k === 'kick') { const d = doorNear(p); if (d) startKick(p, d); }
   else if (k === 'lamp') { p.lamp = !p.lamp; emit(['mode', p.id]); }
   else if (k === 'reload') startReload(p);
+  else if (k === 'reloadq') quickReload(p);
   else if (k === 'w0' || k === 'w1' || k === 'w2') switchTo(p, +k[1]);
   else if (k === 'knife') startMelee(p);
   else if (k.startsWith('kit:')) applyKitAct(p, k);
+  else if (k === 'supply' || k === 'heal' || k === 'evac') survAct(p, k);
   else if (k === 'god') {
     p.god = !p.god;
     if (p.god) { if (p.down) reviveUp(p); p.hp = HP; }        // включил раненым — сразу на ногах и с полным здоровьем

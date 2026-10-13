@@ -77,9 +77,10 @@ function canReload(g) {
 
 // Перезарядка: текущий магазин (если в нём что-то есть) — в подсумок, берём самый полный.
 // Ружьё — по патрону (shellT), пустое — первый через окно в патронник (shellFirst); нажатый курок прерывает.
-function startReload(o) {
+function startReload(o, quick = false) {
   const g = o.gun, W = WEAPONS[g.t];
   if (g.reloadT > 0 || o.dead || o.sw) return false;
+  g.quick = false;
   if (W.cls === 'shotgun') {
     if (g.mag >= W.mag && g.chamber) return false;
     if (!(g.pouch[0] > 0)) { emit(['nomag', o.id]); return false; }
@@ -92,7 +93,8 @@ function startReload(o) {
   if (g.mag >= W.mag) return false;
   if (!g.pouch.some((n) => n > g.mag)) { emit(['nomag', o.id]); return false; }
   g.reloadEmpty = !g.chamber;
-  g.reloadDur = g.reloadT = g.reloadEmpty ? W.reloadEmpty : W.reloadTac;
+  g.quick = quick;
+  g.reloadDur = g.reloadT = (g.reloadEmpty ? W.reloadEmpty : W.reloadTac) * (quick ? RELOAD_QUICK.k : 1);
   emit(['reload', o.x, o.y, o.side, g.reloadEmpty ? 1 : 0, o.id]);
   makeNoise(o.x, o.y, M(NOISE.reload), 'step', o);
   return true;
@@ -115,12 +117,27 @@ function finishReload(o) {
   let best = 0;
   for (let i = 1; i < g.pouch.length; i++) if (g.pouch[i] > g.pouch[best]) best = i;
   const fresh = g.pouch.splice(best, 1)[0];
-  if (g.mag > 0) g.pouch.push(g.mag);         // недострелянный магазин остаётся, пустой — выброшен
+  if (g.mag > 0 && !g.quick) g.pouch.push(g.mag);   // недострелянный магазин остаётся, пустой — выброшен; быстрая — выброшен любой
+  g.quick = false;
   g.mag = fresh;
   if (!g.chamber && g.mag > 0) { g.mag--; g.chamber = 1; }
 }
 
 function cancelReload(o) { o.gun.reloadT = 0; }
+
+// Быстрая перезарядка (второе нажатие R): только что начатую обычную — ускорить (прошедшее время засчитывается), иначе начать быструю.
+// Магазин выбрасывается целиком. Помповому ружью — нет (заряжают по патрону).
+function quickReload(o) {
+  const g = o.gun, W = WEAPONS[g.t];
+  if (W.cls === 'shotgun') return false;
+  if (g.reloadT > 0) {
+    if (g.quick) return false;
+    const done = g.reloadDur - g.reloadT, dur = g.reloadDur * RELOAD_QUICK.k;
+    g.quick = true; g.reloadDur = dur; g.reloadT = Math.max(0.05, dur - done);
+    return true;
+  }
+  return startReload(o, true);
+}
 
 // ---------- Смена оружия (1, 2 — полноразмерные, 3 — пистолет) ----------
 // Сколько займёт смена на слот to (с): пистолет выхватывается быстро (полноразмерное — в левую руку);
@@ -264,11 +281,30 @@ function hitPerson(o, b) {
   const W = b.t;
   const m = b.dist / PX_M;
   const k = b.e * Math.max(0.3, 1 - W.dropPerM * m);
-  const vital = Math.random() < W.vital * b.e;
-  const dmg = vital ? 999 : rand(W.dmg[0], W.dmg[1]) * k;
+  let vital = Math.random() < W.vital * b.e;
+  let dmg = rand(W.dmg[0], W.dmg[1]) * k;
+  // броня: попадание в плиту — держит или нет по уровню (ARMOR, WEAPONS.threat)
+  const ar = armorHit(o, W, k);
+  if (ar === 'stop') { dmg *= ARMOR_HIT.blunt; vital = false; }
+  else if (ar === 'through') { dmg *= ARMOR_HIT.through; vital = vital && Math.random() < 0.5; }
   const shooter = [...G.players, ...G.enemies].find((q) => q.id === b.owner);
-  damagePerson(o, dmg, b.sx, b.sy, Math.atan2(b.vy, b.vx), shooter);
-  if (shooter && !shooter.ai) emit(['hm', shooter.id, o.dead ? 1 : 0]);
+  damagePerson(o, vital ? 999 : dmg, b.sx, b.sy, Math.atan2(b.vy, b.vx), shooter);
+  if (shooter && !shooter.ai) emit(['hm', shooter.id, o.dead ? 1 : 0, ar === 'stop' ? 1 : 0]);
+}
+
+// ---------- Броня ----------
+function giveArmor(o, cls) { o.armor = cls ? { cls, hp: 100 } : null; }
+// Пуля попала в бойца: в плиту ли (ARMOR_HIT.cover), удержала ли. Плита изнашивается (урон по калибру × энергия), сильнее — если пробита.
+// Возвращает 'stop' (удержала), 'through' (пробита), null (мимо плиты или брони нет / разбита)
+function armorHit(o, W, k = 1) {
+  const a = o.armor;
+  if (!a || a.hp <= 0 || Math.random() >= ARMOR_HIT.cover) return null;
+  const lvl = ARMOR[a.cls].lvl;
+  // изношенная плита держит хуже: ниже worn — с вероятностью hp / worn
+  const stop = W.threat <= lvl && (a.hp >= ARMOR_HIT.worn || Math.random() < a.hp / ARMOR_HIT.worn);
+  a.hp = Math.max(0, a.hp - W.armorDmg * k * (stop ? 1 : ARMOR_HIT.overK));
+  emit(['arm', o.x, o.y, o.id, stop ? 1 : 0]);
+  return stop ? 'stop' : 'through';
 }
 
 function damagePerson(o, dmg, sx, sy, ang, by) {

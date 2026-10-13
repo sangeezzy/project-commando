@@ -159,6 +159,7 @@ function startKick(p, d) {
 function updateAct(p, dt) {
   const a = p.act;
   if (!a) return false;
+  if (a.kind === 'supply' || a.kind === 'heal') return survActStep(p, a, dt);     // «Выживание»: у грузовика, у медика
   a.t += dt;
   // отошёл от двери — бросил
   if (Math.hypot(a.d.cx - p.x, a.d.cy - p.y) > DOOR.reach + M(0.4)) { p.act = null; return false; }
@@ -202,9 +203,18 @@ function updateDoors(dt) {
   for (const d of map.doors) d.ang = approach(d.ang, doorPassable(d) ? 1 : 0, dt, DOOR.anim / 3);
 }
 
+// Бот отряда в бою знает, что противник за этой дверью (последнее известное место — по ту сторону, ближе 25 м)
+function foeBehindDoor(e, d) {
+  if (e.side !== 'p' || e.st !== 2 || e.lastX === undefined) return false;
+  const side = (x, y) => Math.sign(d.horiz ? y - d.cy : x - d.cx);
+  return side(e.x, e.y) !== side(e.lastX, e.lastY) && Math.hypot(e.lastX - d.cx, e.lastY - d.cy) < M(DOOR.breachR);
+}
+
 // ---------- ИИ: открыть закрытую незапертую дверь на пути ----------
+// Бот отряда в бою, если за дверью противник, — выбивает её (и запертую, если можно выбить).
 // Возвращает true, если боец сейчас возится с дверью (идти не надо)
 function aiDoorAhead(e, ang, dt) {
+  if (e.act && e.act.kind === 'kick') return true;
   // прямо по ходу или чуть в сторону (подход к двери наискосок)
   let tx = -1, ty = -1;
   for (const da of [0, 0.6, -0.6]) {
@@ -214,7 +224,15 @@ function aiDoorAhead(e, ang, dt) {
   }
   if (tx < 0) { e.doorT = 0; return false; }
   const d = map.doorAt.get(ty * map.w + tx);
-  if (!d || d.locked) return false;
+  if (!d) return false;
+  // путь бота проложен сквозь запертую дверь (её можно выбить) — тоже выбивает
+  const breach = d.locked && e.goal && e.goal.doors === 'breach' && DOOR_TYPES[d.type].kick > 0;
+  if ((foeBehindDoor(e, d) && (!d.locked || DOOR_TYPES[d.type].kick > 0)) || breach) {
+    e.want = Math.atan2(d.cy - e.y, d.cx - e.x);
+    if (!e.act && Math.hypot(d.cx - e.x, d.cy - e.y) <= DOOR.reach) { bark(e, 'Выбиваю!'); startKick(e, d); }
+    return true;
+  }
+  if (d.locked) return false;
   e.doorT = (e.doorT || 0) + dt;
   e.want = Math.atan2(d.cy - e.y, d.cx - e.x);
   if (e.doorT >= DOOR.aiOpen) { openDoor(d, e); e.doorT = 0; }

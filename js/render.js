@@ -9,6 +9,7 @@ const onScreen = (x, y, pad = 60) => Math.abs(x - G.cam.x) < VW / 2 / G.zoom + p
 function playerSees(p, o) {
   const eye = eyeOf(p);
   const d = Math.hypot(o.x - eye.x, o.y - eye.y);
+  if (d > VIS_BASE * visK() && d > NEAR_SENSE) return false;      // туман, дождь — дальше не различить
   if (d > NEAR_SENSE && Math.abs(angDiff(Math.atan2(o.y - eye.y, o.x - eye.x), p.a)) > PLAYER_FOV) return false;
   if (sightLine(eye, o)) return true;
   // высунувшийся из-за угла: видна голова
@@ -34,7 +35,8 @@ function render(dt = 1 / 60) {
   for (const q of G.parts) if (q.shape === 5) drawPart(q);
   for (const d of map.doors) if (onScreen(d.cx, d.cy)) drawDoor(d);
   for (const k of map.keys) if (!k.taken && onScreen(k.x, k.y)) drawKey(k);
-  for (const o of allPeople()) if (o.dead && onScreen(o.x, o.y)) drawBody(o);
+  drawTruck();
+  for (const o of allPeople()) if (o.dead && !o.evac && onScreen(o.x, o.y)) drawBody(o);
   for (const e of G.enemies) {
     if (e.dead || !onScreen(e.x, e.y)) { e.va = 0; continue; }
     const v = p && (p.dead || G.noFog || playerSees(p, e)) ? 1 : 0;      // отладка ]: видно всех
@@ -43,6 +45,7 @@ function render(dt = 1 / 60) {
   }
   // свой отряд виден всегда (связь, знаем, где свои)
   for (const o of G.players) if (!o.dead && onScreen(o.x, o.y)) drawPerson(o, 1);
+  drawMedic();
   for (const q of G.parts) if (q.shape !== 5) drawPart(q);
   const view = p && !p.dead ? viewPolygon(p) : null;
   drawLighting(offX, offY, view);
@@ -54,7 +57,9 @@ function render(dt = 1 / 60) {
   for (const e of G.enemies) if (!e.dead && e.va > 0.3 && (G.noFog || perceivedAt(e.x, e.y) > LIGHT.seeMin)) drawAwareness(e);
   if (view && !G.noFog) drawFog(offX, offY, p, view);
   if (G.noFog) drawAllEnemies();
+  drawWeather();
   drawHubWorld();
+  drawAssaultExit();
   drawTeamTags();
   drawIntel();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -322,6 +327,29 @@ function drawGunShape(t, mo = 1, g = ctx) {
   if (!akm) { g.fillStyle = '#333'; g.fillRect(4, -2.6, 6, 1.2); }   // прицел (у АКМ — открытый)
 }
 
+// Бронежилет на модели: плитоноска цвета класса (мягкая IIIA — без контура плит); с износом — потёртости и сколы,
+// разбитая — трещины. Отметины у каждого бойца на своих местах (генератор от id), число — по износу
+function drawVest(o) {
+  const a = o.armor, A = ARMOR[a.cls], wear = 1 - clamp(a.hp / 100, 0, 1);
+  ctx.fillStyle = A.color;
+  roundRect(ctx, -6, -8, 12, 16, 2.5); ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.lineWidth = 0.8; ctx.stroke();
+  if (A.lvl > 1) {                                  // плиты спереди и сзади
+    ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+    ctx.strokeRect(1, -5.5, 4, 11); ctx.strokeRect(-5, -5.5, 4, 11);
+  }
+  const rnd = makeRng(o.id * 977 + 13), n = Math.round(wear * 9);
+  for (let i = 0; i < n; i++) {
+    const x = -5 + rnd() * 10, y = -7 + rnd() * 14;
+    ctx.fillStyle = wear > 0.6 ? 'rgba(30,22,18,0.85)' : 'rgba(235,225,200,0.75)';
+    ctx.fillRect(x, y, 2, 2);                      // скол / потёртость
+  }
+  if (a.hp <= 0) {                                  // разбита: трещины поперёк
+    ctx.strokeStyle = 'rgba(20,15,10,0.8)'; ctx.lineWidth = 0.9;
+    ctx.beginPath(); ctx.moveTo(-5, -4); ctx.lineTo(-1, -1); ctx.lineTo(-3, 3); ctx.moveTo(4, -6); ctx.lineTo(1, 0); ctx.lineTo(4, 5); ctx.stroke();
+  }
+}
+
 function drawPerson(o, alpha) {
   if (o.down) { drawDowned(o, alpha); return; }
   if (!o.an) updateAnim(o, 0);
@@ -415,6 +443,7 @@ function drawPerson(o, alpha) {
   ctx.fillRect(-4.5, -6.5, 9, 13);
   ctx.fillStyle = 'rgba(0,0,0,0.25)';
   ctx.fillRect(1.5, -5.5, 2.5, 3); ctx.fillRect(1.5, 2.5, 2.5, 3);   // подсумки
+  if (o.armor) drawVest(o);
   if (isP && o.slot >= 0) { ctx.fillStyle = SLOT_COLORS[o.slot]; ctx.fillRect(-3, -10.5, 4, 3); }   // повязка: цвет места в отряде
   // голова в шлеме: присев — чуть наклоняется вперёд; при выглядывании — дальше вбок
   ctx.translate(0, ln * 0.5);

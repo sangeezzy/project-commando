@@ -95,7 +95,18 @@ function playFx(ev) {
   } else if (k === 'crack') {
     if (p && ev[3] === p.id) SFX.crack();
   } else if (k === 'hm') {
-    if (p && ev[1] === p.id) G.hitmark = { t: 0.25, kill: !!ev[2] };
+    if (p && ev[1] === p.id) G.hitmark = { t: 0.25, kill: !!ev[2], armor: !!ev[3] };
+  } else if (k === 'radio') {
+    // сообщение по рации (видно и слышно всем своим): щелчок рации и текст
+    G.radioMsg = { text: ev[1], t: 6 };
+    if (AC) SFX.click(0.6);
+  } else if (k === 'banner') {
+    G.banner = { text: ev[1], sub: ev[2], t: 4 };
+  } else if (k === 'arm') {
+    // попадание в плиту: искры, звон (удержала — звонче)
+    const [, x, y, , stop] = ev;
+    for (let i = 0; i < 5; i++) addPart(x, y, rand(-90, 90), rand(-90, 90), rand(0.1, 0.25), stop ? '#e8e0b0' : '#c0b8a0', 1.5, 4, 1);
+    if (p) SFX.impact(vol(Math.hypot(x - p.x, y - p.y)) * (stop ? 0.8 : 0.5), 'metal');
   } else if (k === 'hurt') {
     if (p && ev[1] === p.id) { G.hurt.push({ a: ev[2], t: 1.2 }); G.shake = Math.max(G.shake, 6); p.hurtT = 0; }
   } else if (k === 'toast') {
@@ -149,7 +160,8 @@ function initAudio() {
   } catch (e) { AC = null; }
 }
 // громкость по расстоянию: выстрел громкий везде, но заметно тише вдали
-const vol = (d) => clamp(1 / (1 + d / M(12)), 0.04, 1);
+// громкость по расстоянию; в дождь и грозу далёкое слышно хуже (hearK — погода)
+const vol = (d) => clamp(1 / (1 + d / (M(12) * (typeof hearK === 'function' ? hearK() : 1))), 0.04, 1);
 const pan = (x) => clamp((x - G.cam.x) / 700, -1, 1);
 
 function out(panV) {
@@ -225,4 +237,20 @@ const SFX = {
     else { noise(o, 0.35, 0.9 * v, 'lowpass', metal ? 2500 : 1500); tone(o, 'sine', 90, 35, 0.3, 0.8 * v); noise(o, 0.5, 0.25 * v, 'bandpass', metal ? 1800 : 700, 0.08, 1.5); }
   },
   step(v = 0.15) { if (!AC) return; noise(out(0), 0.05, v, 'lowpass', 600); },
+  // гром: треск и долгий низкий раскат
+  thunder(v = 1) {
+    if (!AC) return;
+    const o = out(0);
+    noise(o, 0.4, 0.5 * v, 'bandpass', 900, 0, 1, 0.01);
+    noise(o, 3.2, 0.9 * v, 'lowpass', 180, 0.05, 0.7, 0.15);
+    noise(o, 2.2, 0.5 * v, 'lowpass', 90, 0.4, 0.7, 0.3);
+  },
+  // шум дождя — постоянный, громкость по силе (set 0..1)
+  rainLoop() {
+    const s = AC.createBufferSource(); s.buffer = noiseBuf; s.loop = true;
+    const f = AC.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = 3200; f.Q.value = 0.4;
+    const g = AC.createGain(); g.gain.value = 0;
+    s.connect(f); f.connect(g); g.connect(master); s.start();
+    return { set(k) { g.gain.setTargetAtTime(0.09 * k, AC.currentTime, 0.5); }, stop() { try { s.stop(); } catch (e) { /* ignore */ } } };
+  },
 };
