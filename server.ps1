@@ -140,7 +140,10 @@ public static class PCServer {
             var data = File.ReadAllBytes(f);
             Reply(s, "200 OK", Mime(f), method == "GET" ? data : new byte[0], data.Length);
             c.Close();
-        } catch { try { c.Close(); } catch { } }
+        } catch (Exception ex) {
+            Console.WriteLine("Ошибка запроса: " + ex.GetType().Name + ": " + ex.Message);
+            try { c.Close(); } catch { }
+        }
     }
 
     static void Reply(Stream s, string status, string ctype, byte[] body, int len = -1) {

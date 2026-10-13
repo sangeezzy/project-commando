@@ -14,6 +14,9 @@ const frames = ['h', 'g1', 'g2'].map((id) => document.getElementById(id));
 const [H, G1, G2] = frames;
 const log = [], checks = [];
 const check = (name, ok, got) => checks.push({ name, ok: !!ok, got });
+// пульс для диагностики зависаний: счётчик секунд и последняя проверка — в заголовке (run_tests читает через отладочный порт)
+let beat = 0;
+setInterval(() => { document.title = `net ${++beat} | проверок ${checks.length} | ${checks.length ? checks[checks.length - 1].name.slice(0, 60) : '-'}`; }, 1000);
 const E = (f, code) => f.contentWindow.eval(code);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const until = async (fn, ms, step = 200) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { try { if (fn()) return true; } catch (e) { /* ещё рано */ } await sleep(step); } return false; };
@@ -22,6 +25,15 @@ const post = (final) => fetch('/report', { method: 'POST', body: JSON.stringify(
 function load(f) {
   return new Promise((res) => {
     f.onload = () => {
+      // все ли части игры загрузились (редкий сбой: окно без одного из скриптов) — если нет, какие файлы и с каким кодом
+      const need = ['startRange', 'canShoot', 'updateAI', 'applySnapshot', 'render', 'drawHUD', 'netTick', 'playFx', 'Voice', 'hostWs'];
+      const miss = need.filter((n) => E(f, `typeof ${n}`) === 'undefined');
+      if (miss.length) {
+        const bad = f.contentWindow.performance.getEntriesByType('resource')
+          .filter((r) => r.initiatorType === 'script' && (r.responseStatus !== 200 || !r.decodedBodySize))
+          .map((r) => `${r.name.split('/').pop()} код ${r.responseStatus} тело ${r.decodedBodySize} ${Math.round(r.duration)} мс`);
+        log.push(`окно ${f.id}: не загрузилось ${miss.join(', ')}; скрипты с ошибкой: ${bad.join('; ') || 'нет записей'}; скриптов на странице ${f.contentDocument.scripts.length}`);
+      }
       // симуляция по таймеру (в headless requestAnimationFrame нерегулярен), кадры не рисуем
       E(f, `window.__manualTick = true; window.__errors = [];
         addEventListener('error', (e) => __errors.push(String(e.message) + ' @' + (e.filename || '').split('/').pop() + ':' + e.lineno));

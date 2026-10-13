@@ -423,11 +423,11 @@ function hostWs(tg, code, onErr) {
       onHostData(c, d);
     }
   };
-  ws.onclose = () => {
+  ws.onclose = (ev) => {
     if (Net.ws !== ws) return;
     clearTimeout(timeout);
     if (G.role === 'host') leaveToMenu(online ? 'Связь с онлайн-сервером потеряна. Проверьте интернет.' : 'Связь с сервером игры потеряна — окно сервера (start.bat) закрыто?');
-    else { setStatus(online ? `Не удалось подключиться к онлайн-серверу ${tg.host}.` : 'Сервер игры не отвечает — запустите start.bat.'); cleanupNet(); }
+    else { setStatus(online ? `Не удалось подключиться к онлайн-серверу ${tg.host}.` : `Сервер игры не отвечает — запустите start.bat. (код ${ev.code})`); cleanupNet(); }
   };
 }
 

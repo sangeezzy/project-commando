@@ -224,7 +224,9 @@ def tls_proxy(port_to, cert, key):
         await asyncio.gather(pipe(r, w2), pipe(r2, w))
 
     def run():
-        loop = asyncio.new_event_loop()
+        # Selector, а не Proactor (Windows): у Proactor первая же ошибка приёма (браузер оборвал лишнее соединение)
+        # закрывает слушающий сокет — прокси перестаёт пускать, страница не может прислать отчёт (так и сбоили прогоны)
+        loop = asyncio.SelectorEventLoop() if sys.platform == 'win32' else asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         loop.set_exception_handler(lambda l, c: None)   # обрывы соединений при закрытии браузера — не ошибка
         loop.run_until_complete(asyncio.start_server(handle, '127.0.0.1', port, ssl=ctx))
@@ -234,6 +236,49 @@ def tls_proxy(port_to, cert, key):
     threading.Thread(target=run, daemon=True).start()
     ready.wait(5)
     return port
+
+
+def run_srvrst(server='py'):
+    """Сервер не перестаёт пускать игроков после клиентов, оборвавших соединение сбросом (RST) ещё до приёма.
+    Так делают браузеры с лишними заранее открытыми соединениями; у asyncio на Windows (Proactor) первая такая
+    ошибка закрывала слушающий сокет — server.py переставал принимать новых до перезапуска."""
+    import struct
+    import urllib.request
+    print('\n[srvrst] ' + ('server.py' if server == 'py' else 'server.ps1') + ': 300 оборванных соединений')
+    port = free_port()
+    if server == 'py':
+        cmd = [sys.executable, str(ROOT / 'server.py'), str(port)]
+    else:
+        cmd = ['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(ROOT / 'server.ps1'), '-Port', str(port)]
+    srv = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    direct = urllib.request.build_opener(urllib.request.ProxyHandler({}))      # мимо системного прокси
+
+    def ok():
+        try:
+            with direct.open(f'http://127.0.0.1:{port}/index.html', timeout=3) as r:
+                return r.status == 200
+        except Exception:  # noqa: BLE001
+            return False
+    try:
+        deadline = time.time() + 40                  # server.ps1 компилирует C# при запуске
+        while time.time() < deadline and not ok():
+            time.sleep(0.3)
+        Report.check('сервер запущен и отдаёт игру', ok())
+        dead = None
+        for i in range(300):
+            sk = socket.socket()
+            sk.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack('ii', 1, 0))   # закрыть сбросом
+            try:
+                sk.connect(('127.0.0.1', port))
+            except OSError:
+                pass
+            sk.close()
+            if i % 25 == 24 and not ok():
+                dead = i + 1
+                break
+        Report.check('после 300 оборванных соединений принимает новых', dead is None and ok(), dead and f'перестал после {dead}')
+    finally:
+        subprocess.run(['taskkill', '/F', '/T', '/PID', str(srv.pid)], capture_output=True) if sys.platform == 'win32' else srv.kill()
 
 
 def run_netlocal(chrome, server='py', tls=False, mode='ws', lag=0, jitter=0):
@@ -251,7 +296,10 @@ def run_netlocal(chrome, server='py', tls=False, mode='ws', lag=0, jitter=0):
         cmd_srv = [sys.executable, str(ROOT / 'server.py'), str(port), '--report', str(rep), '--lag', str(lag), '--jitter', str(jitter)]
     else:
         cmd_srv = ['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(ROOT / 'server.ps1'), '-Port', str(port), '-Report', str(rep)]
-    srv = subprocess.Popen(cmd_srv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    diag = ''
+    srv_log = open(tmp / 'server.log', 'wb')          # вывод сервера: при сбое прогона печатается хвост
+    env = dict(os.environ, PYTHONUNBUFFERED='1', PYTHONIOENCODING='utf-8')
+    srv = subprocess.Popen(cmd_srv, stdout=srv_log, stderr=subprocess.STDOUT, env=env)
     base = f'http://127.0.0.1:{port}'
     if tls:
         # openssl: в PATH или из состава Git для Windows; нет — вариант пропускается
@@ -278,30 +326,76 @@ def run_netlocal(chrome, server='py', tls=False, mode='ws', lag=0, jitter=0):
            '--autoplay-policy=no-user-gesture-required', '--window-size=1800,1100', '--no-proxy-server',
            '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream',   # «микрофон» для голосового чата
            '--ignore-certificate-errors', f'{base}/tools/net.html?mode={mode}&lag={lag}&jitter={jitter}']
-    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    chrome_log = open(tmp / 'chrome.log', 'wb')         # журнал Chrome: падения процессов страниц
+    proc = subprocess.Popen(cmd + ['--enable-logging=stderr', '--v=0'], stdout=subprocess.DEVNULL, stderr=chrome_log)
     r = None
     try:
-        deadline = time.time() + 150
+        t0 = time.time()
+        deadline = t0 + 150
+        last_mtime, last_rep = 0, t0          # когда страница в последний раз прислала отчёт (раз в 3 с)
         while time.time() < deadline:
             time.sleep(1)
             try:
+                m = rep.stat().st_mtime
+                if m != last_mtime:
+                    last_mtime, last_rep = m, time.time()
                 r = json.loads(rep.read_text(encoding='utf-8'))
             except (OSError, ValueError):
                 continue
             if r.get('final'):
                 break
+        if not r or not r.get('final'):
+            # сбой: что именно встало — страница (браузер), сервер или просто не уложились по времени
+            alive = proc.poll() is None
+            import urllib.request
+            direct = urllib.request.build_opener(urllib.request.ProxyHandler({}))     # мимо системного прокси
+            try:
+                with direct.open(f'http://127.0.0.1:{port}/index.html', timeout=3) as resp:
+                    srv_ok = f'да ({resp.status})'
+            except Exception as e:  # noqa: BLE001
+                srv_ok = f'нет ({type(e).__name__} {getattr(e, "code", "")})'
+            # жив ли JavaScript страницы: она раз в секунду пишет в заголовок счётчик и последнюю проверку (через отладочный порт Chrome)
+            titles = []
+            try:
+                dport = (Path(prof) / 'DevToolsActivePort').read_text().split()[0]
+                for _ in range(2):
+                    with direct.open(f'http://127.0.0.1:{dport}/json', timeout=3) as resp:
+                        titles.append([t.get('title', '') for t in json.loads(resp.read()) if 'net.html' in t.get('url', '')])
+                    time.sleep(2)
+            except Exception as e:  # noqa: BLE001
+                titles.append(f'нет ({type(e).__name__})')
+            diag = (f'  --- сбой: прошло {time.time() - t0:.0f} с, последний отчёт страницы {time.time() - last_rep:.0f} с назад, '
+                    f'Chrome жив: {"да" if alive else "нет"}, сервер отвечает: {srv_ok}' + '\n'
+                    f'  --- заголовок страницы (через 2 с): {titles}')
     finally:
         proc.kill()
         srv.kill()
         if server == 'ps1':
             subprocess.run(['taskkill', '/F', '/T', '/PID', str(srv.pid)], capture_output=True)
         shutil.rmtree(prof, ignore_errors=True)
+    srv_log.close()
+    chrome_log.close()
+    failed0 = Report.failed
     if not r or 'checks' not in r:
         Report.check('отчёт получен', False, r)
-        return
-    for c in r['checks']:
-        Report.check(c['name'], c['ok'], c.get('got'))
-    Report.check('финальная фаза дошла до конца', bool(r.get('final')), r.get('log'))
+    else:
+        for c in r['checks']:
+            Report.check(c['name'], c['ok'], c.get('got'))
+        Report.check('финальная фаза дошла до конца', bool(r.get('final')), r.get('log'))
+    if Report.failed > failed0:
+        if diag:
+            print(diag)
+        try:
+            clog = (tmp / 'chrome.log').read_bytes().decode('utf-8', 'replace').splitlines()
+            bad = [ln for ln in clog if re.search(r'crash|terminat|OOM|out of memory|killed|hung|unresponsive', ln, re.I)][-8:]
+            for ln in bad:
+                print('  ! chrome: ' + ln[:220])
+        except OSError:
+            pass
+        tail = (tmp / 'server.log').read_bytes().decode('utf-8', 'replace').strip().splitlines()[-25:]
+        print('  --- журнал сервера (хвост) ---')
+        for ln in tail:
+            print('  | ' + ln)
 
 
 def main():
@@ -319,6 +413,8 @@ def main():
         args.net = True
     run_unit(chrome, names)
     if netlocal:
+        run_srvrst('py')
+        run_srvrst('ps1')
         run_netlocal(chrome, 'ps1')
         run_netlocal(chrome, 'py')
         run_netlocal(chrome, 'ps1', tls=True)

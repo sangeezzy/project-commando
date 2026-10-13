@@ -272,6 +272,18 @@ def local_addrs():
 
 # ---------- HTTP: файлы игры + переход на WebSocket ----------
 async def handle(reader, writer):
+    # сбой обработки запроса не должен пропадать молча (иначе браузер просто не получит файл — и непонятно почему)
+    try:
+        await _handle(reader, writer)
+    except Exception as e:  # noqa: BLE001
+        print(f'Ошибка запроса: {type(e).__name__}: {e}')
+        try:
+            writer.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+async def _handle(reader, writer):
     try:
         head = await asyncio.wait_for(reader.readuntil(b'\r\n\r\n'), 15)
     except (asyncio.IncompleteReadError, asyncio.LimitOverrunError, asyncio.TimeoutError, ConnectionError):
@@ -353,6 +365,26 @@ async def handle(reader, writer):
     writer.close()
 
 
+def run_windows(port):
+    """Windows: SelectorEventLoop вместо ProactorEventLoop (по умолчанию). У Proactor любая ошибка приёма соединения
+    (клиент оборвал его до приёма — браузеры так делают с лишними заранее открытыми соединениями) закрывает слушающий
+    сокет: сервер навсегда перестаёт пускать новых игроков. Selector такую ошибку пропускает и принимает дальше."""
+    async def wake():
+        while True:                       # select() без таймеров не просыпается — Ctrl+C сработал бы только при событии
+            await asyncio.sleep(0.5)
+
+    async def both():
+        asyncio.ensure_future(wake())
+        await main(port)
+
+    loop = asyncio.SelectorEventLoop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(both())
+    finally:
+        loop.close()
+
+
 async def main(port):
     mimetypes.add_type('application/javascript', '.js')
     server = await asyncio.start_server(handle, '0.0.0.0', port)
@@ -388,7 +420,7 @@ if __name__ == '__main__':
         del args[i:i + 2]
     port = int(args[0]) if args else 8000
     try:
-        asyncio.run(main(port))
+        asyncio.run(main(port)) if sys.platform != 'win32' else run_windows(port)
     except KeyboardInterrupt:
         pass
     except OSError as e:

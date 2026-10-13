@@ -13,7 +13,7 @@ window.__result = (() => {
       at(p, 33, 47); p.a = Math.PI;
       es.forEach((e, i) => { at(e, 26 - i, 37); e.a = Math.PI / 2; });          // к северо-западу: к игроку — из-за юго-западного угла
       for (const e of es) { alertEnemy(e, p.x, p.y, true); e.lastX = p.x; e.lastY = p.y; e.lastSeen = G.time - 3; e.target = p; }
-      let shots = 0, flanks = 0, firstShot = -1;
+      let shots = 0, flanks = 0, firstShot = -1, lateShots = 0;
       const fl = new Set();
       const ammo = () => es.reduce((s, e) => s + e.gun.mag + e.gun.chamber + e.gun.pouch.reduce((a, b) => a + b, 0), 0);
       let am = ammo();
@@ -23,13 +23,14 @@ window.__result = (() => {
         if (near) p.a = Math.atan2(near.y - p.y, near.x - p.x);
         tick(1);
         const now = ammo();
-        if (now < am) { shots += am - now; if (firstShot < 0) firstShot = i / 60; }
+        if (now < am) { shots += am - now; if (firstShot < 0) firstShot = i / 60; if (i > 60 * 25) lateShots += am - now; }
         am = now;
         for (const e of es) if (e.flank && !fl.has(e.flank)) { fl.add(e.flank); flanks++; }
       }
-      const info = { shots, firstShot: firstShot < 0 ? '—' : firstShot.toFixed(1) + ' с', flanks };
+      const info = { shots, lateShots, firstShot: firstShot < 0 ? '—' : firstShot.toFixed(1) + ' с', flanks };
       check(`${name} #${rep + 1}: противники вступают в бой (за 35 с, с учётом «держит угол»), а не ходят по кругу (было: никогда)`, shots > 0 && firstShot >= 0 && firstShot < 35, info);
-      check(`${name} #${rep + 1}: обходов немного (не бесконечный круг)`, flanks <= 3 * n, info);
+      // бессмертный игрок не умирает — противники и после боя меняют позицию; круг — это когда боя больше нет
+      check(`${name} #${rep + 1}: и дальше ведут бой (стреляют после 25-й секунды), обходят не чаще раза в ~7 с`, lateShots > 0 && flanks <= 6 * n, info);
       p.god = false;
     });
   }
