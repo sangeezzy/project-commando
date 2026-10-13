@@ -69,6 +69,9 @@ function drawHealth(p) {
   const stance = p.sprint ? 'БЕГ' : p.crouch ? 'ПРИСЕД' : 'СТОЯ';
   const lean = p.lean < -0.3 ? ' · ВЫГЛЯДЫВАЕТ ВЛЕВО' : p.lean > 0.3 ? ' · ВЫГЛЯДЫВАЕТ ВПРАВО' : '';
   mono(stance + lean + (p.ads > 0.5 ? ' · ПРИЦЕЛ' : '') + (p.lamp ? ' · ФОНАРЬ' : ''), x + 64, y + 28, HUD_COL);
+  // отладка — над рамкой здоровья, чтобы не забыть, что включено
+  const dbg = [p.god && 'БЕССМЕРТИЕ [', G.noFog && 'БЕЗ ТУМАНА ]'].filter(Boolean);
+  if (dbg.length) mono('ОТЛАДКА: ' + dbg.join(' · '), x - 6, y - 30, HUD_WARN, 'left', 11);
   if (p.supp > 0.3) {
     // подавление: края экрана темнеют
     const a = (p.supp - 0.3) * 0.5;
@@ -187,7 +190,9 @@ function drawControls() {
     ['WASD', 'движение'], ['Мышь', 'направление взгляда и прицел'], ['ЛКМ', 'огонь'],
     ['ПКМ (держать)', 'прицелиться: точнее, медленнее'], ['R', 'перезарядка'], ['V', 'режим огня'], ['Q / E (держать)', 'выглянуть влево / вправо из-за укрытия'], ['F', 'взаимодействие: дверь открыть / закрыть / отпереть'], ['G', 'выбить дверь ногой (громко)'], ['F (держать)', 'рядом с раненым товарищем — поднять'], ['B (держать)', 'рация (в помещении связи нет)'], ['M', 'микрофон вкл/выкл'], ['L', 'фонарь на оружии (в темноте выдаёт вас)'],
     ['C', 'присесть / встать (за низким укрытием — спрятаться)'], ['Shift', 'бег (не стреляет, громко)'],
+    ['Колёсико мыши', 'приблизить / отдалить камеру'],
     ['Enter', 'заново (в сети — у хоста)'], ['Esc', 'выйти в меню'],
+    ['[  /  ]', 'отладка: бессмертие / без тумана войны (только у себя)'],
   ];
   const w = 520, h = 50 + rows.length * 22, x = (VW - w) / 2, y = (VH - h) / 2;
   box(x, y, w, h, 0.88);
@@ -264,18 +269,33 @@ function talkIcon(x, y, slot) {
 }
 
 // Состав отряда: цвет места, имя, здоровье (бот — помечен)
+// Цвет пинга: до 80 мс — обычный, до 150 — жёлтый, дальше — красный
+const pingColor = (ms) => (ms < 80 ? HUD_DIM : ms < 150 ? '#d8b44a' : HUD_RED);
+
 function drawTeam() {
   if (G.players.length < 2) return;
-  const x = VW - 230, y0 = 14;
-  box(x, y0, 216, 14 + G.players.length * 22);
+  const net = G.role === 'host' || G.role === 'guest';
+  const x = VW - 270, y0 = 14, guestLine = G.role === 'guest' ? 18 : 0;
+  box(x, y0, 256, 14 + G.players.length * 22 + guestLine);
   [...G.players].sort((a, b) => a.slot - b.slot).forEach((o, i) => {
     const y = y0 + 22 + i * 22;
     ctx.fillStyle = SLOT_COLORS[o.slot]; ctx.fillRect(x + 10, y - 9, 8, 8);
     mono(o.name + (o.ai ? ' · бот' : '') + (o.slot === G.mySlot ? ' (вы)' : ''), x + 24, y, o.dead ? HUD_DIM : HUD_COL, 'left', 12);
     if (!o.ai) talkIcon(x + 140, y - 4, o.slot);
+    // пинг (у хоста — «хост»: до него задержки нет)
+    if (net && !o.ai) {
+      const ms = pingOf(o.slot);
+      if (o.slot === 0) mono('хост', x + 246, y, HUD_DIM, 'right', 11);
+      else if (ms != null) mono(ms + ' мс', x + 246, y, pingColor(ms), 'right', 11);
+    }
     if (o.dead) { mono('погиб', x + 204, y, HUD_RED, 'right', 12); return; }
     if (o.down) { mono(`ранен ${Math.ceil(o.bleed)} с`, x + 204, y, HUD_RED, 'right', 12); return; }
     ctx.fillStyle = 'rgba(255,255,255,0.12)'; ctx.fillRect(x + 150, y - 7, 54, 5);
     ctx.fillStyle = o.hp < 35 ? HUD_RED : '#c8c4b0'; ctx.fillRect(x + 150, y - 7, 54 * clamp(o.hp / HP, 0, 1), 5);
   });
+  // гость: сколько снимков приходит и на сколько позже показаны остальные (интерполяция)
+  if (guestLine) {
+    const y = y0 + 22 + G.players.length * 22;
+    mono(`снимки ${Net.snapHz}/с · задержка показа ${Math.round(interpDelay())} мс`, x + 246, y, HUD_DIM, 'right', 11);
+  }
 }

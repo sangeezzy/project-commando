@@ -167,7 +167,7 @@ function hitPerson(o, b) {
 }
 
 function damagePerson(o, dmg, sx, sy, ang, by) {
-  if (o.dead) return;
+  if (o.dead || o.god) return;          // отладка: бессмертие ([) — урона нет совсем
   if (o.down) { emit(['blood', o.x, o.y, ang, 1]); killPerson(o, ang); return; }   // по раненому — добит
   o.hp -= dmg;
   o.hurtT = 0;
@@ -233,7 +233,7 @@ function updateDowned(dt) {
       if (o.rev >= 1) reviveUp(o);
     } else {
       o.rev = Math.max(0, o.rev - dt * DOWN.decay);
-      o.bleed -= dt;
+      if (!o.god) o.bleed -= dt;
       if (o.bleed <= 0) killPerson(o, o.deadA);
     }
     o.lastReviver = o.revivedBy ? o.revivedBy.id : 0;

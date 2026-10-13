@@ -18,6 +18,7 @@ import base64
 import hashlib
 import mimetypes
 import os
+import random
 import re
 import socket
 import struct
@@ -29,6 +30,8 @@ ROOT = Path(__file__).resolve().parent
 WS_MAGIC = b'258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
 REPORT_FILE = None          # для автотестов: POST /report пишется сюда (--report путь)
 OPEN = False                # --open: открыть игру в браузере, когда сервер запущен
+LAG_MS = 0.0                # для тестов: --lag мс — задержка каждого сообщения от сервера (пинг ≈ 2 × lag)
+JITTER_MS = 0.0             # --jitter мс — разброс задержки (порядок сообщений сохраняется)
 
 try:
     sys.stdout.reconfigure(encoding='utf-8')
@@ -90,13 +93,48 @@ class WS:
     async def send_text(self, text):
         if self.closed:
             return
+        if LAG_MS or JITTER_MS:
+            self._delayed(text)
+            return
+        await self._send_now(text)
+
+    async def _send_now(self, text):
         try:
             await self._frame(1, text.encode('utf-8'))
         except (ConnectionError, RuntimeError):
             self.closed = True
 
+    # Помехи для тестов (--lag/--jitter): сообщение уходит позже на lag ± jitter мс, порядок сохраняется (как в TCP)
+    def _delayed(self, text):
+        loop = asyncio.get_running_loop()
+        if getattr(self, 'out', None) is None:
+            self.out, self.due = asyncio.Queue(), 0.0
+            loop.create_task(self._pump())
+        delay = max(0.0, LAG_MS + random.uniform(-JITTER_MS, JITTER_MS)) / 1000
+        self.due = max(self.due, loop.time() + delay)
+        self.out.put_nowait((self.due, text))
+
+    async def _pump(self):
+        loop = asyncio.get_running_loop()
+        while True:
+            due, text = await self.out.get()
+            if text is None:
+                break
+            if due > loop.time():
+                await asyncio.sleep(due - loop.time())
+            await self._send_now(text)
+        self._close_now()
+
     def close(self):
+        if getattr(self, 'out', None) is not None:
+            if not self.closed:
+                self.closed = True
+                self.out.put_nowait((0, None))   # закрыть после того, как уйдёт очередь
+            return
         self.closed = True
+        self._close_now()
+
+    def _close_now(self):
         try:
             self.w.close()
         except Exception:
@@ -339,6 +377,11 @@ if __name__ == '__main__':
     if '--open' in args:
         args.remove('--open')
         OPEN = True
+    for flag in ('--lag', '--jitter'):
+        if flag in args:
+            i = args.index(flag)
+            globals()['LAG_MS' if flag == '--lag' else 'JITTER_MS'] = float(args[i + 1])
+            del args[i:i + 2]
     if '--report' in args:
         i = args.index('--report')
         REPORT_FILE = args[i + 1]

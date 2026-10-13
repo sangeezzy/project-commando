@@ -37,7 +37,7 @@ function render(dt = 1 / 60) {
   for (const o of allPeople()) if (o.dead && onScreen(o.x, o.y)) drawBody(o);
   for (const e of G.enemies) {
     if (e.dead || !onScreen(e.x, e.y)) { e.va = 0; continue; }
-    const v = p && (p.dead || playerSees(p, e)) ? 1 : 0;
+    const v = p && (p.dead || G.noFog || playerSees(p, e)) ? 1 : 0;      // отладка ]: видно всех
     e.va = (e.va || 0) + (v - (e.va || 0)) * Math.min(1, dt * 16);
     if (e.va > 0.02) drawPerson(e, e.va);
   }
@@ -51,8 +51,9 @@ function render(dt = 1 / 60) {
   drawLampDaylight();
   drawMuzzle();
   if (p && !p.dead) for (const o of allPeople()) if (o !== p && lampOn(o) && onScreen(o.x, o.y) && los(p.x, p.y, o.x, o.y)) drawLampGlare(o, p);
-  for (const e of G.enemies) if (!e.dead && e.va > 0.3 && perceivedAt(e.x, e.y) > LIGHT.seeMin) drawAwareness(e);
-  if (view) drawFog(offX, offY, p, view);
+  for (const e of G.enemies) if (!e.dead && e.va > 0.3 && (G.noFog || perceivedAt(e.x, e.y) > LIGHT.seeMin)) drawAwareness(e);
+  if (view && !G.noFog) drawFog(offX, offY, p, view);
+  if (G.noFog) drawAllEnemies();
   drawTeamTags();
   drawIntel();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -136,6 +137,18 @@ function drawIntel() {
     ctx.beginPath(); ctx.moveTo(it.x, it.y - r); ctx.lineTo(it.x + r, it.y); ctx.lineTo(it.x, it.y + r); ctx.lineTo(it.x - r, it.y); ctx.closePath(); ctx.stroke();
     ctx.fillStyle = '#ff5040'; ctx.font = '10px Consolas, monospace'; ctx.textAlign = 'center';
     ctx.fillText(age < 1 ? 'контакт' : `${Math.round(age)} с назад`, it.x, it.y - r - 4);
+  }
+  ctx.restore();
+}
+
+// Отладка (]): метки всех живых противников поверх света — видны и в темноте, и за стенами
+function drawAllEnemies() {
+  ctx.save();
+  ctx.strokeStyle = 'rgba(255,70,50,0.9)'; ctx.lineWidth = 1.5;
+  for (const e of G.enemies) {
+    if (e.dead || !onScreen(e.x, e.y)) continue;
+    ctx.beginPath(); ctx.arc(e.x, e.y, PR + 4, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(e.x, e.y); ctx.lineTo(e.x + Math.cos(e.a) * (PR + 10), e.y + Math.sin(e.a) * (PR + 10)); ctx.stroke();
   }
   ctx.restore();
 }

@@ -13,6 +13,7 @@ window.__result = (() => {
     e.lastX = D.x; e.lastY = D.y; e.goal = null; e.searchT = 0; e.cover = null; e.patrol = null;
     e.peek = null; e.peekCd = 0; e.flank = null; e.lean = 0; e.leanWant = 0; e.leanPx = 0; e.lx = e.x; e.ly = e.y;
     e.crouch = false; e.react = 0; e.gun = makeGun('m4a1', ENEMY.mags); e.doorFire = null; e.hp = 100; e.dead = false;
+    e.caught = 0; e.commit = 0;      // первая встреча у угла (нарастание проверяется отдельно)
     G.bullets = [];
   };
   const face = (o, x, y) => { o.a = Math.atan2(y - o.y, x - o.x); };
@@ -60,6 +61,29 @@ window.__result = (() => {
     check('пересидев, выглядывает снова', peekAgain === hide, [peekAgain, hide]);
     check('обходит к точке вне поля зрения игрока, в 4–10 м от него', flankOk === flank, [flankOk, flank]);
     check('при обходе игрок его не видит', seenOnFlank === 0, seenOnFlank);
+  });
+
+  run('заметили у угла не раз — не ходит по кругу: выходит с огнём или держит угол', () => {
+    let commit = 0, hold = 0, shotAfter = 0;
+    const calls = []; const cc0 = window.cornerCaught; window.cornerCaught = (a, b) => { const r = cc0(a, b); calls.push(String(r)); return r; };
+    for (let k = 0; k < 10; k++) {
+      reset(); at(p, 22, 10); p.hp = 1e9; face(p, 21 * TILE, 17.5 * TILE);
+      e.caught = ENEMY.peek.commitAfter - 1; e.caughtT = G.time;          // уже ловили у этого угла
+      const shot0 = e.gun.lastShot;
+      let r = null;
+      sim(6, () => {
+        if (e.peek && e.peek.phase === 'hold') { r = 'hold'; return false; }
+        if (e.commit > G.time) { r = 'commit'; return false; }
+        if (e.flank || (e.peek && e.peek.phase === 'hide')) { r = 'hide'; return false; }
+      });
+      if (r === 'commit') {
+        commit++;
+        sim(3, () => { if (e.gun.lastShot > shot0) { shotAfter++; return false; } });
+      } else if (r === 'hold') hold++;
+    }
+    window.cornerCaught = cc0;
+    check('решился: вышел и стреляет, хотя на него смотрят — или держит угол (один, без напарника)', commit + hold === 10 && commit > 0 && hold > 0, { commit, hold, calls: calls.join(' ') });
+    check('решившись — стреляет', shotAfter === commit, [shotAfter, commit]);
   });
 
   run('смотрят в другую сторону — стреляет; повернулись — прячется', () => {

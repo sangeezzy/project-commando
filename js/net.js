@@ -34,6 +34,10 @@ const Net = {
   online: false,                                // ws по коду комнаты на онлайн-сервере, а не общая комната сервера хоста
   ws: null, wsConns: new Map(), addrs: [],
   inp: { fire: false, press: 0, acts: [] },     // гость: накопленный ввод до следующего пакета
+  left: {},                                     // хост: кто вышел посреди игры (имя → место) — для переподключения
+  rejoin: null,                                 // гость: куда переподключаться при обрыве ({ kind, tg, code, tries })
+  ping: {},                                     // пинг каждого гостя (место → мс, туда и обратно): меряет хост, рассылает всем
+  pingT: 0, snapN: 0, snapHz: 0, rateT: 0,      // гость: снимков за секунду
 };
 
 // Лобби: 4 места; human — занято человеком; ready — нажал «Готов»
@@ -108,6 +112,11 @@ function onHostData(c, d) {
     for (const c2 of Net.conns.values()) if (c2 !== c && c2.open) { try { c2.send(d); } catch (e) { /* ignore */ } }
     return;
   }
+  if (d.t === 'po') {
+    const rtt = performance.now() - d.c;
+    if (rtt >= 0 && rtt < 10000) Net.ping[slot] = Net.ping[slot] == null ? rtt : Net.ping[slot] * 0.5 + rtt * 0.5;
+    return;
+  }
   if (d.t === 'ready' && G.state === 'lobby') { Lobby.slots[slot].ready = !!d.v; lobbyChanged(); return; }
   if (d.t === 'restart') { if (G.state === 'dead' || G.state === 'win') restartRange(); return; }
   if (d.t !== 'i' || d.seq !== G.seq) return;
@@ -128,24 +137,61 @@ function applyRemoteFire(p) {
   if (pressedNow) p.inPress--;
 }
 
+// Гость представился. В лобби — первое свободное место. В идущей игре (вход или переподключение) — прежнее место
+// по имени (Net.left), иначе место живого бота, иначе любое свободное; бот на месте отдаёт бойца человеку.
 function onHello(c, d) {
   const name = String(d.name || 'Боец').slice(0, 16);
   if (d.v !== GAME_VERSION) { c.send({ t: 'version', v: GAME_VERSION }); setTimeout(() => c.close(), 300); return; }
-  if (G.state !== 'lobby') { c.send({ t: 'busy' }); setTimeout(() => c.close(), 300); return; }
-  const slot = Lobby.slots.findIndex((s) => !s.human);
+  const inGame = G.state !== 'lobby';
+  const free = (s) => !Lobby.slots[s].human;
+  let slot = -1;
+  if (!inGame) slot = Lobby.slots.findIndex((s) => !s.human);
+  else {
+    // то же имя ещё числится подключённым — старое соединение зависло (обрыв ещё не замечен): освободить место
+    const dup = Lobby.slots.findIndex((s) => s.slot !== 0 && s.human && s.name === name);
+    const old = dup > 0 && Net.conns.get(dup);
+    if (old && old !== c) { onGuestLeft(old); try { old.close(); } catch (e) { /* ignore */ } }
+    const back = Net.left[name];
+    if (back != null && free(back)) slot = back;
+    if (slot < 0) slot = [0, 1, 2, 3].find((s) => free(s) && G.players.some((q) => q.slot === s && q.ai && !q.dead)) ?? -1;
+    if (slot < 0) slot = [0, 1, 2, 3].find(free) ?? -1;
+  }
   if (slot < 0) { c.send({ t: 'full' }); setTimeout(() => c.close(), 300); return; }
-  c.slot = slot;
+  c.slot = slot; c.op = !!d.op;
   Net.conns.set(slot, c);
-  Object.assign(Lobby.slots[slot], { human: true, name, ready: false });
+  Object.assign(Lobby.slots[slot], { human: true, name, ready: inGame });
   c.send({ t: 'welcome', slot, code: Net.code });
+  if (inGame) {
+    const back = Net.left[name] === slot;
+    takeSlot(slot, name);
+    c.send({ t: 'start' });
+    toast(`${name} ${back ? 'вернулся' : 'присоединился'}`, 3);
+  }
+  delete Net.left[name];
   lobbyChanged();
+}
+
+// Вошедший в идущую игру человек занимает место: бот на нём становится человеком (с его здоровьем, патронами, местом),
+// а если бойца на месте нет (боты выключены) — новый боец рядом с отрядом. Место остаётся за человеком и при перезапуске.
+function takeSlot(slot, name) {
+  let p = G.players.find((q) => q.slot === slot);
+  if (p) Object.assign(p, { ai: false, name, net: false, target: null, goal: null, peek: null, flank: null, fm: null, role: null, kneel: false });
+  else {
+    const lead = G.players.find((q) => !q.dead && !q.ai) || G.players.find((q) => !q.dead) || { x: map.start.x * TILE, y: map.start.y * TILE, a: -Math.PI / 2 };
+    const spot = freeSpotNear(lead.x + TILE, lead.y, PR) || { x: lead.x, y: lead.y };
+    p = makeHuman(slot, spot.x, spot.y, lead.a ?? -Math.PI / 2, name);
+    G.players.push(p);
+  }
+  G.lastSquad = [...(G.lastSquad || []).filter((q) => q.slot !== slot), { slot, human: true, name }];
 }
 
 function onGuestLeft(c) {
   if (c.slot === undefined || Net.conns.get(c.slot) !== c) return;
   const slot = c.slot;
   Net.conns.delete(slot);
+  delete Net.ping[slot];
   const name = Lobby.slots[slot].name;
+  if (G.state !== 'lobby') Net.left[name] = slot;        // вернётся под тем же именем — получит своё место
   Object.assign(Lobby.slots[slot], { human: false, name: '', ready: false });
   const p = G.players.find((q) => q.slot === slot && !q.ai);
   if (p && G.state !== 'lobby') {
@@ -165,7 +211,11 @@ function onGuestLeft(c) {
 }
 
 function lobbyChanged() {
-  if (G.role === 'host') broadcast({ t: 'lobby', slots: Lobby.slots, bots: Lobby.bots, code: Net.code, addrs: Net.addrs });
+  if (G.role === 'host') {
+    // голос — Opus, если его умеют все в комнате (иначе μ-law)
+    Voice.useOpus = Voice.opusOk && [...Net.conns.values()].every((k) => k.op);
+    broadcast({ t: 'lobby', slots: Lobby.slots, bots: Lobby.bots, code: Net.code, addrs: Net.addrs, vop: Voice.useOpus ? 1 : 0 });
+  }
   if (G.state === 'lobby') renderLobby();
 }
 
@@ -185,7 +235,7 @@ const ACTS = ['unlock', 'kick'];
 function personState(o) {
   const g = o.gun;
   const flags = (o.dead ? 1 : 0) | (o.crouch ? 2 : 0) | (o.sprint ? 4 : 0) | (o.lamp ? 8 : 0) | (o.kneel ? 16 : 0) |
-    (o.ai ? 32 : 0) | (o.seeing ? 64 : 0) | (o.down ? 128 : 0);
+    (o.ai ? 32 : 0) | (o.seeing ? 64 : 0) | (o.down ? 128 : 0) | (o.god ? 256 : 0);
   const s = [o.id, o.side === 'e' ? 1 : 0, o.slot, flags, r1(o.x), r1(o.y), r2(o.a), Math.ceil(o.hp), r2(o.ads || 0), r2(o.leanPx || 0),
     o.st | 0, r2(o.notice || 0), r2(o.deadA || 0), r2(g.reloadT), r2(g.reloadDur),
     o.act ? [ACTS.indexOf(o.act.kind), r2(o.act.t), r2(o.act.dur)] : 0];
@@ -213,6 +263,7 @@ function joinGame(code) {
   if (code.length !== 5) { setStatus('Введите 5-значный код комнаты'); return; }
   cleanupNet();
   setStatus('Подключаемся к серверу…');
+  Net.rejoinTo = { kind: 'peer', code };
   const peer = new Peer(undefined, peerOptions());
   Net.peer = peer;
   // сервер знакомств не ответил — дальше не пойдём
@@ -230,14 +281,14 @@ function joinGame(code) {
       setStatus(netErrorText(ice === 'none' || ice === 'new' ? 'no-answer' : 'ice-' + ice));
       cleanupNet();
     }, 20000);
-    c.on('open', () => c.send({ t: 'hello', name: G.myName, v: GAME_VERSION }));
+    c.on('open', () => c.send({ t: 'hello', name: G.myName, v: GAME_VERSION, op: Voice.opusOk ? 1 : 0 }));
     c.on('data', (d) => onGuestData(d, timeout, code));
-    c.on('close', () => { if (G.role === 'guest') leaveToMenu('Соединение с хостом потеряно'); });
+    c.on('close', () => { if (G.role === 'guest') guestLost('Соединение с хостом потеряно'); });
   });
   peer.on('error', (e) => {
     clearTimeout(srvTimeout);
     const msg = netErrorText(e.type);
-    if (G.role === 'guest') leaveToMenu(msg);
+    if (G.role === 'guest') guestLost(msg);
     else { setStatus(msg); cleanupNet(); }
   });
 }
@@ -254,15 +305,23 @@ function onGuestData(d, timeout, code) {
     clearTimeout(timeout); cleanupNet(); return;
   }
   if (d.t === 'vo') { Voice.receive(d); return; }
+  if (d.t === 'pg') { send({ t: 'po', c: d.c }); return; }         // пинг: вернуть метку хоста сразу
+  if (d.t === 'pings') { Net.ping = d.v || {}; if (G.state === 'lobby') renderLobby(); return; }
   if (d.t === 'welcome') {
     clearTimeout(timeout);
     Net.connected = true; Net.code = code;
     G.role = 'guest'; G.mySlot = d.slot; G.seq = -1;
+    const voice = Net.rejoin && Net.rejoin.voice;
+    Net.rejoin = Net.rejoinTo ? { ...Net.rejoinTo, tries: 0 } : null;
     enterLobby();
+    if (voice) Voice.enable();          // переподключился — голос как был
     return;
   }
   if (G.role !== 'guest') return;
-  if (d.t === 'lobby') { Lobby.slots = d.slots; Lobby.bots = d.bots; Net.addrs = d.addrs || Net.addrs; if (G.state === 'lobby') renderLobby(); }
+  if (d.t === 'lobby') {
+    Lobby.slots = d.slots; Lobby.bots = d.bots; Net.addrs = d.addrs || Net.addrs; Voice.useOpus = !!d.vop && Voice.opusOk;
+    if (G.state === 'lobby') renderLobby();
+  }
   else if (d.t === 'start') { hideMenu(); if (G.state === 'lobby') G.state = 'play'; }
   else if (d.t === 's') applySnapshot(d);
 }
@@ -403,6 +462,7 @@ function joinWs(tg, code) {
   let ws;
   try { ws = new WebSocket(tg.url + (online ? '?room=' + code : '')); } catch (e) { setStatus('Неверный адрес: ' + tg.host); return; }
   Net.ws = ws; Net.mode = 'ws'; Net.online = online;
+  Net.rejoinTo = { kind: 'ws', tg, code };
   const conn = {
     open: false,
     send(d) { if (ws.readyState === 1) ws.send('M|' + JSON.stringify(d)); },
@@ -428,7 +488,7 @@ function joinWs(tg, code) {
       cleanupNet();
     } else if (k === 'W') {
       conn.open = true;
-      conn.send({ t: 'hello', name: G.myName, v: GAME_VERSION });
+      conn.send({ t: 'hello', name: G.myName, v: GAME_VERSION, op: Voice.opusOk ? 1 : 0 });
     } else if (k === 'X') {
       clearTimeout(timeout);
       if (G.role === 'guest') leaveToMenu('Хост закрыл комнату'); else { setStatus('Хост закрыл комнату'); cleanupNet(); }
@@ -441,7 +501,7 @@ function joinWs(tg, code) {
   ws.onclose = () => {
     if (Net.ws !== ws) return;
     clearTimeout(timeout);
-    if (G.role === 'guest') leaveToMenu('Соединение с хостом потеряно');
+    if (G.role === 'guest') guestLost('Соединение с хостом потеряно');
     else if (!Net.connected) { setStatus(`Не удалось подключиться к ${tg.host}. ${hint}`); cleanupNet(); }
   };
 }
@@ -469,9 +529,10 @@ function resetGuestWorld(seq) {
 
 function applySnapshot(s) {
   const fresh = s.seq !== G.seq;
-  if (fresh) { resetGuestWorld(s.seq); resetInterp(); }
+  if (fresh) { resetGuestWorld(s.seq); resetInterp(); resetPred(); }
   const tm = s.tm ?? Math.round(performance.now());
   interpClock(tm);
+  Net.snapN++;
   if (G.state !== s.gs) G.stateT = 0;
   G.state = s.gs;
   const mine = G.mySlot;
@@ -487,7 +548,7 @@ function applySnapshot(s) {
     const own = side === 0 && slot === mine && !(flags & 32);
     const wasDead = o.dead;
     o.dead = !!(flags & 1); o.hp = hp; o.ai = !!(flags & 32); o.st = st; o.notice = notice; o.seeing = !!(flags & 64);
-    o.lamp = !!(flags & 8); o.kneel = !!(flags & 16); o.deadA = deadA;
+    o.lamp = !!(flags & 8); o.kneel = !!(flags & 16); o.deadA = deadA; o.god = !!(flags & 256);
     if (o.dead && !wasDead) o.deadT = G.time;
     o.gun.reloadT = reloadT; o.gun.reloadDur = reloadDur;
     o.act = act ? { kind: ACTS[act[0]], t: act[1], dur: act[2] } : null;
@@ -522,7 +583,8 @@ function applySnapshot(s) {
     }
   });
   s.K.forEach((t, i) => { map.keys[i].taken = !!t; });
-  for (const ev of s.fx) playFx(ev);
+  for (const ev of s.fx) if (!predConsumes(ev)) playFx(ev);
+  { const p = me(); if (p && !p.ai) predAmmo(p.gun); }
 }
 
 // Отправка по таймеру: хост — снимки, гость — ввод. Таймер накапливается (а не сбрасывается), с допуском в четверть
@@ -530,6 +592,7 @@ function applySnapshot(s) {
 // Гость шлёт сразу, не дожидаясь таймера: нажатие курка, отпускание, действия (F, G, R, V, L), начало/конец удержания F.
 function netTick(dt) {
   if (G.role !== 'host' && G.role !== 'guest') return;
+  netStats(dt);
   const ms = netRate();
   Net.sendT -= dt * 1000;
   if (G.role === 'host') {
@@ -545,20 +608,90 @@ function netTick(dt) {
   }
 }
 
+// Раз в секунду: хост — метка времени каждому гостю (гость сразу возвращает: пинг без ожидания кадров) и пинги всех — всем;
+// гость — сколько снимков пришло за секунду
+function netStats(dt) {
+  Net.pingT -= dt;
+  if (Net.pingT > 0) return;
+  Net.pingT = 1;
+  if (G.role === 'host') {
+    const c = Math.round(performance.now() * 10) / 10;
+    for (const k of Net.conns.values()) if (k.open) { try { k.send({ t: 'pg', c }); } catch (e) { /* ignore */ } }
+    const v = {};
+    for (const [s, ms] of Object.entries(Net.ping)) v[s] = Math.round(ms);
+    if (Net.conns.size) broadcast({ t: 'pings', v });
+  } else {
+    Net.snapHz = Net.snapN; Net.snapN = 0;
+  }
+}
+const pingOf = (slot) => (Net.ping[slot] == null ? null : Math.round(Net.ping[slot]));
+
+// ---------- Предсказание своих выстрелов у гостя ----------
+// Выстрел считает хост, но ждать его ответа (полный пинг) — стрельба «ватная». Гость сам ведёт темп и сразу показывает
+// вспышку, звук, гильзу, отдачу прицела и убыль патронов. Пришедший от хоста тот же выстрел (эффект 'shot' своего бойца)
+// подтверждает предсказанный и не играется второй раз; выстрел, которого гость не предсказал, — играется.
+// Патроны: из снимка минус ещё не подтверждённые. Не подтверждён за пинг + 0,3 с (хост не выстрелил) — списывается.
+const Pred = { cd: 0, q: [] };
+function resetPred() { Pred.cd = 0; Pred.q = []; }
+
+function predictFire(p, held, pressedNow) {
+  const g = p.gun, W = WEAPONS[g.t];
+  if (!held || Pred.cd > 0 || !canShoot(p) || !g.chamber) return;
+  if (g.mode === 'semi' && !pressedNow) return;
+  Pred.cd += 60 / W.rpm;
+  Pred.q.push(performance.now());
+  // то же, что fireRound делает со стрелком: патрон, отдача, вспышка — без пули (пулю ведёт хост)
+  g.chamber = 0;
+  if (g.mag > 0) { g.mag--; g.chamber = 1; }
+  g.bloom = Math.min(W.maxBloom, g.bloom + W.kick + (W.kickHip - W.kick) * (1 - p.ads));
+  g.lastShot = G.time;
+  const ox = p.leanPx ? p.lx : p.x, oy = p.leanPx ? p.ly : p.y;
+  playFx(['shot', ox + Math.cos(p.a) * M(0.75), oy + Math.sin(p.a) * M(0.75), p.a, p.side, p.id]);
+}
+
+// Каждый кадр у гостя: темп и отдача своего оружия гаснут; просроченные предсказания списываются
+function predTick(p, dt) {
+  const W = WEAPONS[p.gun.t];
+  Pred.cd = Math.max(-0.02, Pred.cd - dt);
+  p.gun.bloom *= Math.exp(-W.recover * dt);
+  const ttl = (pingOf(G.mySlot) || 100) + 300, now = performance.now();
+  while (Pred.q.length && now - Pred.q[0] > ttl) Pred.q.shift();
+}
+
+// Эффект из снимка: свой выстрел, который уже показан предсказанием, — пропустить
+function predConsumes(ev) {
+  const p = me();
+  if (ev[0] !== 'shot' || !p || ev[5] !== p.id || !Pred.q.length) return false;
+  Pred.q.shift();
+  return true;
+}
+
+// Патроны своего оружия из снимка минус выстрелы, которые хост ещё не подтвердил
+function predAmmo(g) {
+  for (let i = 0; i < Pred.q.length; i++) {
+    if (!g.chamber) break;
+    g.chamber = 0;
+    if (g.mag > 0) { g.mag--; g.chamber = 1; }
+  }
+}
+
 // ---------- Интерполяция у гостя ----------
 // Чужие бойцы показываются чуть в прошлом — между двумя снимками хоста, по его часам (tm), а не догоняют последнюю позицию:
 // плавно при любой частоте кадров и без лишнего отставания. Часы хоста: clk — разница «наше время − время хоста»
 // (вниз — сразу, вверх — медленно: держится у наименьшей задержки), snapDt — средний интервал снимков.
-const Interp = { clk: null, snapDt: 50, lastTm: 0 };
+// jit — средний разброс задержки доставки снимков: на неровной сети запас растёт, на ровной — остаётся малым
+const Interp = { clk: null, snapDt: 50, lastTm: 0, jit: 5 };
 function interpClock(tm) {
   const s = performance.now() - tm;
   if (Interp.clk === null || s < Interp.clk) Interp.clk = s; else Interp.clk += (s - Interp.clk) * 0.02;
+  Interp.jit += (Math.min(200, s - Interp.clk) - Interp.jit) * 0.05;
   if (Interp.lastTm) Interp.snapDt += (clamp(tm - Interp.lastTm, 5, 200) - Interp.snapDt) * 0.1;
   Interp.lastTm = tm;
 }
-const interpDelay = () => Interp.snapDt * 1.5 + 15;       // запас на дрожание доставки: полтора интервала + 15 мс
+// запас: интервал снимков с небольшим запасом + двойной средний разброс доставки (разброс почти всегда меньше)
+const interpDelay = () => Interp.snapDt * 1.2 + 10 + Interp.jit * 2;
 const interpTime = () => performance.now() - (Interp.clk || 0) - interpDelay();
-function resetInterp() { Interp.clk = null; Interp.snapDt = 50; Interp.lastTm = 0; }
+function resetInterp() { Interp.clk = null; Interp.snapDt = 50; Interp.lastTm = 0; Interp.jit = 5; }
 
 // Новая точка истории бойца (из снимка); телепорт (> 4 м) — без размазывания
 function interpPush(o, t, x, y, a) {
@@ -649,9 +782,31 @@ function cleanupNet() {
   for (const c of Net.conns.values()) { try { c.close(); } catch (e) { /* ignore */ } }
   try { if (Net.peer) Net.peer.destroy(); } catch (e) { /* ignore */ }
   Net.conn = null; Net.peer = null; Net.connected = false; Net.code = ''; Net.conns.clear();
+  Net.ping = {}; Net.snapHz = 0; Net.snapN = 0; Net.left = {};
+  resetPred();
+}
+
+// Связь с хостом оборвалась (не хост закрыл комнату): в меню и попытки вернуться в ту же игру — хост отдаст прежнее место
+const REJOIN_TRIES = 6, REJOIN_MS = 5000;
+function guestLost(msg) {
+  const r = Net.rejoin;
+  if (r) r.voice = !!Voice.stream;
+  Net.rejoin = null;                // leaveToMenu не должен счесть это выходом по своей воле
+  leaveToMenu(msg);
+  if (r) rejoinStep(r, msg);
+}
+function rejoinStep(r, msg) {
+  if (G.role === 'guest' || G.state !== 'menu' || r.cancel) return;      // вернулся или игрок сам занялся другим
+  if (++r.tries > REJOIN_TRIES) { setStatus(`${msg}. Переподключиться не удалось — хост ещё в игре? Попробуйте войти вручную.`); return; }
+  Net.rejoin = r;
+  if (r.kind === 'peer') joinGame(r.code); else joinWs(r.tg, r.code);
+  setStatus(`${msg}. Переподключение: попытка ${r.tries} из ${REJOIN_TRIES}…`);
+  setTimeout(() => rejoinStep(r, msg), REJOIN_MS);
 }
 
 function leaveToMenu(msg) {
+  if (Net.rejoin) Net.rejoin.cancel = true;       // вышел сам — не переподключаться
+  Net.rejoin = null;
   cleanupNet();
   Voice.reset();
   G.role = 'none'; G.state = 'menu';

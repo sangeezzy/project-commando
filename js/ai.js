@@ -100,15 +100,19 @@ function peekStep(e, dt, seen) {
   k.t += dt;
   if (seen && e.seeing) k.target = seen.t;
   // за углом его самого видно — прятаться бесполезно, обычный бой
-  if ((k.phase === 'hide' || k.phase === 'back') && e.seeing && sightLine({ x: e.x, y: e.y, crouch: e.crouch }, seen.t)) { e.peek = null; return; }
+  if ((k.phase === 'hide' || k.phase === 'back' || k.phase === 'hold') && e.seeing && sightLine({ x: e.x, y: e.y, crouch: e.crouch }, seen.t)) { e.peek = null; return; }
 
   if (k.phase === 'look' || k.phase === 'shoot') {
     e.crouch = false;
     e.leanWant = k.side;
     if (e.seeing && seen) {
       const t = seen.t;
-      // на него смотрят — назад за угол
-      if (watching(t, e)) { k.phase = 'back'; k.t = 0; return; }
+      // на него смотрят — назад за угол; если ловили уже не раз — решиться (выйти и стрелять) или держать угол
+      if (watching(t, e) && !(e.commit > G.time)) {
+        const r = cornerCaught(e, t);
+        if (r === 'hold') return;
+        if (!r) { k.phase = 'back'; k.t = 0; return; }
+      }
       // смотрят в другую сторону — стрелять первым
       k.phase = 'shoot';
       e.react -= dt;
@@ -149,6 +153,41 @@ function peekStep(e, dt, seen) {
     if (!g.chamber && !g.reloadT) startReload(e);
     if (k.t >= k.dur && !g.reloadT) { k.phase = 'look'; k.t = 0; k.dur = rand(P.look[0], P.look[1]); }
   }
+
+  // держит угол: присев, лицом к выходу из-за угла — ждёт, что цель выйдет сама (увидел — обычный бой, см. выше);
+  // не дождался — выходит с огнём
+  if (k.phase === 'hold') {
+    e.leanWant = 0; e.burst = 0; e.crouch = true;
+    e.want = k.face;
+    if (!g.chamber && !g.reloadT) startReload(e);
+    if (k.t >= k.dur && !g.reloadT) { k.phase = 'look'; k.t = 0; k.dur = rand(P.look[0], P.look[1]); e.commit = G.time + P.commitFor; }
+  }
+}
+
+// Его заметили у угла (цель смотрит прямо на него). Первые разы — назад (как раньше). Потом — не ходить по кругу:
+// с напарником рядом (та же цель) — выйти вместе и стрелять, даже если смотрят; одному — держать угол или выйти с огнём.
+// Возвращает false — прятаться, true — решился, 'hold' — держит угол.
+function cornerCaught(e, t) {
+  const P = ENEMY.peek;
+  if (G.time - (e.caughtT ?? -99) > P.forget) e.caught = 0;
+  e.caught = (e.caught || 0) + 1; e.caughtT = G.time;
+  if (e.caught < P.commitAfter) return false;
+  e.caught = 0;
+  const buddies = aiList().filter((m) => m !== e && !m.dead && !m.down && m.side === e.side && m.st === 2 && m.target === t &&
+    Math.hypot(m.x - e.x, m.y - e.y) < P.buddyR);
+  if (!buddies.length && Math.random() < P.holdChance) {
+    Object.assign(e.peek, { phase: 'hold', t: 0, dur: rand(P.hold[0], P.hold[1]) });
+    e.leanWant = 0;
+    return 'hold';
+  }
+  e.commit = G.time + P.commitFor;
+  for (const m of buddies) {
+    m.commit = e.commit;
+    // напарник за углом — выглядывает сразу, вместе
+    if (m.peek && m.peek.phase !== 'look' && m.peek.phase !== 'shoot') Object.assign(m.peek, { phase: 'look', t: 0, dur: rand(P.look[0], P.look[1]) });
+  }
+  bark(e, buddies.length ? 'Вместе — пошли!' : 'Выхожу!');
+  return true;
 }
 
 // Обход: путь, избегающий клеток, которые цель сейчас видит, к точке в 4–10 м от неё вне её поля зрения
@@ -219,9 +258,11 @@ function updateSquads(dt) {
       G.time - e.lastSeen < Q.memory && Math.hypot(e.x - e.lastX, e.y - e.lastY) < Q.range);
     if (eng.length < 2) { for (const e of ais) if (e.target === t && e.role === 'suppress') e.role = null; continue; }
     const dT = (e) => Math.hypot(e.x - t.x, e.y - t.y);
-    let sup = eng.find((e) => e.role === 'suppress' && !e.flank);
+    // подавляющий — только тот, чья пуля дойдёт до места цели; у кого линию огня перекрыло — роль снимается
+    let sup = eng.find((e) => e.role === 'suppress' && !e.flank && canSuppress(e));
+    for (const e of eng) if (e.role === 'suppress' && e !== sup) e.role = null;
     if (!sup) {
-      sup = eng.filter((e) => !e.flank && !e.peek).sort((a, b) => (b.seeing - a.seeing) || dT(a) - dT(b))[0];
+      sup = eng.filter((e) => !e.flank && !e.peek && canSuppress(e)).sort((a, b) => (b.seeing - a.seeing) || dT(a) - dT(b))[0];
       if (sup) sup.role = 'suppress';
     }
     if (S.flankCd > 0 || eng.some((e) => e.flank)) continue;
@@ -241,9 +282,13 @@ function updateSquads(dt) {
 function suppressing(e) {
   return e.role === 'suppress' && G.time - e.lastSeen < ENEMY.squad.suppressFor;
 }
+// Есть ли смысл подавлять последнее место цели отсюда: пуля дойдёт (бетон и кирпич — нет, фанера, ящики, двери — да)
+const canSuppress = (e) => fireLineK(e.x, e.y, e.lastX, e.lastY) >= ENEMY.squad.minPen;
 
 function suppressStep(e, dt) {
   const g = e.gun, Q = ENEMY.squad;
+  // линию огня перекрыло (цель ушла за стену, сам за стеной) — не стрелять в стену, а искать цель как обычно
+  if (!canSuppress(e)) { e.role = null; e.supAim = null; hunt(e, dt); return; }
   e.sprint = false;
   if (!e.supAim) e.supAim = { x: e.lastX, y: e.lastY };
   e.want = Math.atan2(e.supAim.y - e.y, e.supAim.x - e.x);
@@ -725,9 +770,24 @@ function hunt(e, dt) {
   if (g.reloadT > 0) { e.crouch = !!e.cover; return; }
   // идём проверить последнее известное место
   if (e.searchT <= 0) {
+    // место цели сместилось (разведданные, новый шум) — путь к старому месту больше не годится
+    if (e.goal && Math.hypot(e.goal.x - e.lastX, e.goal.y - e.lastY) > M(3)) e.goal = null;
     e.goal = e.goal || bfsFrom(e.lastX, e.lastY, 1e9, true);
     const step = fieldStep(e, e.goal);
     if (step !== null && Math.hypot(e.lastX - e.x, e.lastY - e.y) > M(1.5)) {
+      const lead = stackLead(e, step);
+      if (lead) {
+        e.want = step; e.crouch = lead.peek.phase === 'hide' || lead.peek.phase === 'hold';
+        // долго стоять вторым у одного угла незачем — обойти (один держит угол, другой заходит сбоку)
+        e.stackT = (e.stackT || 0) + dt;
+        if (e.stackT > 5) {
+          e.stackT = 0;
+          const pl = planFlank(e, { x: e.lastX, y: e.lastY, a: Math.atan2(e.y - e.lastY, e.x - e.lastX) });
+          if (pl) { e.flank = pl; bark(e, 'Захожу сбоку!'); }
+        }
+        return;
+      }
+      e.stackT = 0;
       if (tryCornerPeek(e, step)) return;
       moveDir(e, step, ENEMY.speed.walk, dt);
       e.want = step;
@@ -1064,13 +1124,30 @@ function followLeader(e, dt) {
 }
 
 // Раздвинуть людей, стоящих друг в друге
+// Не стоять друг в друге. Уступает тот, кто идёт: стоящего у угла (выглядывает, держит угол), с колена или на месте
+// не двигают — иначе подошедший вытолкнул бы его из-за угла на открытое место. Оба стоят или оба идут — поровну.
+const anchored = (e) => !!e.peek || e.kneel || e.speed < M(0.3);
 function separate(list, minD) {
   for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) {
     const a = list[i], b = list[j];
     const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy);
     if (d >= minD || d < 0.01) continue;
-    const push = (minD - d) / 2;
-    moveCircle(a, (-dx / d) * push, (-dy / d) * push, PR);
-    moveCircle(b, (dx / d) * push, (dy / d) * push, PR);
+    const fa = anchored(a), fb = anchored(b);
+    const ka = fa === fb ? 0.5 : fa ? 0 : 1, push = minD - d;
+    if (ka) moveCircle(a, (-dx / d) * push * ka, (-dy / d) * push * ka, PR);
+    if (ka < 1) moveCircle(b, (dx / d) * push * (1 - ka), (dy / d) * push * (1 - ka), PR);
   }
+}
+
+// Свой уже стоит у угла прямо по пути (выглядывает, прячется, держит угол) — не лезть на него, а встать позади
+// «в колонну» и ждать: выйдет в бой или уйдёт — путь свободен; решили выходить вместе — выйдет следом
+function stackLead(e, step) {
+  for (const m of aiList()) {
+    if (m === e || m.side !== e.side || m.dead || m.down || !m.peek) continue;
+    const dx = m.x - e.x, dy = m.y - e.y, d = Math.hypot(dx, dy);
+    if (d > M(1.6) || d < 0.01) continue;
+    if ((dx * Math.cos(step) + dy * Math.sin(step)) / d < 0.3) continue;   // не впереди по ходу
+    return m;
+  }
+  return null;
 }

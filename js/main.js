@@ -4,15 +4,39 @@
 let last = performance.now();
 function frame(now) {
   // тесты и скриншоты сами двигают симуляцию и сами рисуют кадр (фоновая отрисовка со светом в headless слишком дорогая)
-  if (window.__manualTick) { requestAnimationFrame(frame); return; }
-  const dt = Math.min(0.05, (now - last) / 1000);
-  last = now;
-  G.time += dt;
-  if (map && G.state !== 'menu' && G.state !== 'lobby') update(dt);
-  Voice.update();
-  render(dt);
+  if (window.__manualTick || document.hidden) { requestAnimationFrame(frame); return; }
+  step(now);
+  render(Math.min(0.05, G.lastDt || 0));
   requestAnimationFrame(frame);
 }
+
+// Один шаг игры по реальному времени (без рисования)
+function step(now) {
+  const dt = Math.min(0.05, Math.max(0, now - last) / 1000);
+  last = now;
+  G.lastDt = dt;
+  G.time += dt;
+  if (map && G.state !== 'menu' && G.state !== 'lobby') update(dt);
+  else if (G.state === 'lobby') netStats(dt);           // пинг виден уже в лобби
+  Voice.update();
+}
+
+// Свёрнутая или фоновая вкладка: requestAnimationFrame браузер останавливает совсем, таймеры страницы — душит.
+// В сетевой игре мир не должен вставать у всех из-за того, что хост переключился на другое окно: шаги идут
+// по таймеру из Web Worker (его браузер не душит), без рисования. Одиночная игра в фоне стоит на паузе, как раньше.
+const BG_MS = 1000 / 60;
+let bgWorker = null;
+function bgTick() {
+  if (window.__manualTick || !document.hidden || (G.role !== 'host' && G.role !== 'guest')) return;
+  step(performance.now());
+}
+try {
+  const src = `setInterval(() => postMessage(0), ${BG_MS});`;
+  bgWorker = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
+  bgWorker.onmessage = bgTick;
+} catch (e) { bgWorker = null; }        // нет Worker (очень старый браузер) — в фоне игра встаёт, как раньше
+// смена видимости: отсчёт шага заново (одиночка после паузы не делает огромный шаг за всё время отсутствия)
+document.addEventListener('visibilitychange', () => { last = performance.now(); });
 
 function update(dt) {
   G.stateT += dt;
@@ -29,11 +53,12 @@ function update(dt) {
   netTick(dt);
 
   // камера: свой боец (погиб — тот, за кем наблюдаем) + смещение к курсору (с прицелом — дальше)
+  if (Math.abs(G.view - G.viewT) > 1e-3) { G.view += (G.viewT - G.view) * Math.min(1, dt * CAM.zoomSpeed); applyZoom(); }
   const v = viewer();
   if (v) {
-    const look = v === p ? 0.25 + (p.ads || 0) * 0.2 : 0;
+    const look = v === p ? CAM.look + (p.ads || 0) * (CAM.lookAds - CAM.look) : 0;
     const tx = (v.lx ?? v.x) + ((mouse.x - VW / 2) * look) / G.zoom, ty = (v.ly ?? v.y) + ((mouse.y - VH / 2) * look) / G.zoom;
-    const ck = Math.min(1, dt * 8);
+    const ck = Math.min(1, dt * CAM.follow);
     G.cam.x += (tx - G.cam.x) * ck; G.cam.y += (ty - G.cam.y) * ck;
   }
 }
@@ -82,7 +107,7 @@ function updateWorld(dt) {
 // Гость: мир считает хост; здесь — свой боец, чужие — по истории снимков (интерполяция), анимация и эффекты
 function guestWorld(dt) {
   const p = me();
-  if (p && !p.dead) { updateLean(p, dt); trackSpeed(p, dt); }
+  if (p && !p.dead) { updateLean(p, dt); trackSpeed(p, dt); predTick(p, dt); }
   const t = interpTime();
   for (const o of allPeople()) {
     if (o === p || !o.hist) continue;
@@ -139,8 +164,22 @@ function resize() {
   if (!mouse.x && !mouse.y) { mouse.x = innerWidth / 2; mouse.y = innerHeight / 2 - 120; }
   VW = canvas.width = innerWidth;
   VH = canvas.height = innerHeight;
-  G.zoom = clamp(VH / M(VIEW_M), 0.8, 2.5);
+  applyZoom();
 }
+
+// Масштаб: G.view — сколько метров видно по вертикали (плавно догоняет G.viewT — цель колёсика), запоминается в браузере
+function applyZoom() { G.zoom = clamp(VH / M(G.view), 0.25, 3); }
+{
+  let v = VIEW_M;
+  try { v = +localStorage.getItem('pcr-view') || VIEW_M; } catch (e) { /* ignore */ }
+  G.view = G.viewT = clamp(v, CAM.viewMin, CAM.viewMax);
+}
+canvas.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  if (!map || G.state === 'menu' || G.state === 'lobby' || !e.deltaY) return;
+  G.viewT = clamp(G.viewT * Math.pow(CAM.wheelStep, Math.sign(e.deltaY)), CAM.viewMin, CAM.viewMax);   // вниз — дальше
+  try { localStorage.setItem('pcr-view', G.viewT.toFixed(1)); } catch (err) { /* ignore */ }
+}, { passive: false });
 addEventListener('resize', resize);
 resize();
 

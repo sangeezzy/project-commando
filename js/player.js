@@ -28,6 +28,9 @@ canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 const screenToWorld = (sx, sy) => ({ x: (sx - VW / 2) / G.zoom + G.cam.x, y: (sy - VH / 2) / G.zoom + G.cam.y });
 
 function controlLocal(p, dt) {
+  // отладка (действует только на нажавшего): [ — бессмертие своего бойца (в сети — у хоста), ] — без тумана войны на своём экране
+  if (pressed.BracketLeft) doAct(p, 'god');
+  if (pressed.BracketRight) { G.noFog = !G.noFog; toast(G.noFog ? 'ОТЛАДКА: ТУМАН ВОЙНЫ ВЫКЛЮЧЕН (])' : 'ТУМАН ВОЙНЫ ВКЛЮЧЁН (])', 2); }
   if (p.dead) { clearPressed(); return; }
   if (p.down) { crawl(p, dt); clearPressed(); return; }
   const g = p.gun;
@@ -68,7 +71,7 @@ function controlLocal(p, dt) {
   if (pressed.KeyR) doAct(p, 'reload');
   if (pressed.KeyV) doAct(p, 'mode');          // B — рация (голосовой чат)
   if (isAuth()) { if (!busy) pullTrigger(p, mouse.l, mouse.lPressed, playerSpread(p)); }
-  else { Net.inp.fire = mouse.l && !busy; if (mouse.lPressed) Net.inp.press++; }
+  else { Net.inp.fire = mouse.l && !busy; if (mouse.lPressed) Net.inp.press++; predictFire(p, mouse.l && !busy, mouse.lPressed); }
 
   // свои шаги слышно себе (шум для противников считает хост — stepNoises)
   if (ml) {
@@ -90,6 +93,11 @@ function applyAct(p, k) {
   else if (k === 'kick') { const d = doorNear(p); if (d) startKick(p, d); }
   else if (k === 'lamp') { p.lamp = !p.lamp; emit(['mode', p.id]); }
   else if (k === 'reload') startReload(p);
+  else if (k === 'god') {
+    p.god = !p.god;
+    if (p.god) { if (p.down) reviveUp(p); p.hp = HP; }        // включил раненым — сразу на ногах и с полным здоровьем
+    emit(['toast', p.id, p.god ? 'ОТЛАДКА: БЕССМЕРТИЕ ([)' : 'БЕССМЕРТИЕ ВЫКЛЮЧЕНО ([)']);
+  }
   else if (k === 'mode') {
     const modes = WEAPONS[g.t].modes;
     g.mode = modes[(modes.indexOf(g.mode) + 1) % modes.length];

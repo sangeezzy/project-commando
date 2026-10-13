@@ -316,6 +316,22 @@ function los(x0, y0, x1, y1) {
   return true;
 }
 
+// Сколько энергии пули останется на линии (0..1): стены и закрытые двери гасят её по материалу (MAT.pen за клетку),
+// как в updateBullets; низкие укрытия пропускают (стрелок стоя). Меньше 0,2 — пуля гибнет: 0.
+function fireLineK(x0, y0, x1, y1) {
+  const dx = x1 - x0, dy = y1 - y0;
+  const steps = Math.ceil(Math.hypot(dx, dy) / 6);
+  let k = 1, last = -1;
+  for (let i = 1; i < steps; i++) {
+    const tx = Math.floor((x0 + (dx * i) / steps) / TILE), ty = Math.floor((y0 + (dy * i) / steps) / TILE), ti = ty * map.w + tx;
+    if (ti === last || !opaqueT(tileAt(tx, ty))) continue;
+    last = ti;
+    k *= MAT[wmAt(tx, ty)].pen;
+    if (k < 0.2) return 0;
+  }
+  return k;
+}
+
 // Видимость между людьми: низкое укрытие закрывает того, кто присел за ним вплотную
 // (и присевший сам не видит поверх своего укрытия).
 function sightLine(a, b) {

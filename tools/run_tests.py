@@ -50,6 +50,10 @@ UNIT_TESTS = {
     'netaddr': '',
     'allies': 'bots=1',
     'relay': '',
+    'debug': '',
+    'aiwall': '',
+    'aicorner': '',
+    'aistack': '',
 }
 
 try:
@@ -232,18 +236,19 @@ def tls_proxy(port_to, cert, key):
     return port
 
 
-def run_netlocal(chrome, server='py', tls=False, mode='ws'):
+def run_netlocal(chrome, server='py', tls=False, mode='ws', lag=0, jitter=0):
     """Прямое подключение: сервер хоста (server.py или server.ps1 — без Python), хост и 2 гостя через WebSocket.
     tls — через https-прокси (как туннель tunnel.bat или онлайн-сервер): страница по https, соединение wss. Интернет не нужен.
-    mode='room' — онлайн-комната по коду (/ws?room=КОД, как на онлайн-сервере cloud/worker.js) и проверки протокола комнат."""
-    title = {'py': 'server.py', 'ps1': 'server.ps1 (без Python)'}[server] + (' через https' if tls else '')
+    mode='room' — онлайн-комната по коду (/ws?room=КОД, как на онлайн-сервере cloud/worker.js) и проверки протокола комнат.
+    lag/jitter (мс, только server.py) — помехи как в интернете: каждое сообщение от сервера позже на lag ± jitter."""
+    title = {'py': 'server.py', 'ps1': 'server.ps1 (без Python)'}[server] + (' через https' if tls else '') +         (f', помехи {lag}±{jitter} мс в одну сторону' if lag or jitter else '')
     what = 'онлайн-комната по коду' if mode == 'room' else 'прямое подключение'
     print(f'\n[netlocal] {what}, {title}: хост + 2 гостя (около 30 с)')
     port = free_port()
     tmp = Path(tempfile.mkdtemp())
     rep = tmp / 'report.json'
     if server == 'py':
-        cmd_srv = [sys.executable, str(ROOT / 'server.py'), str(port), '--report', str(rep)]
+        cmd_srv = [sys.executable, str(ROOT / 'server.py'), str(port), '--report', str(rep), '--lag', str(lag), '--jitter', str(jitter)]
     else:
         cmd_srv = ['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(ROOT / 'server.ps1'), '-Port', str(port), '-Report', str(rep)]
     srv = subprocess.Popen(cmd_srv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -272,7 +277,7 @@ def run_netlocal(chrome, server='py', tls=False, mode='ws'):
     cmd = [chrome, '--headless=new', '--disable-gpu', f'--user-data-dir={prof}', '--remote-debugging-port=0',
            '--autoplay-policy=no-user-gesture-required', '--window-size=1800,1100', '--no-proxy-server',
            '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream',   # «микрофон» для голосового чата
-           '--ignore-certificate-errors', f'{base}/tools/net.html?mode={mode}']
+           '--ignore-certificate-errors', f'{base}/tools/net.html?mode={mode}&lag={lag}&jitter={jitter}']
     proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     r = None
     try:
@@ -319,6 +324,7 @@ def main():
         run_netlocal(chrome, 'ps1', tls=True)
         run_netlocal(chrome, 'py', tls=True, mode='room')
         run_netlocal(chrome, 'ps1', mode='room')
+        run_netlocal(chrome, 'py', tls=True, mode='room', lag=60, jitter=20)     # как через интернет: пинг ~120 мс
     if args.net:
         run_net(chrome)
     print(f'\nИтого: {Report.total - Report.failed}/{Report.total} проверок прошло')

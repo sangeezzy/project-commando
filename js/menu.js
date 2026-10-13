@@ -43,7 +43,8 @@ function renderLobby() {
     el.className = 'slot' + (s.human ? '' : ' empty') + (s.slot === G.mySlot ? ' mine' : '');
     el.style.setProperty('--c', SLOT_COLORS[s.slot]);
     const who = s.human ? s.name + (s.slot === G.mySlot ? ' (вы)' : '') : Lobby.bots ? 'союзный бот' : 'пусто';
-    const st = s.human ? (s.ready ? 'готов ✓' : 'не готов') : '';
+    const ms = s.human && s.slot !== 0 && G.role !== 'solo' ? pingOf(s.slot) : null;
+    const st = s.human ? (s.ready ? 'готов ✓' : 'не готов') + (ms != null ? ` · ${ms} мс` : '') : '';
     el.innerHTML = `<span class="dot"></span><span class="who"></span><span class="st"></span>`;
     el.querySelector('.who').textContent = who;
     el.querySelector('.st').textContent = st;
