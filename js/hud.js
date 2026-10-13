@@ -41,10 +41,13 @@ function drawHUD() {
   drawVoice(p);
   // задача
   const left = alive(G.enemies).length;
-  box(14, 14, 290, 52);
-  txt('ПОЛИГОН', 26, 36, 15);
-  mono(`противников осталось: ${left} из ${G.enemies.length}`, 26, 56, left ? HUD_DIM : '#9fe870');
-  mono('TAB — характеристики M4A1 · H — управление', 14, 84, 'rgba(232,228,216,0.45)', 'left', 11);
+  box(14, 14, 330, 52);
+  txt(map.name || 'ПОЛИГОН', 26, 36, 15);
+  if (G.mapId === 'hub') mono('стол (F) — оружие · проход — на карту (хост стоит 2 с)', 26, 56, HUD_DIM);
+  else if (!G.enemies.length) mono('противников нет — пристрелка' + (isAuth() ? ' · Backspace — в хаб' : ''), 26, 56, HUD_DIM);
+  else mono(`противников осталось: ${left} из ${G.enemies.length}` + (isAuth() && G.mapId !== 'range' ? ' · Backspace — в хаб' : ''), 26, 56, left ? HUD_DIM : '#9fe870');
+  if (G.mapId === 'hub' && tableNear(p) && !p.dead && !loadoutOpen()) txt('F — оружейный стол', VW / 2, VH - 120, 15, HUD_WARN, 'center');
+  mono('TAB — характеристики оружия · 1, 2, 3 — оружие · X — нож · H — управление', 14, 84, 'rgba(232,228,216,0.45)', 'left', 11);
   if (p.keys && p.keys.size) {
     const names = [...p.keys].map((id) => keyName(id));
     mono('Ключи: ' + names.join(', '), 14, 102, '#d8c890', 'left', 12);
@@ -87,15 +90,20 @@ function drawWeapon(p) {
   box(x, y, 256, 84);
   txt(W.name, x + 12, y + 22, 16);
   mono(W.cal, x + 12, y + 38, HUD_DIM, 'left', 11);
-  txt(g.mode === 'auto' ? 'АВТО' : 'ОДИН.', x + 244, y + 22, 13, HUD_WARN, 'right');
+  txt(g.mode === 'auto' ? 'АВТО' : g.mode === 'pump' ? 'ПОМПА' : 'ОДИН.', x + 244, y + 22, 13, HUD_WARN, 'right');
+  drawSlots(p, x, y - 30);
   // патроны: в магазине + в патроннике
   const low = g.mag + g.chamber <= 5;
   txt(String(g.mag), x + 12, y + 72, 28, g.mag === 0 ? HUD_RED : low ? HUD_WARN : HUD_COL);
   ctx.font = `28px ${FONT}`;
   const mw = ctx.measureText(String(g.mag)).width;
   txt(g.chamber ? '+1' : '+0', x + 16 + mw, y + 72, 14, g.chamber ? HUD_DIM : HUD_RED);
-  // запасные магазины: полоски по наполненности
-  for (let i = 0; i < g.pouch.length; i++) {
+  // ружьё: патроны россыпью — числом
+  if (W.cls === 'shotgun') {
+    txt(String(g.pouch[0]), x + 244, y + 72, 22, g.pouch[0] ? HUD_COL : HUD_RED, 'right');
+    mono('в запасе', x + 244 - 40, y + 50, HUD_DIM, 'right', 11);
+  } else for (let i = 0; i < g.pouch.length; i++) {
+    // запасные магазины: полоски по наполненности
     const bx = x + 110 + i * 18, by = y + 48, h = 26, k = g.pouch[i] / W.mag;
     ctx.fillStyle = 'rgba(255,255,255,0.12)'; ctx.fillRect(bx, by, 11, h);
     ctx.fillStyle = k > 0.99 ? '#c8c4b0' : HUD_WARN; ctx.fillRect(bx, by + h * (1 - k), 11, h * k);
@@ -105,8 +113,27 @@ function drawWeapon(p) {
     const k = 1 - g.reloadT / g.reloadDur;
     ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.fillRect(x, y - 10, 256, 4);
     ctx.fillStyle = HUD_WARN; ctx.fillRect(x, y - 10, 256 * k, 4);
-    mono(g.reloadEmpty ? 'ПЕРЕЗАРЯДКА (ЗАТВОР НА ЗАДЕРЖКЕ)' : 'ПЕРЕЗАРЯДКА', x, y - 16, HUD_WARN, 'left', 11);
-  } else if (!g.chamber && !g.mag) mono('ПУСТО — R', x, y - 10, HUD_RED, 'left', 12);
+    mono(W.cls === 'shotgun' ? 'ЗАРЯЖАЕТ ПО ПАТРОНУ (ОГОНЬ — ПРЕРВАТЬ)' : g.reloadEmpty ? 'ПЕРЕЗАРЯДКА (ЗАТВОР НА ЗАДЕРЖКЕ)' : 'ПЕРЕЗАРЯДКА', x, y - 16, HUD_WARN, 'left', 11);
+  } else if (p.sw) {
+    const k = clamp(p.sw.t / p.sw.dur, 0, 1);
+    ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.fillRect(x, y - 10, 256, 4);
+    ctx.fillStyle = HUD_COL; ctx.fillRect(x, y - 10, 256 * k, 4);
+    mono('СМЕНА ОРУЖИЯ: ' + WEAPONS[p.kit[p.sw.to].t].name, x, y - 16, HUD_COL, 'left', 11);
+  } else if (!g.chamber && !g.mag) mono(canReload(g) ? 'ПУСТО — R' : 'ПАТРОНОВ НЕТ — СМЕНИТЕ ОРУЖИЕ (1, 2, 3)', x, y - 10, HUD_RED, 'left', 12);
+}
+
+// Слоты снаряжения над панелью оружия: 1, 2 — полноразмерные, 3 — пистолет; в руках — подсвечен, патронов всего
+function drawSlots(p, x, y) {
+  if (!p.kit) return;
+  for (let i = 0; i < 3; i++) {
+    const k = p.kit[i], bx = x + i * 86, cur = i === p.cur, next = p.sw && p.sw.to === i;
+    box(bx, y - 14, 82, 20, cur ? 0.75 : 0.45);
+    if (cur) { ctx.fillStyle = HUD_WARN; ctx.fillRect(bx, y + 4, 82, 2); }
+    mono(String(i + 1), bx + 6, y, cur || next ? HUD_WARN : HUD_DIM, 'left', 11);
+    if (!k) { mono('—', bx + 18, y, HUD_DIM, 'left', 11); continue; }
+    mono(WEAPONS[k.t].short + (i === p.off ? '·Л' : ''), bx + 18, y, cur ? HUD_COL : HUD_DIM, 'left', 10);   // ·Л — в левой руке
+    mono(String(ammoTotal(k)), bx + 78, y, ammoTotal(k) ? HUD_DIM : HUD_RED, 'right', 10);
+  }
 }
 
 // Перекрестие: зазор = реальный разброс (2σ) на дистанции до курсора
@@ -166,18 +193,24 @@ function drawDoorPrompt(p) {
 }
 
 function drawSpecs() {
-  const W = WEAPONS.m4a1;
+  const p = me(), W = WEAPONS[p && p.gun ? p.gun.t : 'm4a1'];
   const n = (v) => String(v).replace('.', ',');
   const rows = [
     ['Патрон', W.cal], ['Ствол', W.barrel], ['Масса', W.weight], ['Автоматика', W.action],
-    ['Темп стрельбы', `${W.rpm} выстр/мин (${Math.round(60000 / W.rpm)} мс)`],
-    ['Режимы', 'одиночный, автоматический (V)'],
-    ['Магазин', `${W.mag} патронов, с собой ${W.mags} шт. (${W.mag * W.mags})`],
+    ['Темп стрельбы', W.cls === 'shotgun' ? `≈${W.rpm} выстр/мин (цевьё ≈${n((60 / W.rpm).toFixed(2))} с)` : `${W.rpm} выстр/мин (${Math.round(60000 / W.rpm)} мс)`],
+    ['Режимы', W.modes.length > 1 ? 'одиночный, автоматический (V)' : W.cls === 'shotgun' ? 'помповый: каждый выстрел — новое нажатие' : 'одиночный'],
+    W.cls === 'shotgun' ? ['Магазин', `подствольный на ${W.mag} (+1), с собой ${W.shells} россыпью`]
+      : ['Магазин', `${W.mag} патронов, с собой ${W.mags} шт. (${W.mag * W.mags})`],
     ['Начальная скорость', `${W.v0} м/с`], ['Эффективная дальность', `${W.effRange} м`],
-    ['Перезарядка', `${n(W.reloadTac)} с, с задержки затвора ${n(W.reloadEmpty)} с`],
-    ['Кучность', `≈${n(W.mech)} мрад (≈${n((W.mech * 3.44).toFixed(1))} MOA)`],
+    W.cls === 'shotgun' ? ['Заряжание', `по патрону ${n(W.shellT)} с, пустое — первый в патронник ${n(W.shellFirst)} с`]
+      : ['Перезарядка', `${n(W.reloadTac)} с, с задержки затвора ${n(W.reloadEmpty)} с`],
+    W.pellets ? ['Осыпь', `${W.pellets} дробин, σ ${W.pelletSpread} мрад (≈${n((W.pelletSpread * 2 * 40 / 1000).toFixed(1))} м на 40 м)`]
+      : ['Кучность', `≈${n(W.mech)} мрад (≈${n((W.mech * 3.44).toFixed(1))} MOA)`],
     ['Разброс стрелка', `прицел ${n(W.aimStill)} мрад, присев ${n(W.aimCrouch)}, от бедра ${n(W.hip)}`],
-    ['Урон', `${W.dmg[0]}–${W.dmg[1]} из ${HP}; ${Math.round(W.vital * 100)}% — смертельное`],
+    ['Урон', W.pellets ? `${W.dmg[0]}–${W.dmg[1]} за дробину из ${HP} (в упор — смертельно)`
+      : `${W.dmg[0]}–${W.dmg[1]} из ${HP}; ${Math.round(W.vital * 100)}% — смертельное`],
+    ['Пробитие укрытий', W.penExp < 1 ? 'лучше 5,56' : W.penExp > 1.5 ? 'слабое' : 'как у 5,56'],
+    ['Нож (X)', `до ${n(KNIFE.range / PX_M)} м, ${KNIFE.dmg[0]}–${KNIFE.dmg[1]}, ${Math.round(KNIFE.vital * 100)}% — смертельно`],
   ];
   const w = 520, h = 60 + rows.length * 22, x = (VW - w) / 2, y = (VH - h) / 2;
   box(x, y, w, h, 0.88);
@@ -190,6 +223,7 @@ function drawControls() {
     ['WASD', 'движение'], ['Мышь', 'направление взгляда и прицел'], ['ЛКМ', 'огонь'],
     ['ПКМ (держать)', 'прицелиться: точнее, медленнее'], ['R', 'перезарядка'], ['V', 'режим огня'], ['Q / E (держать)', 'выглянуть влево / вправо из-за укрытия'], ['F', 'взаимодействие: дверь открыть / закрыть / отпереть'], ['G', 'выбить дверь ногой (громко)'], ['F (держать)', 'рядом с раненым товарищем — поднять'], ['B (держать)', 'рация (в помещении связи нет)'], ['M', 'микрофон вкл/выкл'], ['L', 'фонарь на оружии (в темноте выдаёт вас)'],
     ['C', 'присесть / встать (за низким укрытием — спрятаться)'], ['Shift', 'бег (не стреляет, громко)'],
+    ['1 / 2 / 3', 'полноразмерное 1, 2 / пистолет (быстро; полноразмерное — в левой руке)'], ['X', 'удар ножом'],
     ['Колёсико мыши', 'приблизить / отдалить камеру'],
     ['Enter', 'заново (в сети — у хоста)'], ['Esc', 'выйти в меню'],
     ['[  /  ]', 'отладка: бессмертие / без тумана войны (только у себя)'],
@@ -207,7 +241,8 @@ function drawEnd() {
   if (G.stateT < 0.6) return;
   const solo = G.players.filter((q) => !q.ai).length < 2;
   txt(win ? 'ПОЛИГОН ЗАЧИЩЕН' : solo ? 'ВЫ ПОГИБЛИ' : 'ОТРЯД ПОГИБ', VW / 2, VH / 2 - 10, 40, win ? '#9fe870' : HUD_RED, 'center');
-  mono(isAuth() ? 'Enter — начать заново · Esc — в меню' : 'Enter — попросить хоста начать заново · Esc — в меню', VW / 2, VH / 2 + 26, HUD_COL, 'center', 14);
+  mono(isAuth() ? 'Enter — заново (та же расстановка)' + (G.mapId !== 'range' ? ' · Backspace — в хаб' : '') + ' · Esc — в меню'
+    : 'Enter — попросить хоста начать заново · Esc — в меню', VW / 2, VH / 2 + 26, HUD_COL, 'center', 14);
 }
 
 // Ранен: красный пульсирующий край, сколько осталось, поднимают ли

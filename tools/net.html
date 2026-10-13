@@ -140,6 +140,35 @@ async function main() {
   const started = await until(() => E(G1, 'G.state') === 'play' && E(G1, 'map && G.players.length') === 4 && E(G2, 'map && G.players.length') === 4, 10000);
   check('игра началась у всех', started, [E(G1, 'G.state'), E(G2, 'G.state')]);
   check('в отряде 3 человека и 1 союзный бот', E(H, 'G.players.filter((q) => q.ai).length') === 1 && E(G1, 'G.players.filter((q) => q.ai).length') === 1);
+
+  // хаб: после лобби все в хабе; гость берёт оружие у стола (решает хост); хост стоит в проходе 2 с — все на карту
+  check('после лобби — хаб у всех', [H, G1, G2].every((f) => E(f, 'G.mapId') === 'hub'), [H, G1, G2].map((f) => E(f, 'G.mapId')));
+  E(G1, 'me().x = me().px = 14.5 * TILE; me().y = me().py = 12.5 * TILE');
+  await sleep(400);
+  E(G1, "pressed.KeyF = true");
+  await sleep(200);
+  const loOpen = E(G1, 'loadoutOpen()');
+  E(G1, "document.getElementById('lo1').value = 'akm'; document.getElementById('lo2').value = 'w1300'; document.getElementById('loOk').click()");
+  const gKit = () => E(H, `G.players.find((q) => q.slot === ${E(G1, 'G.mySlot')}).kit.map((k) => k && k.t).join()`);
+  const kitOk = await until(() => gKit() === 'akm,w1300,m1911' && E(G1, 'me().kit.map((k) => k && k.t).join()') === 'akm,w1300,m1911', 4000);
+  check('гость у стола (F) взял АКМ + ружьё: у хоста и у гостя', loOpen && kitOk, [loOpen, gKit(), E(G1, 'me().kit.map((k) => k && k.t).join()')]);
+  // гость в проходе — перехода нет (переходит только хост)
+  E(G1, 'me().x = me().px = 22.5 * TILE; me().y = me().py = 1.5 * TILE');
+  await sleep(2600);
+  check('гость в проходе — перехода нет (только хост)', E(H, 'G.mapId') === 'hub');
+  E(H, 'me().x = me().px = 22.5 * TILE; me().y = me().py = 1.5 * TILE');
+  const toMap = await until(() => [H, G1, G2].every((f) => E(f, 'G.mapId') === 'clear' && E(f, 'G.enemies.length') >= 8), 6000);
+  check('хост 2 с в проходе — «Зачистка» у всех, противники совпадают', toMap && E(G1, 'G.enemies.length') === E(H, 'G.enemies.length'),
+    [H, G1, G2].map((f) => [E(f, 'G.mapId'), E(f, 'G.enemies.length')]));
+  check('снаряжение гостя со стола — на карте', E(G1, 'me().kit.map((k) => k && k.t).join()') === 'akm,w1300,m1911', E(G1, 'me().kit.map((k) => k && k.t).join()'));
+  // гость меняет оружие (3 — пистолет): у хоста и у второго гостя в руках пистолет
+  E(G1, 'pressed.Digit3 = true');
+  const g1s0 = E(G1, 'G.mySlot');
+  const swOk = await until(() => E(H, `G.players.find((q) => q.slot === ${g1s0}).gun.t`) === 'm1911' && E(G2, `G.players.find((q) => q.slot === ${g1s0}).gun.t`) === 'm1911', 4000);
+  check('гость выхватил пистолет (3) — видно у хоста и у другого гостя', swOk);
+  // дальше — классический полигон (проверки ниже завязаны на его расстановку); снаряжение по умолчанию
+  E(H, "G.kits = {}; launchMap('range', 0)");
+  await until(() => [G1, G2].every((f) => E(f, 'G.mapId') === 'range' && E(f, 'G.enemies.length') === 8), 6000);
   check('противники совпадают', E(G1, 'G.enemies.length') === E(H, 'G.enemies.length') && E(H, 'G.enemies.length') === 8);
   // дальше противники не нужны: тест длинный, сбежавшись на выстрелы гостя, они перебили бы отряд до проверок урона и ранения
   E(H, 'G.enemies = []');

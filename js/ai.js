@@ -116,7 +116,7 @@ function peekStep(e, dt, seen) {
       // смотрят в другую сторону — стрелять первым
       k.phase = 'shoot';
       e.react -= dt;
-      if (!g.chamber && !g.reloadT) startReload(e);
+      if (!g.chamber && !g.reloadT) aiEmpty(e);
       if (g.reloadT > 0) { k.phase = 'back'; k.t = 0; k.reload = true; return; }
       const aim = seen.partial ? { x: seen.px, y: seen.py, speed: t.speed, crouch: t.crouch } : t;
       const eye = eyeOf(e);
@@ -150,7 +150,7 @@ function peekStep(e, dt, seen) {
   if (k.phase === 'hide') {
     e.leanWant = 0; e.burst = 0; e.crouch = true;
     e.want = k.face;
-    if (!g.chamber && !g.reloadT) startReload(e);
+    if (!g.chamber && !g.reloadT) aiEmpty(e);
     if (k.t >= k.dur && !g.reloadT) { k.phase = 'look'; k.t = 0; k.dur = rand(P.look[0], P.look[1]); }
   }
 
@@ -159,7 +159,7 @@ function peekStep(e, dt, seen) {
   if (k.phase === 'hold') {
     e.leanWant = 0; e.burst = 0; e.crouch = true;
     e.want = k.face;
-    if (!g.chamber && !g.reloadT) startReload(e);
+    if (!g.chamber && !g.reloadT) aiEmpty(e);
     if (k.t >= k.dur && !g.reloadT) { k.phase = 'look'; k.t = 0; k.dur = rand(P.look[0], P.look[1]); e.commit = G.time + P.commitFor; }
   }
 }
@@ -292,7 +292,7 @@ function suppressStep(e, dt) {
   e.sprint = false;
   if (!e.supAim) e.supAim = { x: e.lastX, y: e.lastY };
   e.want = Math.atan2(e.supAim.y - e.y, e.supAim.x - e.x);
-  if (!g.chamber && !g.reloadT) startReload(e);
+  if (!g.chamber && !g.reloadT) aiEmpty(e);
   const inCover = e.cover && Math.hypot(e.cover.x - e.x, e.cover.y - e.y) <= 6;
   e.supPause = Math.max(0, (e.supPause || 0) - dt);
   if (inCover && (g.reloadT > 0 || (e.burst <= 0 && e.supPause > 0.3))) { e.crouch = true; return; }   // пригнуться между очередями
@@ -376,7 +376,7 @@ function doorFireStep(e, dt) {
   const F = e.doorFire, g = e.gun;
   e.sprint = false; e.crouch = false;
   if (doorPassable(F.d)) { e.doorFire = null; return; }       // дверь открыли — дальше обычный бой
-  if (!g.chamber && !g.reloadT) startReload(e);
+  if (!g.chamber && !g.reloadT) aiEmpty(e);
   if (g.reloadT > 0) return;
   const fr = doorFront(F.d, e);
   if (kneelFor(e, { x: fr.x, y: fr.y, crouch: false }, dt)) return;
@@ -470,6 +470,65 @@ function noticeTime(e, t, d, off, partial = false) {
 }
 
 // Все бойцы под ИИ: противники и союзные боты
+// ---------- Оружие ИИ: выбор по ситуации, смена вместо перезарядки, нож ----------
+const reloadTime = (g) => { const W = WEAPONS[g.t]; return W.cls === 'shotgun' ? (g.chamber ? W.shellT : W.shellFirst) : g.chamber ? W.reloadTac : W.reloadEmpty; };
+// Насколько ствол подходит на дистанции d: винтовка — везде, ружьё — вблизи, пистолет — запасной. Пустой — хуже, совсем без патронов — 0
+function wpnScore(e, i, d) {
+  const g = e.kit[i];
+  if (!g || (!g.chamber && !canReload(g))) return 0;
+  const cls = WEAPONS[g.t].cls, m = d / PX_M;
+  const s = cls === 'rifle' ? (m < 3 ? 0.9 : 1) : cls === 'shotgun' ? (m < 12 ? 1.35 : m < 25 ? 1 : m < 40 ? 0.6 : 0.2) : (m < 15 ? 0.6 : 0.3);
+  return g.chamber ? s : s * 0.4;
+}
+// Магазин пуст: перезарядить — или сменить на заряженное, если цель близко и это быстрее перезарядки (или перезаряжать нечем)
+function aiEmpty(e) {
+  const g = e.gun, t = e.target;
+  const d = t ? Math.hypot(t.x - e.x, t.y - e.y) : 1e9;
+  // угроза прямо сейчас: цель видна (или только что) и близко — вплотную (8 м) или сам не в укрытии; в укрытии — перезарядиться присев
+  const inCover = e.cover && Math.hypot(e.cover.x - e.x, e.cover.y - e.y) < 8;
+  const close = e.st === 2 && (e.seeing || G.time - e.lastSeen < 2) && d < M(30) && (d < M(8) || !inCover);
+  let alt = -1, at = 1e9;
+  for (let i = 0; i < 3; i++) {
+    const k = e.kit[i];
+    if (i === e.cur || !k || !k.chamber) continue;
+    const st = switchTime(e, i);
+    if (st < at) { at = st; alt = i; }
+  }
+  const canR = canReload(g);
+  if (alt >= 0 && (!canR || (close && at + 0.2 < reloadTime(g)))) { switchTo(e, alt); return; }
+  if (canR) startReload(e);
+}
+// Раз в 0,4 с: в бою — лучший ствол для дистанции (если заметно лучше и не посреди очереди); спокоен — к полноразмерному,
+// пустое — перезарядить. Каждый кадр: нож, если цель вплотную, а оружие не готово (или просто вплотную — изредка)
+function aiWeapons(e, dt, seen) {
+  if (e.sw || e.melee || e.down) return;
+  if (seen && e.seeing && seen.d < KNIFE.range + PR && (!e.gun.chamber || e.gun.reloadT > 0 || Math.random() < dt * 1.5)) {
+    e.a = e.want = Math.atan2(seen.t.y - e.y, seen.t.x - e.x);
+    if (startMelee(e)) return;
+  }
+  e.wpnT = (e.wpnT || 0) - dt;
+  if (e.wpnT > 0) return;
+  e.wpnT = 0.4;
+  const g = e.gun;
+  if (seen && e.seeing) {
+    if (e.burst > 0 || g.reloadT > 0) return;
+    let best = e.cur, bs = wpnScore(e, e.cur, seen.d);
+    for (let i = 0; i < 3; i++) {
+      const sc = wpnScore(e, i, seen.d);
+      if (sc > bs * 1.25 + 0.05) { best = i; bs = sc; }
+    }
+    if (best !== e.cur) switchTo(e, best);
+  } else if (e.st < 2 || G.time - e.lastSeen > 4) {
+    if (!g.chamber && !g.reloadT && canReload(g)) { startReload(e); return; }
+    // спокойно: с пистолета — обратно на полноразмерное (сначала заряженное)
+    if (e.cur === 2 && !g.reloadT) {
+      const cand = [0, 1].filter((i) => e.kit[i] && (e.kit[i].chamber || canReload(e.kit[i])))
+        .sort((a, b) => (e.kit[b].chamber ? 1 : 0) - (e.kit[a].chamber ? 1 : 0));
+      if (cand.length) switchTo(e, cand[0]);
+    }
+  }
+}
+
 function updateAI(dt) {
   updateSquads(dt);
   updateIntel();
@@ -510,6 +569,7 @@ function updateAI(dt) {
     }
 
     checkBodies(e);
+    aiWeapons(e, dt, seen);
     e.doorFireCd = Math.max(0, (e.doorFireCd || 0) - dt);
     e.peekCd = Math.max(0, (e.peekCd || 0) - dt);
     if (e.seeing) e.doorFire = null;
@@ -587,7 +647,7 @@ function fight(e, dt, seen) {
 
   // в укрытии: перезарядка и «нырок» после очереди под огнём — присев (спрятаться)
   const inCover = e.cover && toCover <= 6;
-  if (!g.chamber && !g.reloadT) startReload(e);
+  if (!g.chamber && !g.reloadT) aiEmpty(e);
   if (inCover && (g.reloadT > 0 || e.duckT > 0)) { e.crouch = true; e.aimT = 0; return; }
   e.crouch = false;
   if (g.reloadT > 0) { e.aimT = 0; return; }
@@ -636,7 +696,7 @@ function fireMoveStep(e, t, d, dt) {
   const g = e.gun, ta = Math.atan2(t.y - e.y, t.x - e.x);
   e.sprint = false; e.crouch = false; e.cover = null;
   e.want = ta;
-  if (!g.chamber && !g.reloadT) startReload(e);
+  if (!g.chamber && !g.reloadT) aiEmpty(e);
   // ведомый отходит не куда попало, а к укрытию рядом с ведущим (если есть), продолжая стрелять
   const L = e.side === 'p' ? leaderOf(e) : null;
   if (e.fm.kind === 'retreat' && L && ENEMY.guard.retreatCover && e.fm.spot === undefined) e.fm.spot = coverNear(e, L, t);
@@ -679,7 +739,10 @@ function shootAt(e, t, d, dt, inCover) {
   } else {
     e.pause -= dt;
     if (e.pause <= 0 && g.chamber) {
-      if (d > ENEMY.semiRange) { e.burst = 1; e.pause = rand(ENEMY.semiGap[0], ENEMY.semiGap[1]); }
+      const cls = WEAPONS[g.t].cls;
+      if (cls === 'shotgun') { e.burst = 1; e.pause = 60 / WEAPONS[g.t].rpm + rand(0.05, 0.25); }   // выстрел — цевьё — выстрел
+      else if (cls === 'pistol') { e.burst = randi(2, 3); e.pause = rand(0.35, 0.7); }
+      else if (d > ENEMY.semiRange) { e.burst = 1; e.pause = rand(ENEMY.semiGap[0], ENEMY.semiGap[1]); }
       else { e.burst = randi(ENEMY.burst[0], ENEMY.burst[1]); e.pause = rand(ENEMY.burstPause[0], ENEMY.burstPause[1]); }
     }
   }
@@ -759,7 +822,7 @@ function hunt(e, dt) {
       if (pl) { e.flank = pl; bark(e, 'Захожу сбоку!'); return; }
     }
   }
-  if (g.mag < 12 && !g.reloadT && g.pouch.some((n) => n > g.mag)) startReload(e);
+  if (g.mag < WEAPONS[g.t].mag * 0.4 && !g.reloadT && canReload(g)) startReload(e);
   // только что видел и сидит в укрытии — ждём, пока цель высунется
   if (lost < 2.5 && e.cover && Math.hypot(e.cover.x - e.x, e.cover.y - e.y) < 8) {
     e.want = Math.atan2(e.lastY - e.y, e.lastX - e.x);
@@ -811,7 +874,7 @@ function lookAround(e, dt, spread) {
 function idle(e, dt) {
   e.crouch = false; e.sprint = false; e.burst = 0; e.fightT = 0;
   const g = e.gun;
-  if (g.mag < WEAPONS[g.t].mag - 5 && !g.reloadT && g.pouch.some((n) => n > g.mag)) startReload(e);
+  if (g.mag < WEAPONS[g.t].mag * 0.8 && !g.reloadT && canReload(g)) startReload(e);
   if (e.st === 1) {
     e.calmT += dt;
     if (e.investigate) {
@@ -1026,7 +1089,7 @@ function guarding(e) {
 function guardStep(e, dt) {
   const L = leaderOf(e), g = e.gun, th = { x: e.lastX, y: e.lastY };
   e.burst = 0; e.fightT = 0; e.sprint = false;
-  if (g.mag < WEAPONS[g.t].mag - 5 && !g.reloadT && g.pouch.some((n) => n > g.mag)) startReload(e);
+  if (g.mag < WEAPONS[g.t].mag * 0.8 && !g.reloadT && canReload(g)) startReload(e);
   e.gT = (e.gT || 0) - dt;
   if (!e.gSpot || e.gT <= 0 || Math.hypot(e.gSpot.x - L.x, e.gSpot.y - L.y) > M(ENEMY.guard.radius + 2)) {
     e.gT = 2;
@@ -1099,7 +1162,7 @@ function followLeader(e, dt) {
   const A = ENEMY.ally, L = leaderOf(e);
   e.burst = 0; e.fightT = 0;
   const g = e.gun;
-  if (g.mag < WEAPONS[g.t].mag - 5 && !g.reloadT && g.pouch.some((n) => n > g.mag)) startReload(e);
+  if (g.mag < WEAPONS[g.t].mag * 0.8 && !g.reloadT && canReload(g)) startReload(e);
   if (!L) { e.crouch = false; e.sprint = false; lookAround(e, dt, 1.5); return; }
   const mates = G.players.filter((q) => q.ai && !q.dead && leaderOf(q) === L).sort((a, b) => a.slot - b.slot);
   const k = Math.max(0, mates.indexOf(e)), n = Math.max(1, mates.length);

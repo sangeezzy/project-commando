@@ -41,12 +41,13 @@ document.addEventListener('visibilitychange', () => { last = performance.now(); 
 function update(dt) {
   G.stateT += dt;
   // Enter — заново: у хоста и в одиночке сразу, гость просит хоста (после гибели отряда или победы)
-  if (pressed.Enter) {
+  if (pressed.Enter && G.mapId !== 'hub') {
     if (isAuth()) restartRange();
     else if (G.state !== 'play') send({ t: 'restart' });
   }
+  if (pressed.Backspace && isAuth()) backToHub();          // хост: обратно в хаб
   const p = me();
-  if (p && G.state === 'play') controlLocal(p, dt);
+  if (p && G.state === 'play' && !loadoutOpen()) controlLocal(p, dt);
   else clearPressed();
   if (isAuth()) updateWorld(dt);
   else guestWorld(dt);
@@ -70,16 +71,17 @@ function viewer() {
   return G.players.find((q) => !q.dead && !q.ai) || G.players.find((q) => !q.dead) || p;
 }
 
+// Заново — та же карта с тем же seed (та же расстановка)
 function restartRange() {
-  startRange(G.lastSquad, G.lastBots);
-  if (G.role === 'host') broadcast({ t: 'start' });
+  if (G.mapId === 'hub') return;
+  launchMap(G.mapId || 'range', G.mapSeed || 0);
 }
 
 // Мир (хост и одиночка): оружие, ИИ, пули, двери, частицы. Отдельно от ввода — тесты гоняют только его.
 function updateWorld(dt) {
   for (const p of G.players) {
     if (!p.dead) {
-      updateGun(p, dt);
+      if (!p.ai) updateGun(p, dt);           // ботам — в updateAI (раньше вызывалось дважды: стреляли и перезаряжались вдвое быстрее)
       if (!p.ai) {
         updateAct(p, dt);
         if (p.net) applyRemoteFire(p);       // курок гостя (ввод пришёл по сети)
@@ -89,7 +91,7 @@ function updateWorld(dt) {
     if (!p.net) trackSpeed(p, dt);
     p.supp = Math.max(0, p.supp - dt * 0.6); p.hurtT += dt;
   }
-  if (G.state === 'play') { updateAI(dt); stepNoises(dt); updateDowned(dt); }
+  if (G.state === 'play') { updateAI(dt); stepNoises(dt); updateDowned(dt); updateHub(dt); }
   for (const e of G.enemies) trackSpeed(e, dt);
   for (const o of allPeople()) if (!o.dead || o.side === 'p') updateAnim(o, dt);
   updateBullets(dt);

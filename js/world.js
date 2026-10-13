@@ -47,8 +47,8 @@ class MapBuilder {
   }
   // Предмет из нескольких клеток (машина, контейнер) — рисуется целиком, а не по клеткам
   prop(kind, x0, y0, x1, y1, props = {}) {
-    const wm = kind === 'car' ? WM.CAR : WM.CONTAINER;
-    if (kind === 'car') this.low(x0, y0, x1, y1, wm); else this.wall(x0, y0, x1, y1, wm);
+    const wm = kind === 'car' ? WM.CAR : kind === 'table' ? WM.TABLE : WM.CONTAINER;
+    if (kind === 'car' || kind === 'table') this.low(x0, y0, x1, y1, wm); else this.wall(x0, y0, x1, y1, wm);
     this.ents.push({ kind, x0, y0, x1, y1, ...props });
   }
   // Освещённость прямоугольника (помещения): 1 — день, 0 — темнота
@@ -144,7 +144,7 @@ function renderMapCanvas() {
   // низкие укрытия по клеткам (машины рисуются отдельно)
   for (let y = 0; y < map.h; y++) for (let x = 0; x < map.w; x++) {
     const i = y * map.w + x;
-    if (map.grid[i] !== T.LOW || map.wm[i] === WM.CAR) continue;
+    if (map.grid[i] !== T.LOW || map.wm[i] === WM.CAR || map.wm[i] === WM.TABLE) continue;
     drawLowTile(g, x, y, map.wm[i], rng);
   }
   // стены: верх + светлая кромка
@@ -156,6 +156,7 @@ function renderMapCanvas() {
   for (const e of map.ents) {
     if (e.kind === 'car') drawCar(g, e);
     else if (e.kind === 'container') drawContainer(g, e);
+    else if (e.kind === 'table') drawTable(g, e);
   }
   return c;
 }
@@ -231,6 +232,20 @@ function roundRect(g, x, y, w, h, r) {
 }
 
 // Легковой автомобиль ~2×4 м, вид сверху
+// Оружейный стол (хаб): столешница, на ней — все стволы
+function drawTable(g, e) {
+  const X = e.x0 * TILE, Y = e.y0 * TILE, W = (e.x1 - e.x0 + 1) * TILE, H = (e.y1 - e.y0 + 1) * TILE;
+  g.fillStyle = '#6e4f2e'; roundRect(g, X + 2, Y + 3, W - 4, H - 6, 3); g.fill();
+  g.strokeStyle = 'rgba(0,0,0,0.5)'; g.lineWidth = 1.5; g.stroke();
+  g.strokeStyle = 'rgba(255,255,255,0.06)'; g.lineWidth = 1;
+  for (let x = X + 10; x < X + W - 4; x += 12) { g.beginPath(); g.moveTo(x, Y + 4); g.lineTo(x, Y + H - 4); g.stroke(); }
+  // стволы на столе (как на экране, только крупнее)
+  [['m4a1', 0.22], ['akm', 0.45], ['w1300', 0.68], ['m1911', 0.88]].forEach(([t, k]) => {
+    g.save(); g.translate(X + 14 + (W - 40) * (k - 0.2) / 0.7, Y + H / 2 - 4); g.rotate(0.15); g.scale(1.3, 1.3);
+    drawGunShape(t, 1, g); g.restore();
+  });
+}
+
 function drawCar(g, e) {
   const X = e.x0 * TILE, Y = e.y0 * TILE, W = (e.x1 - e.x0 + 1) * TILE, H = (e.y1 - e.y0 + 1) * TILE;
   const vert = H > W;

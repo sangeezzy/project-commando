@@ -38,7 +38,8 @@ function controlLocal(p, dt) {
   // рядом раненый товарищ — F (держать) поднимает его, а не открывает дверь
   const near = doorNear(p);
   const downNear = G.players.some((q) => q !== p && q.down && !q.dead && Math.hypot(q.x - p.x, q.y - p.y) < DOWN.reviveR);
-  if (pressed.KeyF && near && !downNear) doAct(p, 'door');
+  if (pressed.KeyF && tableNear(p)) openLoadout();                  // хаб: оружейный стол — выбор снаряжения (у себя на экране)
+  else if (pressed.KeyF && near && !downNear) doAct(p, 'door');
   if (pressed.KeyG && near) doAct(p, 'kick');
   const busy = !!p.act || !!p.reviving;     // отпирает, бьёт ногой или поднимает раненого — стоит на месте
   // стойка: C — присесть/встать (Ctrl не используем: Ctrl+W закрывает вкладку)
@@ -68,6 +69,11 @@ function controlLocal(p, dt) {
   p.a = aim;   // взгляд всегда за мышкой — и на бегу (оружие при этом опущено)
 
   if (pressed.KeyL) doAct(p, 'lamp');
+  // оружие: 1, 2 — полноразмерные, 3 — пистолет; X — удар ножом
+  if (pressed.Digit1) doAct(p, 'w0');
+  if (pressed.Digit2) doAct(p, 'w1');
+  if (pressed.Digit3) doAct(p, 'w2');
+  if (pressed.KeyX) doAct(p, 'knife');
   if (pressed.KeyR) doAct(p, 'reload');
   if (pressed.KeyV) doAct(p, 'mode');          // B — рация (голосовой чат)
   if (isAuth()) { if (!busy) pullTrigger(p, mouse.l, mouse.lPressed, playerSpread(p)); }
@@ -93,6 +99,9 @@ function applyAct(p, k) {
   else if (k === 'kick') { const d = doorNear(p); if (d) startKick(p, d); }
   else if (k === 'lamp') { p.lamp = !p.lamp; emit(['mode', p.id]); }
   else if (k === 'reload') startReload(p);
+  else if (k === 'w0' || k === 'w1' || k === 'w2') switchTo(p, +k[1]);
+  else if (k === 'knife') startMelee(p);
+  else if (k.startsWith('kit:')) applyKitAct(p, k);
   else if (k === 'god') {
     p.god = !p.god;
     if (p.god) { if (p.down) reviveUp(p); p.hp = HP; }        // включил раненым — сразу на ногах и с полным здоровьем
@@ -100,6 +109,7 @@ function applyAct(p, k) {
   }
   else if (k === 'mode') {
     const modes = WEAPONS[g.t].modes;
+    if (modes.length < 2) return;                 // у ружья и пистолета режим один
     g.mode = modes[(modes.indexOf(g.mode) + 1) % modes.length];
     emit(['mode', p.id]);
     emit(['toast', p.id, g.mode === 'auto' ? 'АВТОМАТИЧЕСКИЙ ОГОНЬ' : 'ОДИНОЧНЫЙ ОГОНЬ']);

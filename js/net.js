@@ -226,8 +226,8 @@ function startGameFromLobby() {
   if (G.role === 'guest' || !lobbyReady()) return;
   const squad = Lobby.slots.filter((s) => s.human).map((s) => ({ slot: s.slot, human: true, name: s.name }));
   hideMenu();
-  startRange(squad, Lobby.bots);
-  if (G.role === 'host') broadcast({ t: 'start' });
+  G.lastSquad = squad; G.lastBots = Lobby.bots;
+  launchMap('hub', 0);                    // после лобби — хаб: оружейный стол и проходы на карты
 }
 
 // ---------- Снимок мира (хост → гости) ----------
@@ -238,15 +238,32 @@ function personState(o) {
     (o.ai ? 32 : 0) | (o.seeing ? 64 : 0) | (o.down ? 128 : 0) | (o.god ? 256 : 0);
   const s = [o.id, o.side === 'e' ? 1 : 0, o.slot, flags, r1(o.x), r1(o.y), r2(o.a), Math.ceil(o.hp), r2(o.ads || 0), r2(o.leanPx || 0),
     o.st | 0, r2(o.notice || 0), r2(o.deadA || 0), r2(g.reloadT), r2(g.reloadDur),
-    o.act ? [ACTS.indexOf(o.act.kind), r2(o.act.t), r2(o.act.dur)] : 0];
-  if (o.side === 'p') s.push(o.name, [g.mag, g.chamber, g.pouch, WEAPONS[g.t].modes.indexOf(g.mode), g.reloadEmpty ? 1 : 0], [...o.keys], r2(o.supp),
-    r2(o.bleed || 0), r2(o.rev || 0), o.reviving || 0, o.lastReviver || 0);
+    o.act ? [ACTS.indexOf(o.act.kind), r2(o.act.t), r2(o.act.dur)] : 0,
+    // снаряжение: стволы по слотам (номер в WEAPON_IDS, −1 — пусто), в руках, в левой руке, смена (куда, сколько, всего), нож (−1 — нет)
+    [...o.kit.map((k) => (k ? WEAPON_IDS.indexOf(k.t) : -1)), o.cur, o.off, o.sw ? o.sw.to : -1, o.sw ? r2(o.sw.t) : 0, o.sw ? r2(o.sw.dur) : 0,
+      o.melee ? r2(o.melee.t) : -1]];
+  if (o.side === 'p') s.push(o.name, o.kit.map((k) => (k ? [k.mag, k.chamber, k.pouch, WEAPONS[k.t].modes.indexOf(k.mode), k.reloadEmpty ? 1 : 0] : 0)),
+    [...o.keys], r2(o.supp), r2(o.bleed || 0), r2(o.rev || 0), o.reviving || 0, o.lastReviver || 0);
   return s;
+}
+
+// Снаряжение из снимка: стволы по слотам (новый тип — новый объект), что в руках, смена, нож
+function applyKit(o, ki) {
+  for (let i = 0; i < 3; i++) {
+    const t = ki[i] >= 0 ? WEAPON_IDS[ki[i]] : null;
+    if (!t) o.kit[i] = null;
+    else if (!o.kit[i] || o.kit[i].t !== t) o.kit[i] = makeGun(t);
+  }
+  o.cur = ki[3]; o.off = ki[4];
+  o.sw = ki[5] >= 0 ? { to: ki[5], t: ki[6], dur: ki[7] } : null;
+  o.melee = ki[8] >= 0 ? { t: ki[8], dur: KNIFE.dur, hit: true } : null;
+  o.gun = o.kit[o.cur] || o.kit[2];
 }
 
 function sendSnapshot() {
   broadcast({
     t: 's', seq: G.seq, gs: G.state, tm: Math.round(performance.now()),     // tm — время хоста: гость по нему интерполирует
+    map: G.mapId, seed: G.mapSeed, hh: G.hubHold ? [G.hubHold.i, r2(G.hubHold.t)] : 0,   // карта и счёт перехода в хабе
     P: allPeople().map(personState),
     D: map.doors.map((d) => (d.open ? 1 : 0) | (d.locked ? 2 : 0) | (d.broken ? 4 : 0)),
     K: map.keys.map((k) => (k.taken ? 1 : 0)),
@@ -517,8 +534,9 @@ function guestSendInput() {
 }
 
 // Новый запуск полигона у хоста — пересобрать мир у себя
-function resetGuestWorld(seq) {
-  buildRange();
+function resetGuestWorld(seq, id = 'range', seed = 0) {
+  G.mapId = id; G.mapSeed = seed;
+  buildMap(id);
   G.seq = seq;
   G.players = []; G.enemies = []; G.bullets = []; G.parts = []; G.decals = []; G.hurt = [];
   G.hitmark = null; G.toast = null; G.muzzle = []; G.expo = null; G.barks = [];
@@ -529,7 +547,8 @@ function resetGuestWorld(seq) {
 
 function applySnapshot(s) {
   const fresh = s.seq !== G.seq;
-  if (fresh) { resetGuestWorld(s.seq); resetInterp(); resetPred(); }
+  if (fresh || s.map !== G.mapId) { resetGuestWorld(s.seq, s.map, s.seed); resetInterp(); resetPred(); }
+  G.hubHold = s.hh ? { i: s.hh[0], t: s.hh[1] } : null;
   const tm = s.tm ?? Math.round(performance.now());
   interpClock(tm);
   Net.snapN++;
@@ -539,7 +558,7 @@ function applySnapshot(s) {
   const known = new Map(allPeople().map((o) => [o.id, o]));
   const players = [], enemies = [];
   for (const q of s.P) {
-    const [id, side, slot, flags, x, y, a, hp, ads, leanPx, st, notice, deadA, reloadT, reloadDur, act] = q;
+    const [id, side, slot, flags, x, y, a, hp, ads, leanPx, st, notice, deadA, reloadT, reloadDur, act, kit] = q;
     let o = known.get(id);
     if (!o) {
       o = makePerson(side ? 'e' : 'p', x, y, a);
@@ -550,13 +569,18 @@ function applySnapshot(s) {
     o.dead = !!(flags & 1); o.hp = hp; o.ai = !!(flags & 32); o.st = st; o.notice = notice; o.seeing = !!(flags & 64);
     o.lamp = !!(flags & 8); o.kneel = !!(flags & 16); o.deadA = deadA; o.god = !!(flags & 256);
     if (o.dead && !wasDead) o.deadT = G.time;
+    applyKit(o, kit);
     o.gun.reloadT = reloadT; o.gun.reloadDur = reloadDur;
     o.act = act ? { kind: ACTS[act[0]], t: act[1], dur: act[2] } : null;
     if (side === 0) {
-      const [, , , , , , , , , , , , , , , , name, gun, keysArr, supp, bleed, rev, reviving, lastReviver] = q;
+      const [, , , , , , , , , , , , , , , , , name, ammo, keysArr, supp, bleed, rev, reviving, lastReviver] = q;
       o.name = name;
       o.down = !!(flags & 128); o.bleed = bleed; o.rev = rev; o.reviving = reviving; o.lastReviver = lastReviver;
-      o.gun.mag = gun[0]; o.gun.chamber = gun[1]; o.gun.pouch = gun[2]; o.gun.mode = WEAPONS[o.gun.t].modes[gun[3]]; o.gun.reloadEmpty = !!gun[4];
+      ammo.forEach((m, i) => {
+        const k = o.kit[i];
+        if (!k || !m) return;
+        k.mag = m[0]; k.chamber = m[1]; k.pouch = m[2]; k.mode = WEAPONS[k.t].modes[m[3]]; k.reloadEmpty = !!m[4];
+      });
       o.keys = new Set(keysArr); o.supp = supp;
     }
     if (own) {

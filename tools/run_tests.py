@@ -54,6 +54,8 @@ UNIT_TESTS = {
     'aiwall': '',
     'aicorner': '',
     'aistack': '',
+    'weapons': '',
+    'maps': '',
 }
 
 try:

@@ -29,8 +29,9 @@ function playFx(ev) {
   const [k] = ev;
   const p = me();
   if (k === 'shot') {
-    const [, x, y, a, side, id] = ev;
-    // вспышка, дымок, гильза вылетает вправо-назад
+    const [, x, y, a, side, id, wt = 'm4a1'] = ev;
+    const cls = WEAPONS[wt].cls;
+    // вспышка, дымок, гильза вылетает вправо-назад (у ружья — пластиковая гильза, у пистолета — маленькая)
     for (let i = 0; i < 5; i++) {
       const s = rand(0.3, 1);
       addPart(x, y, Math.cos(a + rand(-0.35, 0.35)) * 260 * s, Math.sin(a + rand(-0.35, 0.35)) * 260 * s, 0.05, '#fff2b0', 3, 10);
@@ -39,13 +40,13 @@ function playFx(ev) {
     const ca = a + Math.PI / 2 + rand(-0.3, 0.3);
     const cx = x - Math.cos(a) * 18, cy = y - Math.sin(a) * 18;
     G.parts.push({ x: cx, y: cy, vx: Math.cos(ca) * rand(90, 140), vy: Math.sin(ca) * rand(90, 140), life: 0.45, max: 0.45,
-      color: '#c9a646', size: 2, drag: 5, shape: 2, rot: a, spin: rand(-30, 30), casing: true });
+      color: cls === 'shotgun' ? '#a8322a' : '#c9a646', size: cls === 'shotgun' ? 3 : cls === 'pistol' ? 1.5 : 2, drag: 5, shape: 2, rot: a, spin: rand(-30, 30), casing: true });
     G.muzzle = G.muzzle || [];
     G.muzzle.push({ x, y, a, t: 0.05 });
-    if (p && id === p.id) { G.shake = Math.max(G.shake, 2.2); SFX.shot(1, 0, 0); }
+    if (p && id === p.id) { G.shake = Math.max(G.shake, cls === 'shotgun' ? 4 : cls === 'pistol' ? 1.4 : 2.2); SFX.shot(1, 0, 0, false, wt); }
     else if (p) {
       const d = Math.hypot(x - p.x, y - p.y);
-      SFX.shot(vol(d), pan(x), d / PX_M / SOUND_SPEED, !los(p.x, p.y, x, y));
+      SFX.shot(vol(d), pan(x), d / PX_M / SOUND_SPEED, !los(p.x, p.y, x, y), wt);
     }
   } else if (k === 'trail') {
     const [, x0, y0, x1, y1] = ev;
@@ -73,9 +74,19 @@ function playFx(ev) {
     addDecal({ x: x + Math.cos(a) * 8, y: y + Math.sin(a) * 8, r: 14, c: 'rgba(90,8,8,0.55)', grow: 1 });
   } else if (k === 'reload') {
     const [, x, y, side, empty, id] = ev;
-    if (p) SFX.reload(id === p.id ? 1 : vol(Math.hypot(x - p.x, y - p.y)) * 0.5, empty);
+    const who = allPeople().find((q) => q.id === id), wt = who && who.gun ? who.gun.t : 'm4a1';
+    if (p) SFX.reload(id === p.id ? 1 : vol(Math.hypot(x - p.x, y - p.y)) * 0.5, empty, wt);
+    if (empty === 2) return;                       // ружьё: патрон в магазин, магазин не выпадает
     // выпавший магазин
     G.parts.push({ x: x + rand(-4, 4), y: y + rand(-4, 4), vx: 0, vy: 0, life: 20, max: 20, color: '#2b2b2b', size: 3, drag: 0, shape: 5, rot: rand(0, 6.28), spin: 0 });
+  } else if (k === 'wsw') {
+    const [, x, y, side, id] = ev;
+    if (p) SFX.wsw(id === p.id ? 1 : vol(Math.hypot(x - p.x, y - p.y)) * 0.4);
+  } else if (k === 'knife') {
+    const [, x, y, a, hit] = ev;
+    if (!p) return;
+    const v = vol(Math.hypot(x - p.x, y - p.y));
+    if (hit) SFX.flesh(v * 1.2); else SFX.swish(v);
   } else if (k === 'dry') {
     const [, x, y, side, id] = ev;
     if (p && id === p.id) SFX.click();
@@ -165,16 +176,20 @@ function tone(dest, type, f0, f1, dur, v, delay = 0) {
 }
 
 const SFX = {
-  // выстрел 5,56: резкий хлопок + низкий удар + хвост эха. far — задержка звука (с), muffled — за стеной
-  shot(v = 1, p = 0, delay = 0, muffled = false) {
+  // выстрел: резкий хлопок + низкий удар + хвост эха. delay — задержка звука (с), muffled — за стеной.
+  // 5,56 — резкий; 7,62×39 — ниже и тяжелее; .45 — тише и суше; 12 калибр — глухой мощный удар
+  shot(v = 1, p = 0, delay = 0, muffled = false, wt = 'm4a1') {
     if (!AC) return;
     const o = out(p);
-    const hi = muffled ? 1200 : 4500;
-    noise(o, 0.09, 0.9 * v, 'lowpass', hi, delay, 0.7, 0.001);
-    noise(o, 0.05, 0.5 * v, 'highpass', 2500, delay, 0.5, 0.001);
-    tone(o, 'sine', 160, 45, 0.12, 0.8 * v, delay);
-    noise(o, 0.6, 0.12 * v, 'lowpass', 900, delay + 0.03, 0.5, 0.02);
+    const S = { m4a1: [4500, 160, 1, 1], akm: [3600, 120, 1.1, 1.1], m1911: [3000, 140, 0.7, 0.6], w1300: [2600, 90, 1.3, 1.5] }[wt] || [4500, 160, 1, 1];
+    const hi = muffled ? 1200 : S[0];
+    noise(o, 0.09 * S[3], 0.9 * v * S[2], 'lowpass', hi, delay, 0.7, 0.001);
+    noise(o, 0.05, 0.5 * v * S[2], 'highpass', 2500, delay, 0.5, 0.001);
+    tone(o, 'sine', S[1], 45, 0.12 * S[3], 0.8 * v * S[2], delay);
+    noise(o, 0.6 * S[3], 0.12 * v * S[2], 'lowpass', 900, delay + 0.03, 0.5, 0.02);
   },
+  wsw(v = 1) { if (!AC) return; const o = out(0); noise(o, 0.12, 0.25 * v, 'bandpass', 900, 0, 1.5); noise(o, 0.03, 0.3 * v, 'highpass', 3000, 0.12); },
+  swish(v = 1) { if (!AC) return; noise(out(0), 0.12, 0.3 * v, 'bandpass', 2400, 0, 3, 0.04); },
   crack() { if (!AC) return; const o = out(0); noise(o, 0.025, 0.55, 'highpass', 3000, 0, 0.6, 0.001); tone(o, 'sawtooth', 2400, 900, 0.03, 0.08); },
   impact(v, fx) {
     if (!AC) return;
@@ -186,12 +201,13 @@ const SFX = {
   flesh(v) { if (!AC) return; const o = out(0); noise(o, 0.08, 0.4 * v, 'lowpass', 500, 0, 1); },
   click(v = 1) { if (!AC) return; const o = out(0); noise(o, 0.02, 0.35 * v, 'highpass', 4000); tone(o, 'square', 1800, 1500, 0.015, 0.05 * v); },
   // магазин отстегнуть, вставить, (пустой) задержка затвора
-  reload(v = 1, empty = 0) {
+  reload(v = 1, empty = 0, wt = 'm4a1') {
     if (!AC) return;
-    const o = out(0);
+    const o = out(0), W = WEAPONS[wt];
+    if (empty === 2) { noise(o, 0.04, 0.35 * v, 'bandpass', 1500, 0.25, 2); tone(o, 'square', 500, 350, 0.02, 0.05 * v, 0.25); return; }   // патрон в ружьё
     noise(o, 0.04, 0.4 * v, 'bandpass', 2500, 0.15, 2);
     noise(o, 0.06, 0.3 * v, 'bandpass', 1200, 0.35, 2);
-    const tin = empty ? WEAPONS.m4a1.reloadEmpty - 0.6 : WEAPONS.m4a1.reloadTac - 0.35;
+    const tin = empty ? W.reloadEmpty - 0.6 : W.reloadTac - 0.35;
     noise(o, 0.05, 0.6 * v, 'bandpass', 1800, tin, 2.5);
     tone(o, 'square', 300, 200, 0.03, 0.06 * v, tin);
     if (empty) { noise(o, 0.07, 0.7 * v, 'bandpass', 2200, tin + 0.4, 2); tone(o, 'triangle', 900, 500, 0.06, 0.12 * v, tin + 0.4); }

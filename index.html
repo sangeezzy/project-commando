@@ -15,6 +15,12 @@
   #menu { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; padding:16px; overflow:auto;
     background: radial-gradient(ellipse at center, rgba(40,42,38,.92), rgba(18,19,20,.98)); }
   .hidden { display:none !important; }
+  #loadout { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; padding:16px; z-index:5;
+    background: rgba(12,13,14,.72); }
+  #loadout .screen { max-width:520px; padding:18px; border:1px solid var(--line); border-radius:6px; background:rgba(22,23,24,.96); }
+  #loadout select { font-family:Consolas, monospace; font-size:13px; color:var(--fg); background:rgba(15,16,17,.9);
+    border:1px solid var(--line); padding:6px; min-width:340px; max-width:100%; }
+  #loErr { min-height:18px; color:var(--warn); font-family:Consolas, monospace; font-size:12px; }
   .screen { display:flex; flex-direction:column; align-items:center; gap:12px; width:100%; max-width:560px; }
   h1 { margin:0; font-size:clamp(32px, 7vw, 60px); letter-spacing:.06em; text-align:center; }
   h2 { margin:0; font-size:26px; letter-spacing:.08em; }
@@ -59,6 +65,19 @@
 </head>
 <body>
 <canvas id="c"></canvas>
+
+<!-- Оружейный стол (хаб): два полноразмерных ствола, пистолет — всегда -->
+<div id="loadout" class="hidden">
+  <div class="screen">
+    <h2>ОРУЖЕЙНЫЙ СТОЛ</h2>
+    <div class="sub">Пистолет Colt M1911 — всегда с собой (3). Нож — у каждого (X).</div>
+    <div class="row"><label for="lo1">Оружие 1</label><select id="lo1"></select></div>
+    <div class="row"><label for="lo2">Оружие 2</label><select id="lo2"></select></div>
+    <div id="loErr"></div>
+    <div class="row"><button id="loOk">ВЗЯТЬ</button><button id="loCancel">ОТМЕНА</button></div>
+    <div class="help">Взятое оружие — с полным боекомплектом. На карте: 1, 2 — полноразмерные, 3 — пистолет.</div>
+  </div>
+</div>
 
 <div id="menu">
   <div class="screen" id="mainMenu">
@@ -119,7 +138,7 @@
       <b>WASD</b> — движение · <b>мышь</b> — прицел · <b>ЛКМ</b> — огонь · <b>ПКМ</b> — прицелиться · <b>R</b> — перезарядка · <b>V</b> — режим<br>
       <b>Q/E</b> — выглянуть · <b>F</b> — дверь · <b>G</b> — выбить · <b>L</b> — фонарь · <b>C</b> — присесть · <b>Shift</b> — бег<br>
       <b>B</b> (держать) — рация · <b>M</b> — микрофон вкл/выкл (голосовой чат включается в лобби)<br>
-      <b>Колёсико</b> — приблизить/отдалить · <b>Tab</b> — характеристики M4A1 · <b>H</b> — управление · <b>Enter</b> — заново · <b>Esc</b> — в меню<br>
+      <b>Колёсико</b> — приблизить/отдалить · <b>Tab</b> — характеристики оружия · <b>H</b> — управление · <b>Enter</b> — заново · <b>Esc</b> — в меню<br>
       Отладка (только у себя): <b>[</b> — бессмертие · <b>]</b> — без тумана войны (видно всех противников)
     </div>
   </div>
@@ -156,6 +175,7 @@
 <script src="js/ai.js"></script>
 <script src="js/player.js"></script>
 <script src="js/net.js"></script>
+<script src="js/hub.js"></script>
 <script src="js/render.js"></script>
 <script src="js/hud.js"></script>
 <script src="js/menu.js"></script>

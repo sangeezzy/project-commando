@@ -54,6 +54,7 @@ function render(dt = 1 / 60) {
   for (const e of G.enemies) if (!e.dead && e.va > 0.3 && (G.noFog || perceivedAt(e.x, e.y) > LIGHT.seeMin)) drawAwareness(e);
   if (view && !G.noFog) drawFog(offX, offY, p, view);
   if (G.noFog) drawAllEnemies();
+  drawHubWorld();
   drawTeamTags();
   drawIntel();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -291,6 +292,36 @@ function magOut(g) {
 
 const lerp = (a, b, k) => a + (b - a) * k;
 
+// Оружие сверху, стволом по +x, начало — у плеча/рук. mo — доля выхода магазина (перезарядка)
+function drawGunShape(t, mo = 1, g = ctx) {
+  const W = WEAPONS[t], a = g.globalAlpha;
+  if (t === 'm1911') {
+    g.fillStyle = '#26282a'; g.fillRect(0, -1.2, W.len, 2.4);      // затвор и ствол
+    g.fillStyle = '#4a3a2a'; g.fillRect(-1, -1, 2.5, 2);            // рукоятка (щёчки)
+    return;
+  }
+  if (t === 'w1300') {
+    g.fillStyle = '#1c1c1c'; g.fillRect(-4, -1.4, W.len - 2, 2.8);   // ствольная коробка и ствол
+    g.fillStyle = '#2a2a2a'; g.fillRect(4, 1.2, W.len - 12, 1.4);    // подствольный магазин
+    g.fillStyle = '#3a3a3a'; g.fillRect(12, -1.8, 7, 3.6);           // цевьё (помпа)
+    g.fillStyle = '#1c1c1c'; g.fillRect(-10, -2.2, 7, 4.4);          // приклад
+    return;
+  }
+  const akm = t === 'akm';
+  g.fillStyle = '#1a1a1a';
+  g.fillRect(-4, -1.6, W.len, 3.2);                // ствольная коробка, цевьё, ствол
+  g.fillStyle = akm ? '#6b4527' : '#1a1a1a';
+  g.fillRect(-9, -2, 6, 4);                        // приклад (у АКМ — дерево)
+  if (akm) { g.fillRect(9, -1.9, 8, 3.8); }        // деревянное цевьё
+  if (mo < 0.98) {
+    g.globalAlpha = a * (1 - mo);
+    g.fillStyle = akm ? '#5a3a20' : '#2a2a2a';
+    g.fillRect(6, 1.4 + mo * 6, 3.5, akm ? 5.5 : 4.5);    // магазин выходит вниз (у АКМ — изогнутый, длиннее)
+    g.globalAlpha = a;
+  }
+  if (!akm) { g.fillStyle = '#333'; g.fillRect(4, -2.6, 6, 1.2); }   // прицел (у АКМ — открытый)
+}
+
 function drawPerson(o, alpha) {
   if (o.down) { drawDowned(o, alpha); return; }
   if (!o.an) updateAnim(o, 0);
@@ -331,27 +362,51 @@ function drawPerson(o, alpha) {
   const lowK = Math.max(an.low, an.reload);
   const rot = an.low * 0.75 + an.reload * 0.5 * (1 - an.low);
   const mo = magOut(g);
-  // винтовка: длина ~0,76 м со сложенным прикладом
-  ctx.save();
-  ctx.translate(2 - ads * 1, 5 - ads * 4);
-  ctx.rotate(rot);
-  ctx.fillStyle = '#1a1a1a';
-  ctx.fillRect(-4, -1.6, 28, 3.2);                 // ствольная коробка и цевьё
-  ctx.fillRect(-8, -2, 5, 4);                      // приклад
-  if (mo < 0.98) {
-    ctx.globalAlpha = alpha * (1 - mo);
-    ctx.fillStyle = '#2a2a2a'; ctx.fillRect(6, 1.4 + mo * 6, 3.5, 4.5);   // магазин выходит вниз
-    ctx.globalAlpha = alpha;
+  const cls = WEAPONS[g.t].cls, pistol = cls === 'pistol';
+  // за спиной — полноразмерные, которые не в руках и не в левой руке (под плечами, наискось)
+  if (o.kit) for (let i = 0; i < 2; i++) {
+    const k = o.kit[i];
+    if (!k || i === o.cur || i === o.off) continue;
+    ctx.save(); ctx.translate(-5, i ? 3 : -3); ctx.rotate(i ? 2.6 : -2.6); ctx.globalAlpha = alpha * 0.9;
+    drawGunShape(k.t, 1); ctx.restore();
   }
-  ctx.fillStyle = '#333'; ctx.fillRect(4, -2.6, 6, 1.2);         // прицел
+  // смена оружия: ствол уходит вниз и возвращается
+  const swK = o.sw ? Math.sin(Math.PI * clamp(o.sw.t / o.sw.dur, 0, 1)) : 0;
+  ctx.save();
+  if (pistol) ctx.translate(7 - ads, 2.5 - ads * 2);         // пистолет — двумя руками перед грудью
+  else ctx.translate(2 - ads * 1, 5 - ads * 4);              // полноразмерное — у правого плеча
+  ctx.rotate(rot + swK * 0.9);
+  drawGunShape(g.t, mo);
   ctx.restore();
+  // полноразмерное в левой руке (выхвачен пистолет): висит стволом вперёд-вниз вдоль левого бока
+  if (o.kit && o.off >= 0 && o.kit[o.off] && pistol) {
+    ctx.save(); ctx.translate(1, -8); ctx.rotate(0.35); ctx.globalAlpha = alpha * 0.95;
+    drawGunShape(o.kit[o.off].t, 1); ctx.restore();
+  }
   // руки: передняя — на цевье (с оружием опускается), задняя — на рукоятке, при перезарядке тянется к магазину
   ctx.fillStyle = isP ? '#5e6b42' : '#4a4038';
-  const fx = lerp(15 - ads, 9, lowK), fy = lerp(5 - ads * 4, 9, lowK);
-  ctx.beginPath(); ctx.arc(fx, fy, 3, 0, Math.PI * 2); ctx.fill();
   const reach = an.reload * Math.min(1, mo * 1.5 + 0.3);
-  const bx = lerp(3, 8, reach), by = lerp(7 - ads * 3, 11, reach);
-  ctx.beginPath(); ctx.arc(bx, by, 3, 0, Math.PI * 2); ctx.fill();
+  if (pistol) {
+    const fx = lerp(12 - ads, 8, lowK), fy = lerp(2.5 - ads * 2, 6, lowK);
+    ctx.beginPath(); ctx.arc(fx, fy, 3, 0, Math.PI * 2); ctx.fill();
+    // вторая рука: на пистолете — или держит полноразмерное слева
+    const offHand = o.off >= 0;
+    ctx.beginPath(); ctx.arc(offHand ? 4 : lerp(10, 7, reach), offHand ? -7 : lerp(4.5 - ads * 2, 9, reach), 3, 0, Math.PI * 2); ctx.fill();
+  } else {
+    const fx = lerp(15 - ads, 9, lowK), fy = lerp(5 - ads * 4, 9, lowK);
+    ctx.beginPath(); ctx.arc(fx, fy, 3, 0, Math.PI * 2); ctx.fill();
+    const bx = lerp(3, 8, reach), by = lerp(7 - ads * 3, 11, reach);
+    ctx.beginPath(); ctx.arc(bx, by, 3, 0, Math.PI * 2); ctx.fill();
+  }
+  // нож: рука с клинком выбрасывается вперёд и возвращается
+  if (o.melee) {
+    const k = Math.sin(Math.PI * clamp(o.melee.t / o.melee.dur, 0, 1));
+    const hx = 6 + 14 * k, hy = -3 + 2 * k;
+    ctx.fillStyle = isP ? '#5e6b42' : '#4a4038';
+    ctx.beginPath(); ctx.arc(hx, hy, 3, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#c8ccd0'; ctx.lineWidth = 1.6;
+    ctx.beginPath(); ctx.moveTo(hx + 2, hy); ctx.lineTo(hx + 9, hy - 0.5); ctx.stroke();
+  }
   // плечи и разгрузка
   ctx.fillStyle = uni;
   ctx.beginPath(); ctx.ellipse(0, 0, 6.5, 11, 0, 0, Math.PI * 2); ctx.fill();
