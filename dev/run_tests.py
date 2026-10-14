@@ -63,6 +63,7 @@ UNIT_TESTS = {
     'touch': 'touch=1',
     'app': 'touch=1&app=1',
     'opts': 'touch=1',
+    'guns': '',
 }
 
 try:

@@ -41,15 +41,16 @@ window.__result = (() => {
     const { cx, cy } = map.surv;
     const closer = [...spawnedAt].filter(([e, s0]) => Math.hypot(e.x - cx * TILE, e.y - cy * TILE) < Math.hypot(s0.x - cx * TILE, s0.y - cy * TILE) - M(3)).length;
     check('противники идут к центру (хотя бы половина за 18 с)', closer >= 2, closer);
-    check('волна 1 — только пистолеты', [...spawnedAt.keys()].every((e) => !e.kit[0] && !e.kit[1] && e.gun.t === 'm1911'));
+    check('волна 1 — только пистолеты', [...spawnedAt.keys()].every((e) => !e.kit[0] && !e.kit[1] && PISTOL_IDS.includes(e.gun.t)));
     check('размер растёт: 4, 6, 8, 10…', [1, 2, 3, 4, 5].map(SURV.size).join() === '4,6,8,10,12');
     check('грузовик — после волн 3, 6, 9, 12, дальше — каждой второй', [3, 6, 9, 12, 14, 16].every(SURV.truckDue) && ![1, 2, 4, 5, 13, 15].some(SURV.truckDue));
     // оружие по волнам (много раз)
     const rnd = makeRng(5), e = makeEnemy(0, 0, 0, null);
-    const kinds = (n) => { const out = new Set(); for (let i = 0; i < 60; i++) { kitForWave(e, n, rnd); out.add(e.kit.map((k) => k && k.t).join()); } return [...out]; };
+    // пистолет — любой из пула: в наборе он «P»
+    const kinds = (n) => { const out = new Set(); for (let i = 0; i < 60; i++) { kitForWave(e, n, rnd); out.add(e.kit.map((k, j) => k && (j === 2 && PISTOL_IDS.includes(k.t) ? 'P' : k.t)).join()); } return [...out]; };
     const k3 = kinds(3), k5 = kinds(5);
-    check('волны 3–4: пистолет или ружьё + пистолет', k3.every((s) => s === ',,m1911' || s === 'w1300,,m1911') && k3.length === 2, k3);
-    check('волна 5+: наборы как на других картах (винтовки тоже)', k5.some((s) => s.includes('m4a1') || s.includes('akm')), k5.slice(0, 4));
+    check('волны 3–4: пистолет или ружьё + пистолет', k3.every((s) => s === ',,P' || s === 'w1300,,P') && k3.length === 2, k3);
+    check('волна 5+: наборы как на других картах (винтовки тоже)', k5.some((s) => PRIMARY_IDS.some((t) => t !== 'w1300' && s.includes(t))), k5.slice(0, 4));
   });
 
   run('грузовик', () => {

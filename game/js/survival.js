@@ -225,8 +225,8 @@ function spawnGroup() {
 // Оружие по номеру волны («Штурм» — локации): 1–2 — пистолеты; 3–4 — пистолеты и ружья; 5–6 — половина так же, половина —
 // случайный набор (винтовки); дальше — случайный набор, как на других картах
 function kitForWave(e, n, rnd) {
-  if (n <= 2) giveKit(e, null, null);
-  else if (n <= 4 || (n <= 6 && rnd() < 0.5)) giveKit(e, rnd() < 0.5 ? 'w1300' : null, null);
+  if (n <= 2) giveKit(e, null, null, randomPistol(rnd));
+  else if (n <= 4 || (n <= 6 && rnd() < 0.5)) giveKit(e, rnd() < 0.5 ? 'w1300' : null, null, randomPistol(rnd));
   else randomKit(e, rnd);
 }
 
@@ -322,7 +322,7 @@ function truckReinforce() {
       randomKit(q, G.surv.rnd);
     } else {
       const k = (G.kits || {})[q.slot];
-      if (k) giveKit(q, k[0], k[1]); else giveKit(q, 'm4a1', null);
+      if (k) giveKit(q, k[0], k[1], k[2]); else giveKit(q, 'm4a1', null);
     }
   });
   if (back.length) emit(['radio', `Грузовик привёз пополнение: ${back.map((q) => q.name).join(', ')}`]);

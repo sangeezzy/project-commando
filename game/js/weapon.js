@@ -129,7 +129,7 @@ function cancelReload(o) { o.gun.reloadT = 0; }
 // Магазин выбрасывается целиком. Помповому ружью — нет (заряжают по патрону).
 function quickReload(o) {
   const g = o.gun, W = WEAPONS[g.t];
-  if (W.cls === 'shotgun') return false;
+  if (W.cls === 'shotgun' || W.belt) return false;          // ружьё — по патрону, пулемёт — лента: бросать нечего
   if (g.reloadT > 0) {
     if (g.quick) return false;
     const done = g.reloadDur - g.reloadT, dur = g.reloadDur * RELOAD_QUICK.k;

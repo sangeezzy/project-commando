@@ -240,9 +240,12 @@ function drawTable(g, e) {
   g.strokeStyle = 'rgba(0,0,0,0.5)'; g.lineWidth = 1.5; g.stroke();
   g.strokeStyle = 'rgba(255,255,255,0.06)'; g.lineWidth = 1;
   for (let x = X + 10; x < X + W - 4; x += 12) { g.beginPath(); g.moveTo(x, Y + 4); g.lineTo(x, Y + H - 4); g.stroke(); }
-  // стволы на столе (как на экране, только крупнее)
-  [['m4a1', 0.22], ['akm', 0.45], ['w1300', 0.68], ['m1911', 0.88]].forEach(([t, k]) => {
-    g.save(); g.translate(X + 14 + (W - 40) * (k - 0.2) / 0.7, Y + H / 2 - 4); g.rotate(0.15); g.scale(1.3, 1.3);
+  // стволы на столе — все, что можно взять: полноразмерные стволом вверх в ряд, пистолеты — справа
+  const ids = [...PRIMARY_IDS, ...PISTOL_IDS], step = (W - 16) / ids.length;
+  ids.forEach((t, i) => {
+    const pistol = WEAPONS[t].cls === 'pistol';
+    g.save(); g.translate(X + 8 + step * (i + 0.5), pistol ? Y + H / 2 + 6 : Y + H - 12); g.rotate(-Math.PI / 2 + 0.08);
+    g.scale(pistol ? 1.3 : 1.05, pistol ? 1.3 : 1.05);
     drawGunShape(t, 1, g); g.restore();
   });
 }

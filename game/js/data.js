@@ -2,7 +2,7 @@
 // ---------- Тюнинг и справочники. Масштаб: 1 м = PX_M px = одна клетка ----------
 
 // Версия игры: гость с другой версией не войдёт (при прямом подключении у гостя может быть своя копия)
-const GAME_VERSION = '2026-10-18.runs';
+const GAME_VERSION = '2026-10-18.guns';
 
 const PX_M = 32;
 const M = (m) => m * PX_M;     // метры -> пиксели
@@ -138,6 +138,111 @@ const WEAPONS = {
     threat: 2, armorDmg: 16,   // 57-Н-231 держит III и выше; тяжёлая пуля сильнее бьёт плиту
     penExp: 0.8,               // стальной сердечник: пробивает лучше 5,56
   },
+  ak74: {
+    name: 'АК-74', short: 'АК-74',
+    full: 'Автомат Калашникова АК-74',
+    cal: '5,45×39 мм (7Н6)',
+    barrel: '415 мм',
+    weight: '3,6 кг со снаряжённым магазином',
+    action: 'газоотводная, поворотный затвор',
+    rpm: 650,                  // темп 600–650 выстр/мин
+    modes: ['auto', 'semi'],
+    mag: 30, mags: 7,          // магазин на 30, с собой 7 (210)
+    v0: 900,
+    effRange: 500, maxRange: 600,
+    reloadTac: 2.4, reloadEmpty: 3.0,
+    dmg: [42, 62],             // лёгкая пуля со смещённым центром тяжести: чуть сильнее 5,56 по незащищённому
+    vital: 0.15,
+    dropPerM: 0.0013,          // настильная траектория, близко к 5,56
+    mech: 1.2,                 // ≈4 MOA
+    aimStill: 2.7, aimCrouch: 1.9, hip: 25,
+    moveAds: 9, moveHip: 16,
+    kick: 4.8, kickHip: 7.5,   // дульный тормоз-компенсатор: отдача мягче, чем у АКМ, близко к M4A1
+    recover: 7,
+    maxBloom: 40,
+    cls: 'rifle', len: 30,
+    threat: 2, armorDmg: 11,   // 7Н6 (сердечник из мягкой стали) держат плиты III и выше
+    penExp: 0.9,               // стальной сердечник: пробивает чуть лучше M855
+  },
+  rpk74: {
+    name: 'РПК-74', short: 'РПК-74',
+    full: 'Ручной пулемёт Калашникова РПК-74',
+    cal: '5,45×39 мм (7Н6)',
+    barrel: '590 мм',
+    weight: '5,5 кг со снаряжённым магазином на 45',
+    action: 'газоотводная, поворотный затвор',
+    rpm: 650,
+    modes: ['auto', 'semi'],
+    mag: 45, mags: 5,          // магазин на 45 (подходят и автоматные), с собой 5 (225)
+    v0: 960,                   // длинный тяжёлый ствол — пуля быстрее, чем у АК-74
+    effRange: 800, maxRange: 800,
+    reloadTac: 2.8, reloadEmpty: 3.4,
+    dmg: [44, 64],
+    vital: 0.15,
+    dropPerM: 0.0011,
+    mech: 0.9,                 // тяжёлый ствол — кучнее
+    aimStill: 3.0, aimCrouch: 1.6, hip: 30,   // тяжёлый: стоя держать труднее, присев (с сошек) — устойчиво
+    moveAds: 13, moveHip: 21,
+    kick: 3.8, kickHip: 7,     // масса гасит отдачу: длинные очереди кучнее, чем из автомата
+    recover: 6,
+    maxBloom: 38,
+    cls: 'rifle', lmg: true, len: 36,
+    threat: 2, armorDmg: 11,
+    penExp: 0.85,
+  },
+  fal: {
+    name: 'FN FAL', short: 'FN FAL',
+    full: 'Автоматическая винтовка FN FAL',
+    cal: '7,62×51 мм НАТО (M80)',
+    barrel: '533 мм (21″)',
+    weight: '4,9 кг со снаряжённым магазином',
+    action: 'газоотводная, перекос затвора',
+    rpm: 650,                  // 650–700 выстр/мин; очередью — трудно удержать
+    modes: ['semi', 'auto'],   // основной режим — одиночный
+    mag: 20, mags: 6,          // магазин на 20, с собой 6 (120)
+    v0: 840,
+    effRange: 600, maxRange: 800,
+    reloadTac: 2.6, reloadEmpty: 3.3,
+    dmg: [60, 85],             // мощный винтовочный патрон: часто хватает одного-двух попаданий
+    vital: 0.2,
+    dropPerM: 0.0009,          // тяжёлая пуля медленнее теряет энергию
+    mech: 0.9,                 // ≈3 MOA
+    aimStill: 2.6, aimCrouch: 1.9, hip: 28,
+    moveAds: 11, moveHip: 18,
+    kick: 11, kickHip: 14,     // сильная отдача: очередью — в небо
+    recover: 5.5,
+    maxBloom: 60,
+    cls: 'rifle', len: 35,
+    threat: 2, armorDmg: 20,   // M80 (обычная пуля) держат плиты III и выше; плиту бьёт сильнее всех
+    penExp: 0.7,               // энергии больше всех: укрытия пробивает лучше
+  },
+  m249: {
+    name: 'M249 SAW', short: 'M249',
+    full: 'Ручной пулемёт M249 SAW',
+    cal: '5,56×45 мм НАТО (M855), лента',
+    barrel: '465 мм',
+    weight: '10 кг с коробом на 200',
+    action: 'газоотводная, поворотный затвор, огонь с открытого затвора',
+    rpm: 800,                  // 750–850 выстр/мин от ленты
+    modes: ['auto'],           // только автоматический
+    mag: 200, mags: 3,         // короб с лентой на 200, с собой 3 (600)
+    belt: true,                // лента: быстрой перезарядки (бросить магазин) нет
+    v0: 915,
+    effRange: 800, maxRange: 800,
+    reloadTac: 6.5, reloadEmpty: 7.0,   // открыть крышку, сменить короб, заправить ленту
+    dmg: [40, 60],
+    vital: 0.14,
+    dropPerM: 0.0012,
+    mech: 1.2,
+    aimStill: 3.2, aimCrouch: 1.5, hip: 32,   // 10 кг: стоя водит, присев (с сошек) — устойчиво
+    moveAds: 15, moveHip: 22,
+    kick: 3.2, kickHip: 6.5,
+    recover: 6,
+    maxBloom: 40,
+    cls: 'rifle', lmg: true, len: 36,
+    threat: 3, armorDmg: 12,   // M855 — как у M4A1
+    penExp: 1,
+  },
   w1300: {
     name: 'Winchester 1300', short: 'W1300',
     full: 'Помповое ружьё Winchester 1300 Defender',
@@ -194,8 +299,61 @@ const WEAPONS = {
     threat: 1, armorDmg: 7,    // .45 ACP держит IIIA и выше
     penExp: 1.7,               // пистолетная пуля пробивает укрытия хуже винтовочной
   },
+  tt: {
+    name: 'ТТ', short: 'ТТ',
+    full: 'Пистолет Токарева ТТ-33',
+    cal: '7,62×25 мм ТТ (Пст)',
+    barrel: '116 мм',
+    weight: '0,94 кг со снаряжённым магазином',
+    action: 'отдача ствола с коротким ходом',
+    rpm: 300,
+    modes: ['semi'],
+    mag: 8, mags: 4,           // магазин на 8, с собой 4
+    v0: 420,                   // быстрая лёгкая пуля
+    effRange: 50, maxRange: 250,
+    reloadTac: 1.6, reloadEmpty: 1.9,
+    dmg: [30, 44],
+    vital: 0.1,
+    dropPerM: 0.0035,
+    mech: 1.7,
+    aimStill: 5.2, aimCrouch: 4.1, hip: 14,
+    moveAds: 10, moveHip: 14,
+    kick: 10, kickHip: 12,
+    recover: 6.5,
+    maxBloom: 45,
+    cls: 'pistol', len: 8,
+    threat: 2, armorDmg: 8,    // Пст со стальным сердечником пробивает мягкую IIIA — держат только плиты
+    penExp: 1.35,              // пробивает лучше других пистолетных
+  },
+  hipower: {
+    name: 'Browning Hi-Power', short: 'Hi-Power',
+    full: 'Пистолет Browning Hi-Power',
+    cal: '9×19 мм Парабеллум',
+    barrel: '118 мм',
+    weight: '1,0 кг со снаряжённым магазином',
+    action: 'отдача ствола с коротким ходом',
+    rpm: 300,
+    modes: ['semi'],
+    mag: 13, mags: 4,          // магазин на 13 — вдвое больше, чем у Colt
+    v0: 360,
+    effRange: 50, maxRange: 250,
+    reloadTac: 1.7, reloadEmpty: 2.0,
+    dmg: [28, 42],
+    vital: 0.1,
+    dropPerM: 0.0038,
+    mech: 1.5,
+    aimStill: 4.8, aimCrouch: 3.8, hip: 14,
+    moveAds: 10, moveHip: 14,
+    kick: 9, kickHip: 11,      // 9 мм — отдача мягче .45
+    recover: 7,
+    maxBloom: 42,
+    cls: 'pistol', len: 9,
+    threat: 1, armorDmg: 6,    // 9 мм держит IIIA
+    penExp: 1.6,
+  },
 };
-const WEAPON_IDS = ['m4a1', 'akm', 'w1300', 'm1911'];
+// номера — для сети (снимки): новые — только в конец
+const WEAPON_IDS = ['m4a1', 'akm', 'w1300', 'm1911', 'ak74', 'rpk74', 'fal', 'm249', 'tt', 'hipower'];
 
 // Броня по американскому стандарту NIJ 0101: уровень защиты (lvl) против «угрозы» патрона (WEAPONS.threat); прочность — полоска 0..100.
 // Плита закрывает корпус: попадание в неё — с вероятностью cover. Держит (угроза ≤ уровня) — до бойца доходит только заброневой удар (blunt);
@@ -208,7 +366,8 @@ const ARMOR = {
 };
 const ARMOR_ORDER = [null, 'IIIA', 'III', 'III+', 'IV'];
 const ARMOR_HIT = { cover: 0.7, blunt: 0.12, through: 0.65, overK: 1.5, worn: 25 };   // порядок — для снимков по сети
-const PRIMARY_IDS = ['m4a1', 'akm', 'w1300'];           // полноразмерные (два слота); пистолет — всегда Colt M1911
+const PRIMARY_IDS = ['m4a1', 'akm', 'ak74', 'rpk74', 'fal', 'm249', 'w1300'];   // полноразмерные (два слота; ИИ — случайные из всех)
+const PISTOL_IDS = ['m1911', 'tt', 'hipower'];        // пистолеты: игрок — со стола (по умолчанию Colt), ИИ — случайный из пула
 
 // Нож — у каждого, X: быстрый удар
 const KNIFE = {
@@ -288,6 +447,7 @@ const ENEMY = {
   blindAim: 35,                  // + ослеплён фонарём в темноте
   moveAim: 14,                   // + при стрельбе на ходу (на скорости шага; бегом не стреляют)
   burst: [2, 4], burstPause: [0.35, 0.8], semiRange: M(25), semiGap: [0.28, 0.5],
+  lmgBurst: [5, 10],             // ручной пулемёт (lmg): очереди длиннее
   speed: { patrol: 1.3, walk: 2.4, run: 4.2 },
   turn: 5,                       // рад/с
   mags: 5,

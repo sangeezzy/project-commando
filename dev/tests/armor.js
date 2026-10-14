@@ -32,8 +32,9 @@ window.__result = (() => {
     check('износ по калибру: 7,62×39 > 5,56 > .45 > дробина', wear('akm') > wear('m4a1') && wear('m4a1') > wear('m1911') && wear('m1911') > wear('w1300'),
       ['akm', 'm4a1', 'm1911', 'w1300'].map(wear));
     giveArmor(o, 'IIIA');
-    o.armor.hp = 100; armorHit(o, WEAPONS.m4a1, 1);
-    const pen = 100 - o.armor.hp;
+    // плита закрывает корпус с вероятностью ARMOR_HIT.cover — стрелять, пока не попадёт в неё (было: один выстрел, 30% — мимо плиты)
+    let pen = 0;
+    for (let i = 0; i < 50 && !pen; i++) { o.armor.hp = 100; if (armorHit(o, WEAPONS.m4a1, 1)) pen = 100 - o.armor.hp; }
     o.armor.hp = 100;
     let s = 0; while (o.armor.hp === 100) { if (armorHit(o, WEAPONS.m1911, 1)) s = 100 - o.armor.hp; }
     check('пробитая плита изнашивается сильнее удержавшей (на тот же калибр)', pen > 0 && pen >= WEAPONS.m4a1.armorDmg * ARMOR_HIT.overK - 0.01, [pen, s]);

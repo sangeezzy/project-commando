@@ -45,29 +45,34 @@ function makeGun(type, mags) {
   };
 }
 
-// Боекомплект: отряду — как в WEAPONS; противникам — поменьше (ENEMY.mags магазинов, ружьё — 16 патронов, пистолет — 3 магазина)
+// Боекомплект: отряду — как в WEAPONS; противникам — поменьше (ENEMY.mags магазинов, ружьё — 16 патронов, пистолет — 3 магазина,
+// пулемёт с лентой — 2 короба)
 function ammoFor(type, side, ai) {
   const W = WEAPONS[type];
   if (side === 'p') return W.cls === 'shotgun' ? W.shells : W.mags;     // отряд (люди и боты) — полный боекомплект
-  return W.cls === 'shotgun' ? 16 : W.cls === 'pistol' ? 3 : ENEMY.mags;
+  return W.cls === 'shotgun' ? 16 : W.cls === 'pistol' ? 3 : W.belt ? 2 : ENEMY.mags;
 }
 
 // Снаряжение: kit[0], kit[1] — полноразмерные (второго может не быть), kit[2] — пистолет (всегда). В руках — kit[cur] (= o.gun).
 // off — какое полноразмерное сейчас в левой руке (выхвачен пистолет), −1 — нет
-// p1 = null — только пистолет (ранние волны «Выживания»)
-function giveKit(o, p1, p2) {
+// p1 = null — только пистолет (ранние волны «Выживания»); pt — пистолет (PISTOL_IDS), по умолчанию Colt M1911
+function giveKit(o, p1, p2, pt = 'm1911') {
+  if (!PISTOL_IDS.includes(pt)) pt = 'm1911';
   o.kit = [p1 ? makeGun(p1, ammoFor(p1, o.side, o.ai)) : null, p2 && p2 !== p1 ? makeGun(p2, ammoFor(p2, o.side, o.ai)) : null,
-    makeGun('m1911', ammoFor('m1911', o.side, o.ai))];
+    makeGun(pt, ammoFor(pt, o.side, o.ai))];
   o.cur = p1 ? 0 : 2; o.gun = o.kit[o.cur]; o.off = -1; o.sw = null; o.stowT = 0;
   return o;
 }
 
-// Случайный набор для ИИ: пистолет, нож и 1–2 разных полноразмерных (rnd — генератор карты: при перезапуске то же)
+// Случайный пистолет из пула (ИИ)
+const randomPistol = (rnd = Math.random) => PISTOL_IDS[Math.floor(rnd() * PISTOL_IDS.length)];
+
+// Случайный набор для ИИ: случайный пистолет, нож и 1–2 разных полноразмерных (rnd — генератор карты: при перезапуске то же)
 function randomKit(o, rnd = Math.random) {
   const ids = [...PRIMARY_IDS];
   const p1 = ids.splice(Math.floor(rnd() * ids.length), 1)[0];
   const p2 = rnd() < 0.5 ? ids[Math.floor(rnd() * ids.length)] : null;
-  return giveKit(o, p1, p2);
+  return giveKit(o, p1, p2, randomPistol(rnd));
 }
 
 function makePerson(side, x, y, a = 0) {
@@ -157,7 +162,7 @@ function startMap(id, seed = 0, squad = null, bots = false) {
     if (q && q.human) {
       o = makeHuman(slot, x, y, a, q.name);
       const k = (G.kits || {})[slot];
-      if (k) giveKit(o, k[0], k[1]);                 // выбранное на оружейном столе
+      if (k) giveKit(o, k[0], k[1], k[2]);           // выбранное на оружейном столе
     } else if (bots && humans.length) {
       o = makeBot(slot, x, y, a, humans[slot % humans.length]);
       if (id !== 'range') randomKit(o, rnd);

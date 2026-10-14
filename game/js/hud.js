@@ -152,7 +152,7 @@ function drawWeapon(p) {
     const k = 1 - g.reloadT / g.reloadDur;
     ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.fillRect(x, y - 10, 256, 4);
     ctx.fillStyle = HUD_WARN; ctx.fillRect(x, y - 10, 256 * k, 4);
-    mono(W.cls === 'shotgun' ? 'ЗАРЯЖАЕТ ПО ПАТРОНУ (ОГОНЬ — ПРЕРВАТЬ)' : g.quick ? 'БЫСТРАЯ ПЕРЕЗАРЯДКА — МАГАЗИН СБРОШЕН' : g.reloadEmpty ? 'ПЕРЕЗАРЯДКА (ЗАТВОР НА ЗАДЕРЖКЕ) · RR — быстрая' : 'ПЕРЕЗАРЯДКА · RR — быстрая', x, y - 16, HUD_WARN, 'left', 11);
+    mono(W.cls === 'shotgun' ? 'ЗАРЯЖАЕТ ПО ПАТРОНУ (ОГОНЬ — ПРЕРВАТЬ)' : W.belt ? 'СМЕНА КОРОБА С ЛЕНТОЙ' : g.quick ? 'БЫСТРАЯ ПЕРЕЗАРЯДКА — МАГАЗИН СБРОШЕН' : g.reloadEmpty ? 'ПЕРЕЗАРЯДКА (ЗАТВОР НА ЗАДЕРЖКЕ) · RR — быстрая' : 'ПЕРЕЗАРЯДКА · RR — быстрая', x, y - 16, HUD_WARN, 'left', 11);
   } else if (p.sw) {
     const k = clamp(p.sw.t / p.sw.dur, 0, 1);
     ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.fillRect(x, y - 10, 256, 4);
@@ -260,18 +260,21 @@ function drawSpecs() {
   const rows = [
     ['Патрон', W.cal], ['Ствол', W.barrel], ['Масса', W.weight], ['Автоматика', W.action],
     ['Темп стрельбы', W.cls === 'shotgun' ? `≈${W.rpm} выстр/мин (цевьё ≈${n((60 / W.rpm).toFixed(2))} с)` : `${W.rpm} выстр/мин (${Math.round(60000 / W.rpm)} мс)`],
-    ['Режимы', W.modes.length > 1 ? 'одиночный, автоматический (V)' : W.cls === 'shotgun' ? 'помповый: каждый выстрел — новое нажатие' : 'одиночный'],
+    ['Режимы', W.modes.length > 1 ? (W.modes[0] === 'semi' ? 'одиночный (основной), автоматический (V)' : 'одиночный, автоматический (V)')
+      : W.cls === 'shotgun' ? 'помповый: каждый выстрел — новое нажатие' : W.modes[0] === 'auto' ? 'только автоматический' : 'одиночный'],
     W.cls === 'shotgun' ? ['Магазин', `подствольный на ${W.mag} (+1), с собой ${W.shells} россыпью`]
-      : ['Магазин', `${W.mag} патронов, с собой ${W.mags} шт. (${W.mag * W.mags})`],
+      : W.belt ? ['Питание', `лента в коробе на ${W.mag}, с собой ${W.mags} короба (${W.mag * W.mags})`]
+        : ['Магазин', `${W.mag} патронов, с собой ${W.mags} шт. (${W.mag * W.mags})`],
     ['Начальная скорость', `${W.v0} м/с`], ['Эффективная дальность', `${W.effRange} м`],
     W.cls === 'shotgun' ? ['Заряжание', `по патрону ${n(W.shellT)} с, пустое — первый в патронник ${n(W.shellFirst)} с`]
-      : ['Перезарядка', `${n(W.reloadTac)} с, с задержки затвора ${n(W.reloadEmpty)} с`],
+      : W.belt ? ['Перезарядка', `смена короба и ленты ${n(W.reloadTac)} с, пустой ${n(W.reloadEmpty)} с; быстрой нет`]
+        : ['Перезарядка', `${n(W.reloadTac)} с, с задержки затвора ${n(W.reloadEmpty)} с`],
     W.pellets ? ['Осыпь', `${W.pellets} дробин, σ ${W.pelletSpread} мрад (≈${n((W.pelletSpread * 2 * 40 / 1000).toFixed(1))} м на 40 м)`]
       : ['Кучность', `≈${n(W.mech)} мрад (≈${n((W.mech * 3.44).toFixed(1))} MOA)`],
     ['Разброс стрелка', `прицел ${n(W.aimStill)} мрад, присев ${n(W.aimCrouch)}, от бедра ${n(W.hip)}`],
     ['Урон', W.pellets ? `${W.dmg[0]}–${W.dmg[1]} за дробину из ${HP} (в упор — смертельно)`
       : `${W.dmg[0]}–${W.dmg[1]} из ${HP}; ${Math.round(W.vital * 100)}% — смертельное`],
-    ['Пробитие укрытий', W.penExp < 1 ? 'лучше 5,56' : W.penExp > 1.5 ? 'слабое' : 'как у 5,56'],
+    ['Пробитие укрытий', W.penExp <= 0.75 ? 'сильное (лучше всех)' : W.penExp < 1 ? 'лучше 5,56' : W.penExp > 1.5 ? 'слабое' : W.penExp > 1.1 ? 'ниже 5,56' : 'как у 5,56'],
     ['Нож (X)', `до ${n(KNIFE.range / PX_M)} м, ${KNIFE.dmg[0]}–${KNIFE.dmg[1]}, ${Math.round(KNIFE.vital * 100)}% — смертельно`],
   ];
   const w = 520, h = 60 + rows.length * 22, x = (VW - w) / 2, y = (VH - h) / 2;

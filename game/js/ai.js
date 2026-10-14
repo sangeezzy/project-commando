@@ -508,7 +508,7 @@ function aiEmpty(e) {
   const canR = canReload(g);
   if (alt >= 0 && (!canR || (close && at + 0.2 < reloadTime(g)))) { switchTo(e, alt); return; }
   // угроза рядом, а магазинов с запасом (≥ 3) — быстрая: пустой магазин всё равно не жалко
-  if (canR) startReload(e, close && WEAPONS[g.t].cls !== 'shotgun' && g.pouch.length >= 3);
+  if (canR) startReload(e, close && WEAPONS[g.t].cls !== 'shotgun' && !WEAPONS[g.t].belt && g.pouch.length >= 3);
 }
 // Раз в 0,4 с: в бою — лучший ствол для дистанции (если заметно лучше и не посреди очереди); спокоен — к полноразмерному,
 // пустое — перезарядить. Каждый кадр: нож, если цель вплотную, а оружие не готово (или просто вплотную — изредка)
@@ -757,7 +757,8 @@ function shootAt(e, t, d, dt, inCover) {
       const cls = WEAPONS[g.t].cls;
       if (cls === 'shotgun') { e.burst = 1; e.pause = 60 / WEAPONS[g.t].rpm + rand(0.05, 0.25); }   // выстрел — цевьё — выстрел
       else if (cls === 'pistol') { e.burst = randi(2, 3); e.pause = rand(0.35, 0.7); }
-      else if (d > ENEMY.semiRange) { e.burst = 1; e.pause = rand(ENEMY.semiGap[0], ENEMY.semiGap[1]); }
+      else if (d > ENEMY.semiRange || g.mode === 'semi') { e.burst = 1; e.pause = rand(ENEMY.semiGap[0], ENEMY.semiGap[1]); }   // далеко или одиночный режим
+      else if (WEAPONS[g.t].lmg) { e.burst = randi(ENEMY.lmgBurst[0], ENEMY.lmgBurst[1]); e.pause = rand(ENEMY.burstPause[0], ENEMY.burstPause[1]) * 1.3; }   // пулемёт — длиннее
       else { e.burst = randi(ENEMY.burst[0], ENEMY.burst[1]); e.pause = rand(ENEMY.burstPause[0], ENEMY.burstPause[1]); }
     }
   }

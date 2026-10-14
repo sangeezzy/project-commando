@@ -148,7 +148,7 @@ window.__result = (() => {
     for (let i = 0; i < 40; i++) {
       randomKit(e);
       const k = e.kit;
-      if (!k[0] || k[2].t !== 'm1911' || (k[1] && k[1].t === k[0].t) || !PRIMARY_IDS.includes(k[0].t)) ok = false;
+      if (!k[0] || !PISTOL_IDS.includes(k[2].t) || (k[1] && k[1].t === k[0].t) || !PRIMARY_IDS.includes(k[0].t)) ok = false;
     }
     check('случайный набор ИИ: пистолет, 1–2 разных полноразмерных', ok);
   });

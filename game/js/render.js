@@ -335,11 +335,20 @@ function magOut(g) {
 const lerp = (a, b, k) => a + (b - a) * k;
 
 // Оружие сверху, стволом по +x, начало — у плеча/рук. mo — доля выхода магазина (перезарядка)
+// Винтовки и пулемёты: ствольная коробка, приклад, цевьё по виду (GUN_LOOK); у M249 — короб с лентой сбоку.
+const GUN_LOOK = {
+  m4a1: { stock: '#1a1a1a', mag: '#2a2a2a', magL: 4.5, optic: true },
+  akm: { stock: '#6b4527', fore: '#6b4527', mag: '#5a3a20', magL: 5.5 },
+  ak74: { stock: '#5a3422', fore: '#5a3422', mag: '#6a3328', magL: 5.5, brake: true },     // ламинат, магазин «сливовый»
+  rpk74: { stock: '#5a3422', fore: '#5a3422', mag: '#6a3328', magL: 7.5, bipod: true },   // длинный ствол, рожок на 45, сошки
+  fal: { stock: '#202020', fore: '#2c2c2c', mag: '#242424', magL: 5, carry: true, brake: true },
+  m249: { stock: '#1e1e1e', fore: '#2a2a2a', box: '#4a5038', bipod: true, shield: true },
+};
 function drawGunShape(t, mo = 1, g = ctx) {
   const W = WEAPONS[t], a = g.globalAlpha;
-  if (t === 'm1911') {
-    g.fillStyle = '#26282a'; g.fillRect(0, -1.2, W.len, 2.4);      // затвор и ствол
-    g.fillStyle = '#4a3a2a'; g.fillRect(-1, -1, 2.5, 2);            // рукоятка (щёчки)
+  if (W.cls === 'pistol') {
+    g.fillStyle = t === 'hipower' ? '#202224' : '#26282a'; g.fillRect(0, -1.2, W.len, 2.4);      // затвор и ствол
+    g.fillStyle = t === 'tt' ? '#2e2622' : '#4a3a2a'; g.fillRect(-1, -1, 2.5, 2);               // рукоятка (у ТТ — бакелит)
     return;
   }
   if (t === 'w1300') {
@@ -349,19 +358,32 @@ function drawGunShape(t, mo = 1, g = ctx) {
     g.fillStyle = '#1c1c1c'; g.fillRect(-10, -2.2, 7, 4.4);          // приклад
     return;
   }
-  const akm = t === 'akm';
+  const L = GUN_LOOK[t] || GUN_LOOK.m4a1;
   g.fillStyle = '#1a1a1a';
   g.fillRect(-4, -1.6, W.len, 3.2);                // ствольная коробка, цевьё, ствол
-  g.fillStyle = akm ? '#6b4527' : '#1a1a1a';
-  g.fillRect(-9, -2, 6, 4);                        // приклад (у АКМ — дерево)
-  if (akm) { g.fillRect(9, -1.9, 8, 3.8); }        // деревянное цевьё
-  if (mo < 0.98) {
+  g.fillStyle = L.stock;
+  g.fillRect(-9, -2, 6, 4);                        // приклад
+  if (L.fore) { g.fillStyle = L.fore; g.fillRect(9, -1.9, 8, 3.8); }        // цевьё
+  if (L.shield) { g.fillStyle = '#333'; g.fillRect(12, -2.1, 10, 1); }       // M249: теплозащитный кожух сверху
+  if (L.brake) { g.fillStyle = '#0e0e0e'; g.fillRect(W.len - 6, -1.9, 2.5, 3.8); }   // дульный тормоз
+  if (L.carry) { g.fillStyle = '#2e2e2e'; g.fillRect(1, -2.6, 7, 1); }       // FAL: ручка для переноски
+  if (L.bipod) {
+    // сошки сложены вдоль ствола (сверху — две тонкие ножки)
+    g.strokeStyle = '#2a2a2a'; g.lineWidth = 0.8;
+    g.beginPath(); g.moveTo(W.len - 12, -1.6); g.lineTo(W.len - 4, -2.6); g.moveTo(W.len - 12, 1.6); g.lineTo(W.len - 4, 2.6); g.stroke();
+  }
+  if (L.box) {
+    // короб с лентой — сбоку слева; на перезарядке уходит
+    g.globalAlpha = a * (mo < 0.98 ? 1 - mo : 1);
+    g.fillStyle = L.box; g.fillRect(2, 1.6 + (mo < 0.98 ? mo * 6 : 0), 7, 4.5);
+    g.globalAlpha = a;
+  } else if (mo < 0.98) {
     g.globalAlpha = a * (1 - mo);
-    g.fillStyle = akm ? '#5a3a20' : '#2a2a2a';
-    g.fillRect(6, 1.4 + mo * 6, 3.5, akm ? 5.5 : 4.5);    // магазин выходит вниз (у АКМ — изогнутый, длиннее)
+    g.fillStyle = L.mag;
+    g.fillRect(6, 1.4 + mo * 6, 3.5, L.magL);      // магазин выходит вниз
     g.globalAlpha = a;
   }
-  if (!akm) { g.fillStyle = '#333'; g.fillRect(4, -2.6, 6, 1.2); }   // прицел (у АКМ — открытый)
+  if (L.optic) { g.fillStyle = '#333'; g.fillRect(4, -2.6, 6, 1.2); }   // прицел (у остальных — открытый)
 }
 
 // Бронежилет на модели: плитоноска цвета класса (мягкая IIIA — без контура плит); с износом — потёртости и сколы,

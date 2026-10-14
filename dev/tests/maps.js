@@ -61,7 +61,7 @@ window.__result = (() => {
         if (los(e.x, e.y, q.x, q.y)) bad.push([seed, 'видит отряд', Math.round(e.x / TILE), Math.round(e.y / TILE)]);
         if (Math.hypot(e.x - q.x, e.y - q.y) < M(15)) bad.push([seed, 'ближе 15 м']);
       }
-      if (!G.enemies.every((e) => e.kit[2].t === 'm1911' && e.kit[0])) bad.push([seed, 'набор']);
+      if (!G.enemies.every((e) => PISTOL_IDS.includes(e.kit[2].t) && e.kit[0])) bad.push([seed, 'набор']);
     }
     check('8–12 противников', counts.every((n) => n >= 8 && n <= 12) && new Set(counts).size > 1, counts);
     check('старт у края, на улице; ни один противник не видит отряд (и наоборот), никто не ближе 15 м', !bad.length, bad.slice(0, 5));
