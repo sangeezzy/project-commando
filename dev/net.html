@@ -234,6 +234,30 @@ async function main() {
   await sleep(400);
   check('у второго гостя тоже открыта (проход и свет)', E(G2, 'map.doorAt.get(16 * map.w + 13).open && tileAt(13, 16) === T.FLOOR'));
 
+  // машина: гость садится за руль (F), едет (машину считает он, хост берёт позу), все видят; тормозит и выходит
+  const g1id = E(G1, 'me().id');
+  const cid = E(G1, '(() => { const front = (c) => { const f = toWorld(c, vSize(c).hl + M(0.3), 0); return castRay(f.x, f.y, Math.cos(c.a), Math.sin(c.a), M(12), (x, y) => solidTile(x, y)); }; const c = map.cars.reduce((m, q) => (front(q) > front(m) ? q : m)); const s = toWorld(c, 0, -(vSize(c).hw + M(0.7))); me().x = me().px = s.x; me().y = me().py = s.y; return c.id; })()');
+  const car0 = E(H, `(() => { const c = map.cars.find((q) => q.id === ${cid}); return [c.x, c.y]; })()`);
+  await sleep(400);
+  E(G1, 'pressed.KeyF = true');
+  const seated = await until(() => E(H, `map.cars.find((q) => q.id === ${cid}).seats[0] === ${g1id}`), 3000);
+  check('гость сел за руль (F) — у хоста он водитель', seated);
+  await until(() => E(G1, 'me().veh && me().seat === 0'), 2000);
+  E(G1, 'keys.KeyW = true');
+  await sleep(1200);
+  E(G1, 'keys.KeyW = false; keys.KeyS = true');
+  await sleep(700);
+  E(G1, 'keys.KeyS = false');
+  await sleep(1500);
+  const carH = E(H, `(() => { const c = map.cars.find((q) => q.id === ${cid}); return [c.x, c.y]; })()`);
+  const carG2 = E(G2, `(() => { const c = map.cars.find((q) => q.id === ${cid}); return [c.x, c.y, (G.players.find((q) => q.id === ${g1id}) || {}).veh ? 1 : 0]; })()`);
+  const moved = Math.hypot(carH[0] - car0[0], carH[1] - car0[1]) / 32;
+  check('гость поехал — машина у хоста сдвинулась', moved > 0.8, moved.toFixed(1) + ' м');
+  check('второй гость видит машину там же и гостя в ней', Math.hypot(carG2[0] - carH[0], carG2[1] - carH[1]) < 24 && carG2[2] === 1, [Math.round(carG2[0] - carH[0]), Math.round(carG2[1] - carH[1]), carG2[2]]);
+  E(G1, 'pressed.KeyF = true');
+  const out = await until(() => E(H, `!map.cars.find((q) => q.id === ${cid}).seats.includes(${g1id})`) && !E(G1, '!!me().veh'), 3000);
+  check('гость вышел из машины (F) — у хоста и у себя', out);
+
   // урон по гостю считает хост — у гостя падает здоровье и есть отметка попадания
   E(H, `damagePerson(G.players.find((q) => q.slot === ${g1slot}), 30, 30 * TILE, 30 * TILE, 0, null)`);
   await until(() => E(G1, 'me().hp') < 100, 3000);

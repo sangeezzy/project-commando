@@ -5,7 +5,8 @@ const VIS_RAYS = 720;
 const VIS_DX = Float64Array.from({ length: VIS_RAYS }, (_, i) => Math.cos((i / VIS_RAYS) * Math.PI * 2));   // направления лучей обзора
 const VIS_DY = Float64Array.from({ length: VIS_RAYS }, (_, i) => Math.sin((i / VIS_RAYS) * Math.PI * 2));
 
-const onScreen = (x, y, pad = 60) => Math.abs(x - G.cam.x) < VW / 2 / G.zoom + pad && Math.abs(y - G.cam.y) < VH / 2 / G.zoom + pad;
+const onScreen = (x, y, pad = 60) => (G.camRot ? Math.hypot(x - G.cam.x, y - G.cam.y) < Math.hypot(VW, VH) / 2 / G.zoom + pad
+  : Math.abs(x - G.cam.x) < VW / 2 / G.zoom + pad && Math.abs(y - G.cam.y) < VH / 2 / G.zoom + pad);
 
 // Видит ли игрок человека: прямая видимость (с учётом присевших за укрытием) и поле зрения
 function playerSees(p, o) {
@@ -25,13 +26,14 @@ function render(dt = 1 / 60) {
   if (!map || G.state === 'menu' || G.state === 'lobby') return;   // меню и лобби — DOM поверх
   const p = viewer();                 // чьими глазами: свой боец, после гибели — живой товарищ
   const sh = G.shake, z = G.zoom;
-  const offX = Math.round(VW / 2 - G.cam.x * z + rand(-sh, sh)), offY = Math.round(VH / 2 - G.cam.y * z + rand(-sh, sh));
-  ctx.setTransform(z, 0, 0, z, offX, offY);
+  CAMM = camMatrix(Math.round(rand(-sh, sh)), Math.round(rand(-sh, sh)));
+  if (!G.camRot) { CAMM[4] = Math.round(CAMM[4]); CAMM[5] = Math.round(CAMM[5]); }
+  const offX = CAMM[4], offY = CAMM[5];
+  ctx.setTransform(...CAMM);
   {
-    // видимый кусок заранее отрисованной карты (координаты мира)
-    const wx = -offX / z, wy = -offY / z, mc = map.canvas;
-    const x0 = Math.max(0, wx), y0 = Math.max(0, wy), x1 = Math.min(mc.width, wx + VW / z), y1 = Math.min(mc.height, wy + VH / z);
-    if (x1 > x0 && y1 > y0) ctx.drawImage(mc, x0, y0, x1 - x0, y1 - y0, x0, y0, x1 - x0, y1 - y0);
+    // видимый кусок заранее отрисованной карты (координаты мира; при повороте камеры — описывающий прямоугольник)
+    const sp = screenPolyWorld(0).pts;
+    drawMapView(ctx, Math.min(...sp.map((q) => q.x)), Math.min(...sp.map((q) => q.y)), Math.max(...sp.map((q) => q.x)), Math.max(...sp.map((q) => q.y)));
   }
   for (const d of G.decals) if (onScreen(d.x, d.y)) drawDecal(d);
   for (const q of G.parts) if (q.shape === 5) drawPart(q);
@@ -39,6 +41,7 @@ function render(dt = 1 / 60) {
   for (const k of map.keys) if (!k.taken && onScreen(k.x, k.y)) drawKey(k);
   drawTruck();
   for (const o of allPeople()) if (o.dead && !o.evac && onScreen(o.x, o.y)) drawBody(o);
+  drawVehicles();                     // машины (сидящие — поверх)
   drawMGs();                          // станковые пулемёты (под бойцами: стрелок — за ними)
   for (const e of G.enemies) {
     if (e.dead || !onScreen(e.x, e.y)) { e.va = 0; continue; }
@@ -52,14 +55,15 @@ function render(dt = 1 / 60) {
   for (const q of G.parts) if (q.shape !== 5) drawPart(q);
   const view = p && !p.dead ? viewPolygon(p) : null;
   const fogClip = G.noFog ? null : view;      // туман войны: чужие лучи и вспышки за стенами не видно (отладка ] — видно всё)
-  drawLighting(offX, offY, view, fogClip);
+  drawLighting(CAMM, view, fogClip);
   // светится само: вспышки выстрелов; значки внимания — только у тех, кого можно разглядеть
-  ctx.setTransform(z, 0, 0, z, offX, offY);
+  ctx.setTransform(...CAMM);
   drawLampDaylight(fogClip);
   drawMuzzle(fogClip);
   if (p && !p.dead) for (const o of allPeople()) if (o !== p && lampOn(o) && onScreen(o.x, o.y) && los(p.x, p.y, o.x, o.y)) drawLampGlare(o, p);
-  for (const e of G.enemies) if (!e.dead && e.va > 0.3 && (G.noFog || perceivedAt(e.x, e.y) > LIGHT.seeMin)) drawAwareness(e);
-  if (view && !G.noFog) drawFog(offX, offY, p, view);
+  for (const e of G.enemies) if (!e.dead && e.va > 0.3 && (G.noFog || perceivedAt(e.x, e.y) > LIGHT.seeMin)) { uprightAt(e.x, e.y); drawAwareness(e); }
+  ctx.setTransform(...CAMM);
+  if (view && !G.noFog) drawFog(p, view);
   if (G.noFog) drawAllEnemies();
   drawWeather(offX, offY, p);
   drawHubWorld();
@@ -67,7 +71,7 @@ function render(dt = 1 / 60) {
   drawTeamTags();
   drawIntel();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  drawBarksOver(offX, offY);
+  drawBarksOver();
   drawHUD();
   drawTouch();
 }
@@ -157,7 +161,7 @@ function drawIntel() {
 const enemyShown = (e) => !!e && !e.dead && (e.va || 0) > 0.3 && (G.noFog || perceivedAt(e.x, e.y) > LIGHT.seeMin);
 
 // Реплики видимых противников — над ними (b.over); остальные слышимые — внизу экрана (drawHUD)
-function drawBarksOver(offX, offY) {
+function drawBarksOver() {
   if (!G.barks || !G.barks.length) return;
   const z = G.zoom, stack = new Map();
   ctx.save();
@@ -170,7 +174,7 @@ function drawBarksOver(offX, offY) {
     if (!b.over) continue;
     const n = stack.get(e) || 0;
     stack.set(e, n + 1);
-    const x = e.x * z + offX, y = (e.y - 34) * z + offY - n * 20;
+    const sp = worldToScreen(e.x, e.y, CAMM), x = sp.x, y = sp.y - 34 * z - n * 20;
     const w = ctx.measureText(b.text).width + 12;
     ctx.globalAlpha = Math.min(1, b.t);
     ctx.fillStyle = 'rgba(0,0,0,0.6)';
@@ -194,6 +198,13 @@ function drawAllEnemies() {
 }
 
 // Метки своих поверх тумана: цвет места и имя (бот — «бот»)
+// Камера повёрнута (в машине): надписи и значки над бойцом — без поворота (читаются ровно), на своём месте на экране
+function uprightAt(x, y) {
+  if (!G.camRot) return;
+  const s = worldToScreen(x, y, CAMM), z = G.zoom;
+  ctx.setTransform(z, 0, 0, z, s.x - z * x, s.y - z * y);
+}
+
 function drawTeamTags() {
   const mine = me();
   ctx.save();
@@ -201,6 +212,7 @@ function drawTeamTags() {
   ctx.textAlign = 'center';
   for (const o of G.players) {
     if (o === mine || !onScreen(o.x, o.y)) continue;
+    uprightAt(o.x, o.y);
     const c = SLOT_COLORS[o.slot] || '#fff';
     ctx.globalAlpha = o.dead ? 0.5 : 0.95;
     ctx.fillStyle = 'rgba(0,0,0,0.6)';
@@ -345,6 +357,7 @@ const GUN_LOOK = {
   fal: { stock: '#202020', fore: '#2c2c2c', mag: '#242424', magL: 5, carry: true, brake: true },
   m249: { stock: '#1e1e1e', fore: '#2a2a2a', box: '#4a5038', bipod: true, shield: true },
 };
+const VERT_K = 0.34;           // висящее вертикально оружие сверху: видимая доля длины (ракурс)
 function drawGunShape(t, mo = 1, g = ctx) {
   const W = WEAPONS[t], a = g.globalAlpha;
   if (W.cls === 'pistol') {
@@ -457,11 +470,12 @@ function drawPerson(o, alpha) {
   const rot = an.low * 0.75 + an.reload * 0.5 * (1 - an.low);
   const mo = magOut(g);
   const cls = WEAPONS[g.t].cls, pistol = cls === 'pistol';
-  // за спиной — полноразмерные, которые не в руках и не в левой руке (под плечами, наискось)
+  // за спиной и на плече — полноразмерные, которые не в руках и не в левой руке: висят на ремне вертикально (стволом вверх, у плеча),
+  // сверху видны в ракурсе — коротко (VERT_K длины), чуть отклонены назад от спины
   if (o.kit) for (let i = 0; i < 2; i++) {
     const k = o.kit[i];
     if (!k || i === o.cur || i === o.off) continue;
-    ctx.save(); ctx.translate(-5, i ? 3 : -3); ctx.rotate(i ? 2.6 : -2.6); ctx.globalAlpha = alpha * 0.9;
+    ctx.save(); ctx.translate(-4, i ? 5 : -5); ctx.rotate(Math.PI + (i ? -0.3 : 0.3)); ctx.scale(VERT_K, 1); ctx.globalAlpha = alpha * 0.9;
     drawGunShape(k.t, 1); ctx.restore();
   }
   // смена оружия: ствол уходит вниз и возвращается
@@ -472,9 +486,9 @@ function drawPerson(o, alpha) {
   ctx.rotate(rot + swK * 0.9);
   drawGunShape(g.t, mo);
   ctx.restore();
-  // полноразмерное в левой руке (выхвачен пистолет): висит стволом вперёд-вниз вдоль левого бока
+  // полноразмерное в левой руке (выхвачен пистолет): висит стволом вниз вдоль левого бока — тоже вертикально, в ракурсе
   if (o.kit && o.off >= 0 && o.kit[o.off] && pistol) {
-    ctx.save(); ctx.translate(1, -8); ctx.rotate(0.35); ctx.globalAlpha = alpha * 0.95;
+    ctx.save(); ctx.translate(2, -9); ctx.rotate(0.2); ctx.scale(VERT_K * 1.2, 1); ctx.globalAlpha = alpha * 0.95;
     drawGunShape(o.kit[o.off].t, 1); ctx.restore();
   }
   // руки: передняя — на цевье (с оружием опускается), задняя — на рукоятке, при перезарядке тянется к магазину
@@ -626,21 +640,21 @@ function viewPolygon(body) {
 
 // Туман прямо на экран, без промежуточного полноэкранного холста: вне видимости — 0,82, в видимости вне поля зрения
 // (сзади и по бокам) — полутень 0,41, в поле зрения и вплотную (NEAR_SENSE) — чисто
-function drawFog(offX, offY, p, poly) {
+function drawFog(p, poly) {
   const z = G.zoom, maxR = Math.hypot(VW, VH) / z;
   const ox = p.lx ?? p.x, oy = p.ly ?? p.y;
   ctx.save();
-  ctx.setTransform(z, 0, 0, z, offX, offY);
-  // рамка — экран в координатах мира (огромный прямоугольник растеризатор обрабатывает заметно дольше)
-  const sx = -offX / z - 8, sy = -offY / z - 8, sw = VW / z + 16, sh = VH / z + 16;
+  ctx.setTransform(...CAMM);
+  // рамка — экран в координатах мира (огромный прямоугольник растеризатор обрабатывает заметно дольше); при повороте — повёрнутая
+  const frame = screenPolyWorld(8).path;
   const outside = new Path2D();
-  outside.rect(sx, sy, sw, sh);
+  outside.addPath(frame);
   outside.addPath(poly);
   ctx.fillStyle = 'rgba(12,14,16,0.82)';
   ctx.fill(outside, 'evenodd');
   // поле зрения вместе с кругом вплотную — один контур «замочная скважина»: сектор впереди, дуга малого радиуса сзади
   const seen = new Path2D();
-  seen.rect(sx, sy, sw, sh);
+  seen.addPath(frame);
   seen.moveTo(ox + Math.cos(p.a - PLAYER_FOV) * maxR, oy + Math.sin(p.a - PLAYER_FOV) * maxR);
   seen.arc(ox, oy, maxR, p.a - PLAYER_FOV, p.a + PLAYER_FOV);
   seen.arc(ox, oy, NEAR_SENSE, p.a + PLAYER_FOV, p.a - PLAYER_FOV + Math.PI * 2);

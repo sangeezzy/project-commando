@@ -124,6 +124,36 @@ function playFx(ev) {
       G.shake = Math.max(G.shake, 4 * v);
     }
     SFX.door(v, what, type);
+  } else if (k === 'chit') {
+    // попадание в машину: пробоина (на машине), искры или осколки стекла, звук
+    const [, id, lx, ly, glass, x, y, a, stop] = ev;
+    const c = map && map.cars && map.cars.find((q) => q.id === id);
+    if (c) { c.holes.push([lx, ly, glass, stop]); if (c.holes.length > 120) c.holes.shift(); }
+    const s = glass ? IMPACT.glass || IMPACT.metal : IMPACT.metal;
+    for (let i = 0; i < (glass ? 7 : 5); i++) {
+      const aa = a + rand(-0.9, 0.9), sp = rand(40, 200);
+      addPart(x, y, Math.cos(aa) * sp, Math.sin(aa) * sp, rand(0.15, 0.4), glass ? 'rgba(200,220,235,0.8)' : pickRandom(s.c), glass ? 1.4 : 1.5, 4, 1);
+    }
+    if (p && Math.hypot(x - p.x, y - p.y) < M(25)) SFX.impact(vol(Math.hypot(x - p.x, y - p.y)) * 0.6, 'metal');
+  } else if (k === 'flat') {
+    // пуля в колесо: резиновая крошка; спустило (i ≥ 0) — хлопок и шипение, сидящему — сообщение
+    const [, id, i, x, y] = ev;
+    const c = map && map.cars && map.cars.find((q) => q.id === id);
+    if (c && i >= 0) c.flats = (c.flats || 0) | (1 << i);
+    for (let n = 0; n < 6; n++) { const a = rand(0, 6.28), sp = rand(30, 140); addPart(x, y, Math.cos(a) * sp, Math.sin(a) * sp, rand(0.2, 0.5), 'rgba(30,30,30,0.9)', 1.6, 4, 1); }
+    if (i >= 0) addPart(x, y, 0, 0, 0.6, 'rgba(200,200,200,0.25)', 6, 1, 3);
+    const d = p ? Math.hypot(x - p.x, y - p.y) : 1e9;
+    if (d < M(30)) { SFX.impact(vol(d) * 0.5, 'metal'); if (i >= 0) SFX.door(vol(d) * 0.5, 'thud', 'wood'); }
+    if (c && i >= 0 && p && p.veh === c) toast('ПРОБИТО КОЛЕСО', 2);
+  } else if (k === 'vdead') {
+    // двигатель заглох (дым — vehSmoke)
+    const c = map && map.cars && map.cars.find((q) => q.id === ev[1]);
+    if (c && p && Math.hypot(c.x - p.x, c.y - p.y) < M(40)) SFX.door(0.8, 'thud', 'metal');
+    if (c && p && p.veh === c) toast('ДВИГАТЕЛЬ ЗАГЛОХ', 2);
+  } else if (k === 'crash') {
+    const [, x, y, v] = ev;
+    if (p && Math.hypot(x - p.x, y - p.y) < M(40)) { SFX.door(Math.min(1, v / 12), 'thud', 'metal'); SFX.impact(Math.min(1, v / 10), 'metal'); }
+    if (p && p.veh && Math.hypot(x - p.x, y - p.y) < M(4)) G.shake = Math.max(G.shake, Math.min(8, v));
   } else if (k === 'mg') {
     // занять / оставить пулемёт: лязг крышки и затвора
     const [, x, y] = ev;
@@ -256,6 +286,60 @@ const SFX = {
     noise(o, 0.4, 0.5 * v, 'bandpass', 900, 0, 1, 0.01);
     noise(o, 3.2, 0.9 * v, 'lowpass', 180, 0.05, 0.7, 0.15);
     noise(o, 2.2, 0.5 * v, 'lowpass', 90, 0.4, 0.7, 0.3);
+  },
+  // мотор своей машины: низкий гул, тон растёт со скоростью (set: k — 0…1 скорость, on — работает)
+  // Мотор (ДВС, 4 цилиндра): частота вспышек = обороты / 30 (на холостых ~27 Гц, у отсечки ~220 Гц). Звук — вспышки (пила) и их
+  // субгармоника (неровность цилиндров, «бормотание»), вторая гармоника, перегруз (waveshaper: рычание под нагрузкой), фильтр открывается
+  // с газом и оборотами, амплитудная пульсация на половине частоты вспышек; шум впуска — под газом. set({ rpm, load, on, cut })
+  engineLoop() {
+    const t = AC.currentTime;
+    const o1 = AC.createOscillator(); o1.type = 'sawtooth';
+    const o2 = AC.createOscillator(); o2.type = 'sawtooth';
+    const o3 = AC.createOscillator(); o3.type = 'triangle';
+    const g1 = AC.createGain(), g2 = AC.createGain(), g3 = AC.createGain();
+    g1.gain.value = 0.6; g2.gain.value = 0.45; g3.gain.value = 0.18;
+    const sh = AC.createWaveShaper();
+    const curve = new Float32Array(1024);
+    for (let i = 0; i < 1024; i++) { const x = i / 511.5 - 1; curve[i] = Math.tanh(2.6 * x) * 0.9 + 0.1 * Math.tanh(9 * x); }
+    sh.curve = curve;
+    const drive = AC.createGain(); drive.gain.value = 1;
+    const lp = AC.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 300; lp.Q.value = 2.2;
+    const body = AC.createBiquadFilter(); body.type = 'peaking'; body.frequency.value = 120; body.Q.value = 1.2; body.gain.value = 6;
+    const am = AC.createGain(); am.gain.value = 0.75;
+    const lfo = AC.createOscillator(); lfo.type = 'sine';
+    const lfoG = AC.createGain(); lfoG.gain.value = 0.25;
+    lfo.connect(lfoG); lfoG.connect(am.gain);
+    const out = AC.createGain(); out.gain.value = 0;
+    o1.connect(g1); o2.connect(g2); o3.connect(g3);
+    g1.connect(drive); g2.connect(drive); g3.connect(drive);
+    drive.connect(sh); sh.connect(lp); lp.connect(body); body.connect(am); am.connect(out);
+    // впуск: шум полосой, громче под газом
+    const nz = AC.createBufferSource(); nz.buffer = noiseBuf; nz.loop = true;
+    const bp = AC.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 700; bp.Q.value = 0.9;
+    const ng = AC.createGain(); ng.gain.value = 0;
+    nz.connect(bp); bp.connect(ng); ng.connect(out);
+    out.connect(master);
+    for (const o of [o1, o2, o3, lfo]) { o.frequency.value = 30; o.start(t); }
+    nz.start(t);
+    let was = false;
+    return {
+      set({ rpm = 800, load = 0, on = false, cut = 0 } = {}) {
+        const now = AC.currentTime, f = rpm / 30, k = clamp((rpm - 800) / 5200, 0, 1), tc = 0.05;
+        o1.frequency.setTargetAtTime(f, now, tc);
+        o2.frequency.setTargetAtTime(f * 0.5 * 1.004, now, tc);
+        o3.frequency.setTargetAtTime(f * 2.01, now, tc);
+        lfo.frequency.setTargetAtTime(f * 0.5, now, tc);
+        drive.gain.setTargetAtTime(0.8 + 2.2 * load, now, 0.08);
+        lp.frequency.setTargetAtTime(220 + 900 * k + 1100 * load, now, 0.08);
+        body.frequency.setTargetAtTime(Math.max(60, f * 1.5), now, tc);
+        bp.frequency.setTargetAtTime(500 + 1400 * k, now, tc);
+        ng.gain.setTargetAtTime(on ? (0.004 + 0.02 * load) * (0.4 + k) : 0, now, 0.1);
+        const v = on ? (0.03 + 0.03 * k + 0.025 * load) * (1 - 0.6 * cut) : 0;
+        out.gain.setTargetAtTime(v, now, on && !was ? 0.25 : on ? 0.05 : 0.35);   // завёлся — нарастает, заглох — гаснет
+        was = on;
+      },
+      stop() { for (const o of [o1, o2, o3, lfo, nz]) { try { o.stop(); } catch (e) { /* ignore */ } } },
+    };
   },
   // шум дождя — постоянный, громкость по силе (set 0..1): k^0,6 × 0,05 — слабый (0,35) почти как раньше (0,027),
   // сильный (1) вдвое тише прежнего (0,05 вместо 0,09): шум ливня не глушит шаги и выстрелы

@@ -591,10 +591,13 @@ function updateAI(dt) {
     if (e.side === 'p') checkLeash(e);
     const hurt = e.side === 'p' && !e.seeing ? downedToHelp(e) : null;
     if (e.exec) execStep(e, dt);
+    else if (e.veh && vehStep(e, dt, seen)) { /* сидит в машине: стреляет из окна */ }
     else if (e.mg && mgStep(e, dt, seen)) { /* за станковым пулемётом */ }
     else if (hurt && reviveStep(e, hurt, dt)) { /* поднимает раненого */ }
     else if (e.side === 'p' && G.surv && survBotStep(e, dt)) { /* у грузовика: пополниться, вылечиться */ }
     else if (mgSeek(e, dt)) { /* идёт занять свободный пулемёт */ }
+    else if (e.drive && !e.veh && VEH.botDrive && driveBoard(e, dt)) { /* задание вести машину: идёт к водительской двери */ }
+    else if (vehBoard(e, dt)) { /* ведущий в машине — садится к нему */ }
     else if (e.regroup && !e.seeing) followLeader(e, dt);
     else if (e.peek) peekStep(e, dt, seen);
     else if (e.flank) flankStep(e, dt, seen);
@@ -610,12 +613,13 @@ function updateAI(dt) {
     updateLean(e, dt);
     updateEnemyLamp(e, dt);
   }
-  separate(ais.filter((e) => !e.dead), PR * 2);
+  separate(ais.filter((e) => !e.dead && !e.veh), PR * 2);     // сидящих в машине не толкают
   // люди не толкаются (у гостя позицию ведёт его компьютер) — боты сами отходят от них
   for (const h of G.players) {
     if (h.ai || h.dead) continue;
+    if (h.veh) continue;
     for (const e of ais) {
-      if (e.dead) continue;
+      if (e.dead || e.veh) continue;
       const dx = e.x - h.x, dy = e.y - h.y, d = Math.hypot(dx, dy);
       if (d < PR * 2 && d > 0.01) moveCircle(e, (dx / d) * (PR * 2 - d), (dy / d) * (PR * 2 - d), PR);
     }
@@ -1285,7 +1289,7 @@ function followLeader(e, dt) {
 // Раздвинуть людей, стоящих друг в друге
 // Не стоять друг в друге. Уступает тот, кто идёт: стоящего у угла (выглядывает, держит угол), с колена или на месте
 // не двигают — иначе подошедший вытолкнул бы его из-за угла на открытое место. Оба стоят или оба идут — поровну.
-const anchored = (e) => !!e.peek || !!e.mg || e.kneel || e.speed < M(0.3);
+const anchored = (e) => !!e.peek || !!e.mg || !!e.veh || e.kneel || e.speed < M(0.3);
 function separate(list, minD) {
   for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) {
     const a = list[i], b = list[j];

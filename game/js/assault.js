@@ -75,7 +75,13 @@ function buildAssault(seed) {
   const fx0 = 1 + far[0] * cw, fy0 = 1 + far[1] * ch;
   const ex = fx0 + Math.floor(cw / 2) - 2, ey = far[1] === rows - 1 && far === sc ? 2 : fy0 + 1;
   const exit = { x0: ex, y0: ey, x1: ex + 4, y1: ey + 1 };
-  mark(exit.x0 - 2, exit.y0, exit.x1 + 2, exit.y1 + 3);
+  mark(exit.x0 - 2, exit.y0 - 1, exit.x1 + 2, exit.y1 + 3);
+  // ворота перехода: «карман» в бетонных стенах (сзади и с боков), спереди — ряд бронированных створок (gate): заперты, ключа нет —
+  // открываются сами, когда локация зачищена (assaultOpenExit); выбить нельзя, пули не пробивают
+  b.wall(exit.x0 - 1, exit.y0 - 1, exit.x1 + 1, exit.y0 - 1, WM.CONCRETE);
+  b.wall(exit.x0 - 1, exit.y0, exit.x0 - 1, exit.y1 + 1, WM.CONCRETE);
+  b.wall(exit.x1 + 1, exit.y0, exit.x1 + 1, exit.y1 + 1, WM.CONCRETE);
+  for (let x = exit.x0; x <= exit.x1; x++) b.door(x, exit.y1 + 1, 'armored', { key: 'gate', gate: true, horiz: true });
   // здания: одиночные и Г-образные (две части с проходом между ними); двери: дерево/металл/броня, часть заперта
   const doors = [];
   const nb = Math.round(area / 380);
@@ -205,7 +211,9 @@ function assaultInit(rnd) {
   const carry = stage > 1 ? G.assaultCarry : null;
   G.surv = { mode: 'assault', rnd, stage, wave: 0, phase: 'fight', t: 0, toSpawn: 0, trucks: carry ? carry.trucks : 0, stop: carry ? carry.trucks : 0,
     truck: null, medic: null, spawns: setup.spawns, tilesOn: false, waitT: 0, reinf: reinfRoll(rnd, setup.enemies.length) };
-  initWeather(rollWeather(rnd));
+  // погода: с первой локации — сразу, дальше — плавный переход от прошлой (как между волнами «Выживания»)
+  const wk = rollWeather(rnd);
+  if (carry && carry.weather) { G.weather = { ...carry.weather, thunder: [] }; setWeather(wk); } else initWeather(wk);
   if (carry) for (const q of G.players) {
     const c = carry.squad[q.slot];
     if (!c) continue;
@@ -232,7 +240,8 @@ function updateAssault(dt) {
         emit(['banner', `ЛОКАЦИЯ ${s.stage} ЗАЧИЩЕНА — ГРУЗОВИК`, `пополнить боеприпасы и броню ${ARMOR_ORDER[Math.min(s.trucks, 4)]} — у заднего борта (F), лечение — у медика`]);
       } else {
         s.phase = 'exit';
-        emit(['banner', `ЛОКАЦИЯ ${s.stage} ЗАЧИЩЕНА`, 'переход на следующую открыт (хост стоит в нём 2 с)']);
+        assaultOpenExit();
+        emit(['banner', `ЛОКАЦИЯ ${s.stage} ЗАЧИЩЕНА`, 'ворота перехода открыты (хост стоит в переходе 2 с)']);
       }
     }
   } else if (s.phase === 'truck') updateTruck(dt);
@@ -245,11 +254,19 @@ function updateAssault(dt) {
   }
 }
 
+// Локация зачищена: ворота перехода отпираются и распахиваются (у гостей — снимком дверей)
+function assaultOpenExit() {
+  const gs = (map.doors || []).filter((d) => d.gate);
+  for (const d of gs) { d.locked = false; if (!doorPassable(d)) { d.open = true; syncDoorTile(d); } }
+  if (gs.length) { const m = gs[gs.length >> 1]; emit(['door', m.cx, m.cy, 'open', m.type]); }
+}
+
 // На следующую локацию: запомнить отряд (оружие, патроны, здоровье, броня; Enter на новой локации — с этим же), новый seed — с номером
 function nextStage() {
   const s = G.surv;
   G.assaultCarry = {
     trucks: s.trucks,
+    weather: G.weather ? { ...G.weather, thunder: [] } : null,
     squad: Object.fromEntries(G.players.map((q) => [q.slot, {
       kit: q.kit.map((k) => (k ? { t: k.t, mag: k.mag, chamber: k.chamber, pouch: [...k.pouch], mode: k.mode } : null)),
       cur: q.cur, hp: q.down ? 25 : q.hp, dead: q.dead, armor: q.armor ? { ...q.armor } : null,
@@ -261,8 +278,15 @@ function nextStage() {
 
 function drawAssaultExit() {
   const s = G.surv;
-  if (!s || s.mode !== 'assault' || s.phase !== 'exit' || !map.exit) return;
+  if (!s || s.mode !== 'assault' || !map.exit) return;
   const e = map.exit, X = e.x0 * TILE, Y = e.y0 * TILE, W = (e.x1 - e.x0 + 1) * TILE, H = (e.y1 - e.y0 + 1) * TILE;
+  if (s.phase !== 'exit') {                           // ворота закрыты: подпись под ними
+    ctx.save();
+    ctx.fillStyle = 'rgba(230,200,140,0.75)'; ctx.font = '11px Consolas, monospace'; ctx.textAlign = 'center';
+    ctx.fillText('ПЕРЕХОД · ворота откроются после зачистки', X + W / 2, Y + H + TILE + 16);
+    ctx.restore();
+    return;
+  }
   const hold = G.hubHold ? clamp(G.hubHold.t / HUB_HOLD, 0, 1) : 0;
   ctx.save();
   ctx.fillStyle = `rgba(120,230,120,${0.15 + hold * 0.3})`; ctx.fillRect(X, Y, W, H);

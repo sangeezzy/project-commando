@@ -300,12 +300,12 @@ function updateTruck(dt) {
       tr.ready = (tr.ready || 0) + dt;
       if (tr.ready >= SURV.departDelay && md.state === 'stand' && !md.heal) { md.state = 'return'; md.t = 0; }
     } else tr.ready = 0;
-    if (md.state === 'hidden' && tr.ready) { tr.state = 'out'; tr.t = 0; setTruckTiles(false); emit(['banner', 'ГРУЗОВИК УЕХАЛ', `следующая волна — через ${SURV.afterTruck} с`]); }
+    if (md.state === 'hidden' && tr.ready) { tr.state = 'out'; tr.t = 0; setTruckTiles(false); emit(['banner', 'ГРУЗОВИК УЕХАЛ', s.mode === 'assault' ? '' : `следующая волна — через ${SURV.afterTruck} с`]); }
   } else if (tr.state === 'out') {
     tr.fy = park + (map.truck.to - park) * easeIn(clamp(tr.t / SURV.drive, 0, 1));
     if (tr.t >= SURV.drive) {
       tr.state = 'gone'; s.truck = null; s.medic = null;
-      if (s.mode === 'assault') s.phase = 'exit'; else { s.phase = 'break'; s.t = SURV.afterTruck; }
+      if (s.mode === 'assault') { s.phase = 'exit'; assaultOpenExit(); } else { s.phase = 'break'; s.t = SURV.afterTruck; }
     }
   }
 }

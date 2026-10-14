@@ -147,6 +147,7 @@ const HUB_EXITS = [
   { map: 'clear', name: 'КАРТА 2: ЗАЧИСТКА', desc: '8–12 противников, уничтожить всех', x0: 12, y0: 1, x1: 16, y1: 2 },
   { map: 'surv', name: 'КАРТА 3: ВЫЖИВАНИЕ', desc: 'волны, грузовик, броня, погода', x0: 21, y0: 1, x1: 25, y1: 2 },
   { map: 'assault', name: 'КАРТА 4: ШТУРМ', desc: 'локация за локацией, всё сложнее', x0: 30, y0: 1, x1: 34, y1: 2 },
+  { map: 'race', name: 'КАРТА 5: АВТОДРОМ', desc: 'трассы и 8 машин, без противников', x0: 27, y0: 19, x1: 31, y1: 20 },   // проход на юг
 ];
 const HUB_TABLE = { x0: 16, y0: 9, x1: 21, y1: 10 };
 function buildHub() {
@@ -154,8 +155,8 @@ function buildHub() {
   b.box(0, 0, HUB_W - 1, HUB_H - 1, WM.CONCRETE, FM.CONCRETE);
   b.fill(1, 1, HUB_W - 2, HUB_H - 2, FM.CONCRETE);
   // проходы на север: в стене — проёмы, за ними — «коридор» в никуда (зона перехода)
-  for (const e of HUB_EXITS) b.fill(e.x0, 0, e.x1, 0, FM.ASPHALT);
-  for (const e of HUB_EXITS) for (let x = e.x0; x <= e.x1; x++) b.set(x, 0, T.FLOOR, FM.ASPHALT);
+  // проём — в ближней стене (северной или южной)
+  for (const e of HUB_EXITS) for (let x = e.x0; x <= e.x1; x++) b.set(x, e.y0 < HUB_H / 2 ? 0 : HUB_H - 1, T.FLOOR, FM.ASPHALT);
   b.prop('table', HUB_TABLE.x0, HUB_TABLE.y0, HUB_TABLE.x1, HUB_TABLE.y1, {});
   b.low(2, 16, 3, 16, WM.CRATE); b.low(2, 17, 2, 17, WM.CRATE);
   b.low(32, 15, 33, 15, WM.SANDBAG); b.low(31, 18, 33, 18, WM.JERSEY);
@@ -170,6 +171,7 @@ function buildMap(id, seed = 0) {
   if (id === 'surv') return buildSurvival(seed);
   if (id === 'assault') return buildAssault(seed);
   if (id === 'big') return buildRange({ scale: 1.5, enemies: false, name: 'ПОЛИГОН ×1,5' });
+  if (id === 'race') return buildRace();
   if (id === 'clear') return buildRange({ enemies: false, name: 'ЗАЧИСТКА' });
   return buildRange();
 }

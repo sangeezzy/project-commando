@@ -66,8 +66,10 @@ const vtap = (code) => { vkey(code, true); vkey(code, false); };
 function touchUseLabel(p) {
   if (!p || p.dead || p.down) return null;
   if (G.players.some((q) => q !== p && q.down && !q.dead && Math.hypot(q.x - p.x, q.y - p.y) < DOWN.reviveR)) return 'ПОДНЯТЬ';
+  if (p.veh) return carSpeed(p.veh) <= M(VEH.exitSpeed) ? 'ВЫЙТИ' : null;
   if (p.mg) return 'ОСТАВИТЬ';
   if (mgNear(p)) return 'ПУЛЕМЁТ';
+  if (vehNear(p)) return 'В МАШИНУ';
   if (G.surv && nearRear(p)) return 'ГРУЗОВИК';
   if (G.surv && nearMedic(p)) return 'МЕДИК';
   if (tableNear(p)) return 'СТОЛ';
@@ -106,13 +108,15 @@ function touchButtons(edit = TouchUI.edit) {
   // правая сторона
   add({ id: 'ads', x: x1, y: y0, r: R, label: 'ПРИЦЕЛ', on: TouchUI.ads, down: () => { TouchUI.ads = !TouchUI.ads; } });
   add({ id: 'reload', x: x1, y: y0 + R * 2.3, r: R, label: 'ПЕРЕЗ.', sub: '×2 — быстро', down: () => vtap('KeyR') });
-  add({ id: 'crouch', x: x1, y: y0 + R * 4.6, r: R, label: p.crouchToggle ? 'ВСТАТЬ' : 'ПРИСЕД', on: !!p.crouchToggle, down: () => vtap('KeyC') });
+  add({ id: 'crouch', x: x1, y: y0 + R * 4.6, r: R, label: p.crouchToggle ? 'ВСТАТЬ' : 'ПРИСЕД', on: !!p.crouchToggle, down: () => vtap('KeyC') }, !p.veh);
+  add({ id: 'hbrake', x: x1, y: y0 + R * 4.6, r: R, label: 'РУЧНИК', hold: 'Space', on: !!keys.Space }, !!(p.veh && p.seat === 0));
   add({ id: 'fire', x: x2, y: y0 + R * 0.4, r: R * 1.3, label: 'ОГОНЬ', on: TouchUI.btnFire, fire: true });
   // оружие: следующее по кругу из того, что есть (1, 2 — полноразмерные, 3 — пистолет)
   const next = p.kit ? [1, 2].map((i) => (p.cur + i) % 3).find((i) => p.kit[i]) : undefined;
   add({ id: 'weapon', x: x2, y: y0 + R * 2.9, r: R * 0.85, label: 'ОРУЖ.', sub: next !== undefined ? WEAPONS[p.kit[next].t].short : '—',
     down: () => { if (next !== undefined) vtap('Digit' + (next + 1)); } }, next !== undefined);
-  add({ id: 'knife', x: x2, y: y0 + R * 4.9, r: R * 0.85, label: 'НОЖ', down: () => vtap('KeyX') });
+  add({ id: 'knife', x: x2, y: y0 + R * 4.9, r: R * 0.85, label: 'НОЖ', down: () => vtap('KeyX') }, !p.veh);
+  add({ id: 'carcam', x: x2, y: y0 + R * 4.9, r: R * 0.85, label: 'КАМЕРА', sub: OPTS.carCam === 'car' ? 'за машиной' : 'обычная', down: () => vtap('KeyC') }, !!p.veh);
   // сверху, левее панели оружия: фонарь, режим огня
   const xt = VW - 270 - small - 12;
   add({ id: 'lamp', x: xt, y: 14 + small, r: small, label: 'ФОНАРЬ', on: !!p.lamp, down: () => vtap('KeyL') });
@@ -224,8 +228,9 @@ function touchFrame() {
   if (!p || !inGame()) { mouse.l = mouse.r = false; return; }
   const z = G.zoom, L = VH * (TouchUI.ads ? TOUCH.aimDistAds : TOUCH.aimDist);
   // точка прицела — от центра бойца: угол взгляда (controlLocal) ровно тот, что у стика (с ассистом)
-  const sx = (p.x - G.cam.x) * z + VW / 2, sy = (p.y - G.cam.y) * z + VH / 2;
-  const a = aimAssist(p, Math.atan2(TouchUI.aim.y, TouchUI.aim.x));
+  const { x: sx, y: sy } = worldToScreen(p.x, p.y);
+  // стик — в осях экрана; при повёрнутой камере (в машине) угол в мире — с поворотом
+  const r = G.camRot || 0, a = aimAssist(p, Math.atan2(TouchUI.aim.y, TouchUI.aim.x) - r) + r;
   mouse.x = sx + Math.cos(a) * L;
   mouse.y = sy + Math.sin(a) * L;
   for (const b of TouchUI.held.values()) if (b.zoom && G.time >= b.at) { touchZoom(b.zoom); b.at = G.time + 0.12; }

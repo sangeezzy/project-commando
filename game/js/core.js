@@ -145,6 +145,7 @@ function startMap(id, seed = 0, squad = null, bots = false) {
   G.mapId = id; G.mapSeed = seed >>> 0;
   buildMap(id, G.mapSeed);
   map.mgs = [];                                   // стационарные пулемёты (js/mg.js): ставит карта / режим
+  initVehicles();                                 // машины карты — на ходу (js/vehicle.js)
   const rnd = makeRng(G.mapSeed || 1);
   G.surv = null; G.weather = null; G.hubHold = null;
   const mission = id === 'clear' ? missionSetup(rnd) : null;

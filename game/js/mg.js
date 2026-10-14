@@ -32,7 +32,7 @@ function mgNear(o) {
 }
 
 function mgMount(o, m) {
-  if (!m || m.user || o.dead || o.down || o.mg) return false;
+  if (!m || m.user || o.dead || o.down || o.mg || o.veh) return false;
   m.user = o.id; m.claim = 0;
   o.mg = m; o.gun = m.gun;
   Object.assign(o, { sw: null, melee: null, act: null, crouch: false, crouchToggle: false, sprint: false, leanWant: 0, kneel: false,

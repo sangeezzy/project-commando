@@ -79,7 +79,7 @@ def main():
     server = http.server.ThreadingHTTPServer(('127.0.0.1', port), partial(Handler, directory=str(ROOT)))
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
-        for scene in [a.scene] if a.scene else ['fight', 'dark', 'surv', 'assault']:
+        for scene in [a.scene] if a.scene else ['fight', 'dark', 'surv', 'assault', 'race']:
             r = profile(chrome, port, scene, a.n, size, a.skip, a.gpu, a.raf)
             if not r:
                 print(scene, ': нет результата (Chrome завис или страница не загрузилась)')

@@ -45,7 +45,7 @@ function fireRound(o, spread) {
     const a = W.pellets ? aim + gauss() * W.pelletSpread * MRAD : aim;
     G.bullets.push({
       x: ox, y: oy, sx: ox, sy: oy, mx, my, vx: Math.cos(a) * v, vy: Math.sin(a) * v,
-      owner: o.id, side: o.side, crouch: o.crouch, e: 1, dist: 0, max: M(W.maxRange),
+      owner: o.id, side: o.side, crouch: o.crouch, e: 1, dist: 0, max: M(W.maxRange), car: o.veh ? o.veh.id : 0,     // из машины — её не задевает
       tile: -1, near: [], t: W, pellet: !!W.pellets,
     });
   }
@@ -225,7 +225,8 @@ function updateBullets(dt) {
       if (b.dist > b.max) { dead = true; break; }
       const tx = Math.floor(b.x / TILE), ty = Math.floor(b.y / TILE), ti = ty * map.w + tx;
       const t = tileAt(tx, ty);
-      if (t !== T.FLOOR && ti !== b.tile) {
+      const carTile = t === T.LOW && map.wm[ti] === WM.CAR;         // стоянка машины: пулю ловит сама машина (vehBullet)
+      if (t !== T.FLOOR && !carTile && ti !== b.tile) {
         b.tile = ti;
         if (bulletHitsTile(b, tx, ty, t, people)) {
           const m = MAT[wmAt(tx, ty)];
@@ -236,11 +237,12 @@ function updateBullets(dt) {
           const a = Math.atan2(uy, ux) + gauss() * 0.05 * (1 - m.pen);
           b.vx = Math.cos(a) * sp; b.vy = Math.sin(a) * sp;
         }
-      } else if (t === T.FLOOR) b.tile = -1;
+      } else if (t === T.FLOOR || carTile) b.tile = -1;
+      if (map.cars && map.cars.length && vehBullet(b, ux, uy, people)) { dead = true; break; }   // кузов, стёкла, двигатель, сидящие
       for (const o of people) {
         if (o.id === b.owner) continue;
         const d = Math.hypot(o.x - b.x, o.y - b.y);
-        if (d < PR + 1) { hitPerson(o, b); dead = true; break; }
+        if (d < PR + 1 && !o.veh) { hitPerson(o, b); dead = true; break; }   // в машине — только через неё (vehBullet)
         // высунувшиеся голова и плечо
         if (Math.abs(o.lean || 0) > 0.25 && Math.hypot(o.lx - b.x, o.ly - b.y) < LEAN.headR) { hitPerson(o, b); dead = true; break; }
         // свист и щелчок пролетевшей рядом пули (сверхзвук) — подавление

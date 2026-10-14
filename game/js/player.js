@@ -25,7 +25,24 @@ canvas.addEventListener('mousedown', (e) => {
 addEventListener('mouseup', (e) => { if (e.button === 0) mouse.l = false; if (e.button === 2) mouse.r = false; });
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
-const screenToWorld = (sx, sy) => ({ x: (sx - VW / 2) / G.zoom + G.cam.x, y: (sy - VH / 2) / G.zoom + G.cam.y });
+// Камера: мир → экран — поворот G.camRot (камера за машиной), масштаб G.zoom, центр экрана — G.cam. CAMM — матрица текущего кадра (render)
+function camMatrix(shX = 0, shY = 0) {
+  const z = G.zoom, r = G.camRot || 0, c = Math.cos(r) * z, s = Math.sin(r) * z;
+  return [c, s, -s, c, VW / 2 + shX - (c * G.cam.x - s * G.cam.y), VH / 2 + shY - (s * G.cam.x + c * G.cam.y)];
+}
+let CAMM = [1, 0, 0, 1, 0, 0];
+const worldToScreen = (x, y, m = camMatrix()) => ({ x: m[0] * x + m[2] * y + m[4], y: m[1] * x + m[3] * y + m[5] });
+function screenToWorld(sx, sy) {
+  const r = G.camRot || 0, dx = (sx - VW / 2) / G.zoom, dy = (sy - VH / 2) / G.zoom;
+  return { x: G.cam.x + Math.cos(r) * dx + Math.sin(r) * dy, y: G.cam.y - Math.sin(r) * dx + Math.cos(r) * dy };
+}
+// Экран (с запасом pad, px экрана) в координатах мира — четыре угла (при повороте — не прямоугольник по осям)
+function screenPolyWorld(pad = 8) {
+  const pts = [[-pad, -pad], [VW + pad, -pad], [VW + pad, VH + pad], [-pad, VH + pad]].map(([x, y]) => screenToWorld(x, y));
+  const path = new Path2D();
+  path.moveTo(pts[0].x, pts[0].y); for (let i = 1; i < 4; i++) path.lineTo(pts[i].x, pts[i].y); path.closePath();
+  return { path, pts };
+}
 
 function controlLocal(p, dt) {
   // отладка (действует только на нажавшего): [ — бессмертие своего бойца (в сети — у хоста), ] — без тумана войны на своём экране
@@ -38,16 +55,24 @@ function controlLocal(p, dt) {
   // рядом раненый товарищ — F (держать) поднимает его, а не открывает дверь
   const near = doorNear(p);
   const downNear = G.players.some((q) => q !== p && q.down && !q.dead && Math.hypot(q.x - p.x, q.y - p.y) < DOWN.reviveR);
-  if (pressed.KeyF && G.surv && nearRear(p)) openTruckMenu();          // «Выживание»: задний борт грузовика — меню
+  if (pressed.KeyF && p.veh) doAct(p, 'veh');                            // в машине — выйти (не быстрее VEH.exitSpeed)
+  else if (pressed.KeyF && G.surv && nearRear(p)) openTruckMenu();     // «Выживание»: задний борт грузовика — меню
   else if (pressed.KeyF && G.surv && nearMedic(p)) doAct(p, 'heal');    // …медик — лечиться
   else if (pressed.KeyF && tableNear(p)) openLoadout();                  // хаб: оружейный стол — выбор снаряжения (у себя на экране)
   else if (pressed.KeyF && (p.mg || mgNear(p)) && !downNear) doAct(p, 'mg');     // стационарный пулемёт: занять / оставить
+  else if (pressed.KeyF && vehNear(p) && !downNear) doAct(p, 'veh');             // машина рядом — сесть
   else if (pressed.KeyF && near && !downNear) doAct(p, 'door');
-  if (pressed.KeyG && near && !p.mg) doAct(p, 'kick');
+  if (pressed.KeyG && near && !p.mg && !p.veh) doAct(p, 'kick');
   const busy = !!p.act || !!p.reviving;     // отпирает, бьёт ногой или поднимает раненого — стоит на месте
   // стойка: C — присесть/встать (Ctrl не используем: Ctrl+W закрывает вкладку)
-  if (pressed.KeyC) p.crouchToggle = !p.crouchToggle;
+  if (pressed.KeyC && p.veh) {
+    // в машине C — камера: обычная / за машиной (поворачивается вместе с ней)
+    OPTS.carCam = OPTS.carCam === 'car' ? 'std' : 'car';
+    saveOpts();
+    toast(OPTS.carCam === 'car' ? 'КАМЕРА: ЗА МАШИНОЙ (C)' : 'КАМЕРА: ОБЫЧНАЯ (C)', 1.4);
+  } else if (pressed.KeyC) p.crouchToggle = !p.crouchToggle;
   let [mx, my, mk] = moveInput();
+  if (p.veh) { vehControl(p, mx, my); mx = my = 0; }      // в машине: водитель — газ и руль, пассажир — сидит
   if (busy || p.mg) mx = my = 0;      // отпирает, бьёт ногой или за пулемётом — стоит на месте
   const ml = Math.hypot(mx, my);
   if (ml) { mx /= ml; my /= ml; }
@@ -56,14 +81,14 @@ function controlLocal(p, dt) {
   p.sprint = !!(wantSprint && ml && !mouse.r);
   if (p.sprint) { p.crouchToggle = false; p.sprintLock = SPRINT_TO_FIRE; }
   else p.sprintLock = Math.max(0, p.sprintLock - dt);
-  if (p.mg) p.crouchToggle = false;   // за пулемётом — стоя (станок высокий)
+  if (p.mg || p.veh) p.crouchToggle = false;   // за пулемётом — стоя (станок высокий); в машине — сидя
   p.crouch = !p.sprint && !!p.crouchToggle;
   // прицеливание: ПКМ (не на бегу и не во время перезарядки)
   const adsWant = (mouse.r || !!p.mg) && !p.sprint && !g.reloadT;     // за пулемётом — всегда «в прицел» (станок)
   p.ads = clamp(p.ads + (adsWant ? dt : -dt) / ADS_TIME, 0, 1);
 
   // выглядывание: Q — влево, E — вправо (держать); на бегу нельзя
-  p.leanWant = p.sprint || p.mg ? 0 : (keys.KeyE ? 1 : 0) - (keys.KeyQ ? 1 : 0);
+  p.leanWant = p.sprint || p.mg || p.veh ? 0 : (keys.KeyE ? 1 : 0) - (keys.KeyQ ? 1 : 0);
   let sp = p.sprint ? SPEED.sprint : p.crouch ? (p.ads > 0.5 ? SPEED.crouchAds : SPEED.crouch) : p.ads > 0.5 ? SPEED.ads : SPEED.walk;
   if (Math.abs(p.lean) > 0.3) sp = Math.min(sp, LEAN.speed);
   const k = (ml ? dirSpeedK(Math.atan2(my, mx), p.a) : 1) * mk * armorSpeedK(p);     // броня — медленнее
@@ -115,7 +140,10 @@ function doAct(p, k) {
 
 function applyAct(p, k) {
   if (p.dead) return;
-  if (k === 'mg') { mgToggle(p); return; }
+  if (k === 'mg') { if (!p.veh) mgToggle(p); return; }
+  if (k === 'veh') { if (!p.mg) vehToggle(p); return; }
+  if (p.veh && /^(door|kick|supply.*|heal)$/.test(k)) return;              // из машины — ни дверей, ни грузовика
+  if (p.veh && p.seat === 0 && /^(w0|w1|knife)$/.test(k)) return;           // водитель: руки на руле — только пистолет
   if (p.mg && /^(w[0-2]|knife|mode|door|kick)$/.test(k)) return;      // за пулемётом — ни смены оружия, ни ножа, ни дверей
   const g = p.gun;
   if (k === 'door') { const d = doorNear(p); if (d) useDoor(p, d); }
@@ -144,7 +172,7 @@ function applyAct(p, k) {
 // Шаги шумят у всех (и у людей, и у ботов, и у противников): бег слышно далеко, присед — почти неслышно
 function stepNoises(dt) {
   for (const o of allPeople()) {
-    if (o.dead || o.speed < M(0.4)) { o.stepT = 0; continue; }
+    if (o.dead || o.veh || o.speed < M(0.4)) { o.stepT = 0; continue; }      // в машине шумит машина (updateVehicles)
     o.stepT -= dt;
     if (o.stepT > 0) continue;
     const r = o.sprint ? NOISE.sprint : o.crouch || o.down ? NOISE.crouch : o.ads > 0.5 ? NOISE.crouch * 2 : NOISE.step;

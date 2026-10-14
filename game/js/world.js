@@ -98,18 +98,60 @@ const opaqueAt = (x, y) => opaqueTile(Math.floor(x / TILE), Math.floor(y / TILE)
 const tileIndex = (x, y) => Math.floor(y / TILE) * map.w + Math.floor(x / TILE);
 
 // ---------- Отрисовка карты один раз в canvas ----------
+// Неподвижная часть карты (пол, разметка, тени, укрытия, стены, контейнеры, стол) — кусками MAP_CHUNK × MAP_CHUNK px, по требованию:
+// рисуется только видимое, в памяти — не больше MAP_CHUNK_KEEP кусков (давно не нужные выбрасываются). Большая карта (автодром 200 × 130 м —
+// 6400 × 4160 px, ~100 МБ одной картинкой) так и в память влезает, и рисуется быстрее. Мелкие детали (шум покрытия, сколы) — от координат
+// клетки (makeRng на клетку), поэтому куски стыкуются без швов и одинаковы при каждой перерисовке.
+const MAP_CHUNK = 1024, MAP_CHUNK_KEEP = 20;
+const tileRng = (x, y, k = 0) => makeRng(((x * 73856093) ^ (y * 19349663) ^ (k * 83492791) ^ (map.w * 7919)) >>> 0);
 function renderMapCanvas() {
+  map.chunks = new Map();
+  map.chunkT = 0;
+  return { width: map.w * TILE, height: map.h * TILE };   // размеры «картинки» (для совместимости: map.canvas.width / height)
+}
+function mapChunk(cx, cy) {
+  const key = cy * 4096 + cx;
+  let ch = map.chunks.get(key);
+  if (!ch) {
+    ch = { c: renderMapChunk(cx, cy), t: 0 };
+    map.chunks.set(key, ch);
+    if (map.chunks.size > MAP_CHUNK_KEEP) {                // выбросить самый давно нужный
+      let old = null;
+      for (const [k, v] of map.chunks) if (k !== key && (!old || v.t < old[1].t)) old = [k, v];
+      if (old) map.chunks.delete(old[0]);
+    }
+  }
+  ch.t = ++map.chunkT;
+  return ch.c;
+}
+// Нарисовать видимую часть карты (прямоугольник мира x0..x1, y0..y1) кусками; один соседний кусок — заранее (без рывка при прокрутке)
+function drawMapView(g, x0, y0, x1, y1) {
+  const W = map.w * TILE, H = map.h * TILE;
+  const cx0 = Math.max(0, Math.floor(x0 / MAP_CHUNK)), cy0 = Math.max(0, Math.floor(y0 / MAP_CHUNK));
+  const cx1 = Math.min(Math.ceil(W / MAP_CHUNK) - 1, Math.floor(x1 / MAP_CHUNK)), cy1 = Math.min(Math.ceil(H / MAP_CHUNK) - 1, Math.floor(y1 / MAP_CHUNK));
+  for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++) g.drawImage(mapChunk(cx, cy), cx * MAP_CHUNK, cy * MAP_CHUNK);
+  for (let cy = cy0 - 1; cy <= cy1 + 1; cy++) for (let cx = cx0 - 1; cx <= cx1 + 1; cx++) {
+    if (cx < 0 || cy < 0 || cx * MAP_CHUNK >= W || cy * MAP_CHUNK >= H || map.chunks.has(cy * 4096 + cx)) continue;
+    if (map.chunks.size < MAP_CHUNK_KEEP) { mapChunk(cx, cy); return; }   // заготовить один за кадр (пока есть место)
+  }
+}
+function renderMapChunk(cx, cy) {
+  const X0 = cx * MAP_CHUNK, Y0 = cy * MAP_CHUNK;
   const c = document.createElement('canvas');
-  c.width = map.w * TILE; c.height = map.h * TILE;
+  c.width = Math.min(MAP_CHUNK, map.w * TILE - X0); c.height = Math.min(MAP_CHUNK, map.h * TILE - Y0);
   const g = c.getContext('2d');
-  const rng = makeRng(map.w * 7919 + map.h);
+  g.translate(-X0, -Y0);
+  g.beginPath(); g.rect(X0, Y0, c.width, c.height); g.clip();
   g.fillStyle = '#2a2b2c';
-  g.fillRect(0, 0, c.width, c.height);
+  g.fillRect(X0, Y0, c.width, c.height);
+  // клетки куска с запасом (тени и края стен заходят на соседние)
+  const tx0 = Math.max(0, Math.floor(X0 / TILE) - 1), ty0 = Math.max(0, Math.floor(Y0 / TILE) - 1);
+  const tx1 = Math.min(map.w - 1, Math.floor((X0 + c.width) / TILE) + 1), ty1 = Math.min(map.h - 1, Math.floor((Y0 + c.height) / TILE) + 1);
   // пол (и под низкими укрытиями)
-  for (let y = 0; y < map.h; y++) for (let x = 0; x < map.w; x++) {
+  for (let y = ty0; y <= ty1; y++) for (let x = tx0; x <= tx1; x++) {
     const i = y * map.w + x;
     if (map.grid[i] === T.WALL) continue;   // под дверью рисуем пол проёма
-    const fm = map.fl[i] || FM.ASPHALT;
+    const fm = map.fl[i] || FM.ASPHALT, rng = tileRng(x, y);
     const X = x * TILE, Y = y * TILE;
     g.fillStyle = FLOOR_COL[fm][(x * 3 + y * 5) % 2];
     g.fillRect(X, Y, TILE, TILE);
@@ -123,40 +165,40 @@ function renderMapCanvas() {
     for (let k = 0; k < n; k++) {
       const v = rng();
       g.fillStyle = v < 0.5 ? 'rgba(0,0,0,0.13)' : 'rgba(255,255,255,0.06)';
-      const s = fm === FM.GRAVEL ? 2 : 1 + (rng() * 2 | 0);
-      g.fillRect(X + rng() * 30, Y + rng() * 30, s, s);
+      const sz = fm === FM.GRAVEL ? 2 : 1 + (rng() * 2 | 0);
+      g.fillRect(X + rng() * 30, Y + rng() * 30, sz, sz);
     }
   }
+  const inChunk = (x0, y0, x1, y1) => x1 >= X0 - TILE && x0 <= X0 + c.width + TILE && y1 >= Y0 - TILE && y0 <= Y0 + c.height + TILE;
   // разметка на асфальте
   for (const e of map.ents) {
-    if (e.kind !== 'stripe') continue;
-    g.fillStyle = 'rgba(220,200,120,0.35)';
+    if (e.kind !== 'stripe' || !inChunk(e.x * TILE, e.y * TILE, (e.x + (e.w || 0.15)) * TILE, (e.y + (e.h || 0.15)) * TILE)) continue;
+    g.fillStyle = e.c || 'rgba(220,200,120,0.35)';
     g.fillRect(e.x * TILE, e.y * TILE, (e.w || 0.15) * TILE, (e.h || 0.15) * TILE);
   }
   // тени от стен и укрытий (солнце с северо-запада)
   g.fillStyle = 'rgba(0,0,0,0.28)';
-  for (let y = 0; y < map.h; y++) for (let x = 0; x < map.w; x++) {
+  for (let y = ty0; y <= ty1; y++) for (let x = tx0; x <= tx1; x++) {
     const t = map.grid[y * map.w + x];
-    if (t === T.FLOOR || t === T.DOOR) continue;
-    const s = t === T.WALL ? 10 : 5;
-    g.fillRect(x * TILE + s, y * TILE + s, TILE, TILE);
+    if (t === T.FLOOR || t === T.DOOR || map.wm[y * map.w + x] === WM.CAR) continue;     // машины — со своей тенью (js/vehicle.js)
+    const sh = t === T.WALL ? 10 : 5;
+    g.fillRect(x * TILE + sh, y * TILE + sh, TILE, TILE);
   }
   // низкие укрытия по клеткам (машины рисуются отдельно)
-  for (let y = 0; y < map.h; y++) for (let x = 0; x < map.w; x++) {
+  for (let y = ty0; y <= ty1; y++) for (let x = tx0; x <= tx1; x++) {
     const i = y * map.w + x;
     if (map.grid[i] !== T.LOW || map.wm[i] === WM.CAR || map.wm[i] === WM.TABLE) continue;
-    drawLowTile(g, x, y, map.wm[i], rng);
+    drawLowTile(g, x, y, map.wm[i], tileRng(x, y, 1));
   }
   // стены: верх + светлая кромка
-  for (let y = 0; y < map.h; y++) for (let x = 0; x < map.w; x++) {
+  for (let y = ty0; y <= ty1; y++) for (let x = tx0; x <= tx1; x++) {
     const i = y * map.w + x;
     if (map.grid[i] !== T.WALL || map.wm[i] === WM.CONTAINER) continue;
-    drawWallTile(g, x, y, map.wm[i], rng);
+    drawWallTile(g, x, y, map.wm[i], tileRng(x, y, 2));
   }
   for (const e of map.ents) {
-    if (e.kind === 'car') drawCar(g, e);
-    else if (e.kind === 'container') drawContainer(g, e);
-    else if (e.kind === 'table') drawTable(g, e);
+    if ((e.kind !== 'container' && e.kind !== 'table') || !inChunk(e.x0 * TILE, e.y0 * TILE, (e.x1 + 1) * TILE, (e.y1 + 1) * TILE)) continue;
+    if (e.kind === 'container') drawContainer(g, e); else drawTable(g, e);
   }
   return c;
 }

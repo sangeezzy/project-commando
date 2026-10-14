@@ -11,8 +11,8 @@ window.__result = (() => {
     check('АК-74: 5,45×39, 650 выстр/мин, 30, 900 м/с', /5,45×39/.test(W.ak74.cal) && W.ak74.rpm === 650 && W.ak74.mag === 30 && W.ak74.v0 === 900);
     check('АК-74 отдача мягче АКМ (дульный тормоз)', W.ak74.kick < W.akm.kick);
     check('РПК-74: магазин на 45, ствол длиннее — пуля быстрее АК-74, кучнее', W.rpk74.mag === 45 && W.rpk74.v0 > W.ak74.v0 && W.rpk74.mech < W.ak74.mech && W.rpk74.lmg);
-    check('FN FAL: 7,62×51, магазин на 20, основной режим — одиночный, урон и пробитие — сильнее всех',
-      /7,62×51/.test(W.fal.cal) && W.fal.mag === 20 && W.fal.modes[0] === 'semi' && W.fal.dmg[1] > W.akm.dmg[1] && W.fal.penExp < W.akm.penExp);
+    check('FN FAL: 7,62×51, магазин на 20, основной режим — автоматический, урон и пробитие — сильнее всех',
+      /7,62×51/.test(W.fal.cal) && W.fal.mag === 20 && W.fal.modes[0] === 'auto' && W.fal.modes.includes('semi') && W.fal.dmg[1] > W.akm.dmg[1] && W.fal.penExp < W.akm.penExp);
     check('M249: лента на 200, только автомат, 800 выстр/мин, перезарядка долгая', W.m249.mag === 200 && W.m249.belt && W.m249.modes.join() === 'auto' &&
       W.m249.rpm === 800 && W.m249.reloadTac > 5);
     check('ТТ: 7,62×25, 8 патронов, 420 м/с — быстрее других пистолетов', /7,62×25/.test(W.tt.cal) && W.tt.mag === 8 && W.tt.v0 > W.m1911.v0 && W.tt.v0 > W.hipower.v0);
@@ -98,7 +98,7 @@ window.__result = (() => {
     check('кадр с каждым новым стволом в руках — без ошибок', true);
   });
 
-  run('ИИ: пулемёт очередями длиннее, FN FAL — одиночными', () => {
+  run('ИИ: пулемёт очередями длиннее, FN FAL — автоматическим огнём, в одиночном — по одному', () => {
     const e = makeEnemy(0, 0, 0, null);
     const bursts = (t) => {
       const out = [];
@@ -114,7 +114,12 @@ window.__result = (() => {
     const avg = (a) => a.reduce((s, v) => s + v, 0) / a.length;
     const lmg = bursts('rpk74'), rifle = bursts('ak74'), fal = bursts('fal');
     check('РПК-74 — очереди длиннее, чем у АК-74', avg(lmg) > avg(rifle) + 2, [avg(lmg).toFixed(1), avg(rifle).toFixed(1)]);
-    check('FN FAL (одиночный) — по одному', fal.every((b) => b <= 1), fal.slice(0, 8));
+    check('FN FAL (по умолчанию — авто) — очередями', avg(fal) > 1.5, avg(fal).toFixed(1));
+    const was = WEAPONS.fal.modes;
+    WEAPONS.fal.modes = ['semi', 'auto'];
+    const fal1 = bursts('fal');
+    WEAPONS.fal.modes = was;
+    check('FN FAL в одиночном — по одному', fal1.every((b) => b <= 1), fal1.slice(0, 8));
   });
 
   run('сеть: снимок со всеми стволами', () => {

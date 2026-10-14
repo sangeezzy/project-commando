@@ -20,17 +20,21 @@ window.__result = (() => {
       for (const e of G.enemies) if (los(e.x, e.y, st.x, st.y)) bad.push(['видит старт', k]);
       // ключи: каждый запертой двери — есть, и дойти до него можно, не открывая ни одной запертой
       const reach = bfsFrom(st.x, st.y, 1e9, true);
-      for (const d of map.doors.filter((q) => q.locked)) {
+      for (const d of map.doors.filter((q) => q.locked && !q.gate)) {
         const key = map.keys.find((q) => q.id === d.key);
         if (!key) { bad.push(['нет ключа', d.key]); continue; }
         if (reach.f[tileIndex(key.x, key.y)] >= 1e9) bad.push(['ключ недоступен', d.key]);
       }
-      const ex = map.exit;
-      if (reach.f[(ex.y0) * map.w + ex.x0 + 1] >= 1e9) bad.push(['переход недоступен', k]);
+      const ex = map.exit, gates = map.doors.filter((q) => q.gate);
+      if (gates.length !== ex.x1 - ex.x0 + 1 || !gates.every((q) => q.locked && !q.open && q.y === ex.y1 + 1)) bad.push(['нет ворот', k, gates.length]);
+      if (reach.f[(ex.y0) * map.w + ex.x0 + 1] < 1e9) bad.push(['в переход — мимо ворот', k]);
+      if (reach.f[(ex.y1 + 2) * map.w + ex.x0 + 1] >= 1e9) bad.push(['до ворот не дойти', k]);
+      for (const d of gates) { d.locked = false; d.open = true; syncDoorTile(d); }
+      if (bfsFrom(st.x, st.y, 1e9, true).f[(ex.y0) * map.w + ex.x0 + 1] >= 1e9) bad.push(['переход недоступен', k]);
       startMap('assault', assaultSeed(base, 8), squad, false);
       a8 += floorN();
     }
-    check('противников — по номеру локации; никто не видит старт; ключи доступны; переход проходим', !bad.length, bad.slice(0, 5));
+    check('противников — по номеру локации; никто не видит старт; ключи доступны; переход — за запертыми воротами, проходим', !bad.length, bad.slice(0, 5));
     check('формы разные (прямоугольник, квадрат, Г, Т, крест, П)', shapes.size >= 4, [...shapes]);
     check('больше противников — больше площадь (локация 8 против 1)', a8 > a1 * 1.3, [a1, a8]);
     check('противников на 8-й больше', ASSAULT.enemies(8) > ASSAULT.enemies(1), [ASSAULT.enemies(1), ASSAULT.enemies(8)]);
@@ -48,6 +52,7 @@ window.__result = (() => {
     G.enemies.forEach((e) => { e.dead = true; });
     tick(2);
     check('все уничтожены — переход открыт', G.surv.phase === 'exit', G.surv.phase);
+    check('ворота перехода открылись', map.doors.filter((d) => d.gate).every((d) => d.open && !d.locked) && map.doors.some((d) => d.gate));
     const ex = map.exit;
     p.x = p.px = (ex.x0 + 2.5) * TILE; p.y = p.py = (ex.y0 + 0.5) * TILE;
     tick(60 * 2 + 10);
@@ -61,6 +66,14 @@ window.__result = (() => {
     const seq = G.seq;
     restartRange();
     check('Enter в забеге не перезапускает', G.seq === seq && G.surv.stage === 2);
+    // погода: следующая локация начинает с текущей и плавно переходит к своей (как волны «Выживания»)
+    G.weather.vis = 0.37; G.weather.rain = 0.61;
+    nextStage();
+    check('погода на новой локации — плавно от прошлой (не скачком)', Math.abs(G.weather.vis - 0.37) < 0.01 && Math.abs(G.weather.rain - 0.61) < 0.01,
+      [G.weather.vis.toFixed(2), G.weather.rain.toFixed(2), G.weather.kind]);
+    tick(60 * 10);
+    const W = WEATHER[G.weather.kind];
+    check('…и за ~10 с подходит к погоде новой локации', Math.abs(G.weather.vis - W.vis) < 0.1, [G.weather.vis.toFixed(2), W.vis]);
     // грузовик привозит погибшего
     G.surv.phase = 'fight'; G.surv.stage = 3; p2.god = true;
     G.enemies.forEach((e) => { e.dead = true; });

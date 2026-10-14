@@ -66,6 +66,10 @@ UNIT_TESTS = {
     'guns': '',
     'mg': '',
     'squad8': '',
+    'cars': '',
+    'race': '',
+    'renderopt': '',
+    'offscreen': '',
 }
 
 try:

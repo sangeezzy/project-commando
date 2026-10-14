@@ -37,6 +37,7 @@ function drawHUD() {
     txt('ВЫ ПОГИБЛИ', VW / 2, 60, 24, HUD_RED, 'center');
     if (v && v !== p) mono(`наблюдение: ${v.name}`, VW / 2, 82, HUD_DIM, 'center', 13);
   }
+  drawOffscreen(viewer());
   drawTeam();
   drawVoice(p);
   // задача
@@ -54,6 +55,7 @@ function drawHUD() {
     mono('Ключи: ' + names.join(', '), 14, 102, '#d8c890', 'left', 12);
   }
   if (!p.dead && G.state === 'play') drawDoorPrompt(p);
+  if (!p.dead && !p.down && G.state === 'play') drawVehPrompt(p);
   if (!p.dead && !p.down && G.state === 'play') {
     // станковый пулемёт: рядом — занять, за ним — оставить
     const m = mgNear(p);
@@ -235,13 +237,77 @@ function drawCrosshair(p) {
 function drawHurt() {
   const p = me();
   if (!p) return;
-  const cx = (p.x - G.cam.x) * G.zoom + VW / 2, cy = (p.y - G.cam.y) * G.zoom + VH / 2;
+  const { x: cx, y: cy } = worldToScreen(p.x, p.y, CAMM), r = G.camRot || 0;
   for (const h of G.hurt) {
     ctx.strokeStyle = `rgba(255,60,40,${Math.min(1, h.t) * 0.8})`;
     ctx.lineWidth = 5;
-    ctx.beginPath(); ctx.arc(cx, cy, 70, h.a - 0.3, h.a + 0.3); ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx, cy, 70, h.a + r - 0.3, h.a + r + 0.3); ctx.stroke();
   }
   if (p.hurtT < 0.25) { ctx.fillStyle = `rgba(160,0,0,${(0.25 - p.hurtT) * 1.2})`; ctx.fillRect(0, 0, VW, VH); }
+}
+
+// Противники в поле зрения, но за краем экрана (обзор дальше экрана: туман войны открыт до VIS_BASE): маленькая красная стрелка у края
+// в их сторону и расстояние. Видимость — как на экране (playerSees + различим по свету), проверяется раз в OFFSCREEN.dt с.
+const OFFSCREEN = { dt: 0.12, pad: 26, size: 8 };
+function offscreenContacts(v) {
+  const out = [];
+  if (!v || !G.enemies.length) return out;
+  const m = CAMM || camMatrix(), M0 = OFFSCREEN.pad;
+  for (const e of G.enemies) {
+    if (e.dead) { e.offSeen = false; continue; }
+    const s = worldToScreen(e.x, e.y, m);
+    if (s.x > -4 && s.x < VW + 4 && s.y > -4 && s.y < VH + 4) { e.offSeen = false; continue; }   // на экране — видно и так
+    if (!(G.time < (e.offT || 0))) {
+      e.offT = G.time + OFFSCREEN.dt * (0.8 + 0.4 * Math.random());
+      e.offSeen = G.noFog || (!v.dead && playerSees(v, e) && perceivedAt(e.x, e.y) > LIGHT.seeMin);
+    }
+    if (!e.offSeen) continue;
+    // точка на краю экрана (с отступом) по лучу от центра к противнику
+    const cx = VW / 2, cy = VH / 2, dx = s.x - cx, dy = s.y - cy;
+    const k = Math.min(dx ? (VW / 2 - M0) / Math.abs(dx) : 1e9, dy ? (VH / 2 - M0) / Math.abs(dy) : 1e9);
+    out.push({ e, x: cx + dx * k, y: cy + dy * k, a: Math.atan2(dy, dx), d: Math.hypot(e.x - v.x, e.y - v.y) / PX_M });
+  }
+  return out;
+}
+function drawOffscreen(v) {
+  const list = offscreenContacts(v);
+  if (!list.length) return;
+  const S = OFFSCREEN.size;
+  ctx.save();
+  ctx.font = '10px Consolas, monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  for (const q of list) {
+    ctx.save();
+    ctx.translate(q.x, q.y); ctx.rotate(q.a);
+    ctx.fillStyle = 'rgba(255,70,55,0.9)'; ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(S, 0); ctx.lineTo(-S * 0.7, -S * 0.75); ctx.lineTo(-S * 0.35, 0); ctx.lineTo(-S * 0.7, S * 0.75); ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    ctx.restore();
+    ctx.fillStyle = 'rgba(255,120,100,0.85)';
+    ctx.fillText(`${Math.round(q.d)} м`, q.x - Math.cos(q.a) * 17, q.y - Math.sin(q.a) * 15);
+  }
+  ctx.restore();
+}
+
+// Машина: рядом — сесть; в машине — скорость, двигатель, клавиши (водитель / пассажир)
+function drawVehPrompt(p) {
+  const c = vehNear(p);
+  if (!c) return;
+  const V = VEHICLES[c.model];
+  if (!p.veh) {
+    const free = c.seats.filter((s) => !s).length;
+    mono(`F — сесть: ${V.name}, ${DRIVE_NAMES[V.drive]}, резина ${TIRES[tiresOf(c)].name} (свободно мест: ${free} из ${c.seats.length})${c.seats[0] ? '' : ' · за руль'}`, VW / 2, VH - 100, HUD_WARN, 'center', 13);
+    return;
+  }
+  const kmh = Math.round(carSpeed(c) / PX_M * 3.6), eng = c.hp / V.engineHp;
+  const x = VW / 2, y = VH - 64;
+  box(x - 230, y - 30, 460, 44, 0.6);
+  txt(`${kmh} км/ч`, x - 210, y, 22, HUD_COL);
+  mono((p.seat === 0 ? 'ЗА РУЛЁМ' : `ПАССАЖИР · место ${p.seat + 1}`) + ` · ${V.name.toLowerCase()}, ${DRIVE_NAMES[V.drive]}, резина ${TIRES[tiresOf(c)].name}`, x + 210, y - 14, HUD_DIM, 'right', 11);
+  const nfl = [0, 1, 2, 3].filter((i) => (c.flats || 0) & (1 << i)).length;
+  mono((c.hp <= 0 ? 'ДВИГАТЕЛЬ ЗАГЛОХ' : `двигатель ${Math.round(eng * 100)}%`) + (nfl ? ` · пробито колёс: ${nfl}` : ''), x + 210, y + 2,
+    c.hp <= 0 ? HUD_RED : nfl || eng < 0.35 ? HUD_WARN : HUD_DIM, 'right', 11);
+  if (!TouchUI.on) mono(p.seat === 0 ? 'W/S — газ/тормоз · A/D — руль · Space — ручник · C — камера · F — выйти · стреляет только пистолет'
+    : 'C — камера · F — выйти · стрелять — из любого оружия', x, y + 30, 'rgba(232,228,216,0.55)', 'center', 11);
 }
 
 // Подсказка у двери и полоса действия (отпирание)

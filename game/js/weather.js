@@ -127,7 +127,7 @@ function veilBuf(w, h) {
   return veilX;
 }
 
-function drawWeather(offX = VW / 2 - G.cam.x * G.zoom, offY = VH / 2 - G.cam.y * G.zoom, p = null) {
+function drawWeather(offX = CAMM[4], offY = CAMM[5], p = null) {
   const w = G.weather;
   if (!w) return;
   ctx.save();
@@ -136,18 +136,19 @@ function drawWeather(offX = VW / 2 - G.cam.x * G.zoom, offY = VH / 2 - G.cam.y *
   // ближе — плотнеет с расстоянием. Туман — светло-серый, дождь — сизый.
   if ((w.vis < 0.995 || w.fog > 0.01) && !G.noFog) {      // отладка ]: без пелены
     const z = G.zoom, eye = p && !p.dead ? eyeOf(p) : G.cam;
-    const ex = eye.x * z + offX, ey = eye.y * z + offY, D = VIS_BASE * w.vis * z;
+    const es = worldToScreen(eye.x, eye.y, CAMM), ex = es.x, ey = es.y, D = VIS_BASE * w.vis * z;
     const fk = clamp(w.fog, 0, 1), aMax = clamp(0.45 + 0.5 * fk + 0.4 * (1 - w.vis), 0, 0.96);
     const c = `${Math.round(118 + 52 * fk)},${Math.round(128 + 47 * fk)},${Math.round(142 + 38 * fk)}`;
-    // упрощённый свет (OPTS.simpleLight): градиент — в буфер в 8 раз меньше, на экран — растянуть (плавный — размытие не заметно)
-    const q = OPTS.simpleLight ? 8 : 1, tg = q > 1 ? veilBuf(Math.ceil(VW / q), Math.ceil(VH / q)) : ctx;
+    // градиент — в буфер в 4 раза меньше (упрощённый свет — в 8), на экран — растянуть: плавный, размытия не видно, а растеризация
+    // градиента на весь экран — одна из самых дорогих операций кадра
+    const q = OPTS.simpleLight ? 8 : 4, tg = veilBuf(Math.ceil(VW / q), Math.ceil(VH / q));
     const gr = tg.createRadialGradient(ex / q, ey / q, 0, ex / q, ey / q, D / q);
     gr.addColorStop(0, `rgba(${c},${0.04 * fk})`);
     gr.addColorStop(0.35, `rgba(${c},${aMax * 0.12})`);
     gr.addColorStop(0.75, `rgba(${c},${aMax * 0.55})`);
     gr.addColorStop(1, `rgba(${c},${aMax})`);
     tg.fillStyle = gr; tg.fillRect(0, 0, VW / q + 1, VH / q + 1);
-    if (q > 1) { ctx.imageSmoothingEnabled = true; ctx.drawImage(veilC, 0, 0, veilC.width, veilC.height, 0, 0, veilC.width * q, veilC.height * q); }
+    ctx.imageSmoothingEnabled = true; ctx.drawImage(veilC, 0, 0, veilC.width, veilC.height, 0, 0, veilC.width * q, veilC.height * q);
   }
   if (w.rain > 0.02) drawRain(w.rain, offX, offY);
   if (w.flash > 0.01) { ctx.fillStyle = `rgba(235,240,255,${w.flash * 0.55})`; ctx.fillRect(0, 0, VW, VH); }

@@ -70,9 +70,12 @@ function update(dt) {
   // камера: свой боец (погиб — тот, за кем наблюдаем) + смещение к курсору (с прицелом — дальше)
   if (Math.abs(G.view - G.viewT) > 1e-3) { G.view += (G.viewT - G.view) * Math.min(1, dt * CAM.zoomSpeed); applyZoom(); }
   const v = viewer();
+  G.camRot = (G.camRot || 0) + angDiff(camRotTarget(v), G.camRot || 0) * Math.min(1, dt * 6);     // в машине (камера «за машиной») — поворот
+  if (Math.abs(G.camRot) < 1e-4 && !camRotTarget(v)) G.camRot = 0;
   if (v) {
     const look = v === p ? CAM.look + (p.ads || 0) * (CAM.lookAds - CAM.look) : 0;
-    const tx = (v.lx ?? v.x) + ((mouse.x - VW / 2) * look) / G.zoom, ty = (v.ly ?? v.y) + ((mouse.y - VH / 2) * look) / G.zoom;
+    const sx = ((mouse.x - VW / 2) * look) / G.zoom, sy = ((mouse.y - VH / 2) * look) / G.zoom, cr = Math.cos(G.camRot), sr = Math.sin(G.camRot);
+    const tx = (v.lx ?? v.x) + cr * sx + sr * sy, ty = (v.ly ?? v.y) - sr * sx + cr * sy;
     const ck = Math.min(1, dt * CAM.follow);
     G.cam.x += (tx - G.cam.x) * ck; G.cam.y += (ty - G.cam.y) * ck;
   }
@@ -105,7 +108,7 @@ function updateWorld(dt) {
     if (!p.net) trackSpeed(p, dt);
     p.supp = Math.max(0, p.supp - dt * 0.6); p.hurtT += dt;
   }
-  if (G.state === 'play') { updateAI(dt); updateMGs(); stepNoises(dt); updateDowned(dt); updateHub(dt); updateSurvival(dt); }
+  if (G.state === 'play') { raceBots(); updateAI(dt); updateMGs(); updateVehicles(dt); stepNoises(dt); updateDowned(dt); updateHub(dt); updateSurvival(dt); }
   updateWeather(dt);
   for (const e of G.enemies) trackSpeed(e, dt);
   for (const o of allPeople()) if (!o.dead || o.side === 'p') updateAnim(o, dt);
@@ -132,6 +135,7 @@ function guestWorld(dt) {
     const side = o.a + Math.PI / 2 * (o.leanSide || 0), d = Math.abs(o.leanPx || 0);
     o.lx = o.x + Math.cos(side) * d; o.ly = o.y + Math.sin(side) * d;
   }
+  guestVehicles(dt);                          // машины: чужие — к позе из снимка, своя за рулём — у себя
   for (const o of allPeople()) updateAnim(o, dt);
   updateDoors(dt);
   updateLocalFx(dt);
@@ -140,6 +144,9 @@ function guestWorld(dt) {
 // Эффекты и интерфейс своего экрана: частицы, вспышки, привыкание глаз, подсказки
 function updateLocalFx(dt) {
   const p = me();
+  vehSmoke(dt);                            // дым из-под капота подбитых машин
+  vehSkids(dt);                            // следы шин (занос, пробуксовка)
+  vehSound(dt);                            // мотор своей машины
   for (let i = G.parts.length - 1; i >= 0; i--) {
     const q = G.parts[i];
     q.life -= dt;

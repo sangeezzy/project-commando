@@ -156,7 +156,7 @@ const lampOn = (p) => p.lamp && !p.dead;
 // only — учитывать из фонарей только этого бойца (для его глаз чужой свет в лицо считается отдельно, как ослепление)
 function lightAt(x, y, only = null) {
   let v = ambientAt(x, y);
-  for (const p of [...G.players, ...G.enemies]) {
+  for (let s = 0; s < 2; s++) for (const p of s ? G.enemies : G.players) {     // фонари людей — без копии массива (вызывается очень часто)
     if (!lampOn(p) || (only && p !== only)) continue;
     const k = lampK(p, x, y);
     if (k > 0.005 && los(p.x, p.y, x, y)) v += k;
@@ -188,7 +188,7 @@ function glareAt(o) {
   const dk = glareDarkness(o.x, o.y);
   if (dk <= 0) return 0;
   let g = 0;
-  for (const l of [...G.players, ...G.enemies]) {
+  for (let s = 0; s < 2; s++) for (const l of s ? G.enemies : G.players) {
     if (l === o || !lampOn(l)) continue;
     const d = Math.hypot(o.x - l.x, o.y - l.y);
     if (d > LIGHT.lampRange) continue;
@@ -337,7 +337,7 @@ function drawLampDaylight(clip) {
 // за стеной сквозь туман войны просвечивали и выдавали противника; освещённое ими место, которое игрок видит, — по-прежнему светлое
 // Упрощённый свет (OPTS.simpleLight, для телефонов): буфер грубее (LQ_SIMPLE), усиление глаза — сложением копий буфера
 // (gainPass: на видеочипе, без ctx.filter — на телефоне фильтр бывает программным), засветки нет. Яркость та же (g·L, не выше 1).
-function drawLighting(offX, offY, view, lampClip = view) {
+function drawLighting(cm, view, lampClip = view) {
   const simple = OPTS.simpleLight, q = simple ? LQ_SIMPLE : LQ;
   const z = G.zoom, w = Math.ceil(VW / q), h = Math.ceil(VH / q);
   if (lightC.width !== w || lightC.height !== h) { lightC.width = w; lightC.height = h; }
@@ -346,7 +346,7 @@ function drawLighting(offX, offY, view, lampClip = view) {
   g.globalCompositeOperation = 'source-over'; g.filter = 'none'; g.globalAlpha = 1;
   g.fillStyle = '#000';
   g.fillRect(0, 0, w, h);
-  g.setTransform(z / q, 0, 0, z / q, offX / q, offY / q);
+  g.setTransform(cm[0] / q, cm[1] / q, cm[2] / q, cm[3] / q, cm[4] / q, cm[5] / q);     // как мир на экране (и с поворотом), в q раз мельче
   g.imageSmoothingEnabled = true;
   g.drawImage(map.lightCanvas, 0, 0, map.w * TILE, map.h * TILE);
   g.globalCompositeOperation = 'lighter';
@@ -359,7 +359,7 @@ function drawLighting(offX, offY, view, lampClip = view) {
   if (view && gain > 1.01) {
     // вне видимости делим на усиление: после brightness(gain) там останется обычная яркость без засветки
     const outside = new Path2D();
-    outside.rect(-offX / z - 8, -offY / z - 8, VW / z + 16, VH / z + 16);     // экран в координатах мира
+    outside.addPath(screenPolyWorld(8).path);                                 // экран в координатах мира
     outside.addPath(view);
     const c = Math.round(255 / gain);
     g.globalCompositeOperation = 'multiply';
@@ -372,11 +372,15 @@ function drawLighting(offX, offY, view, lampClip = view) {
   // фильтры — на маленьком буфере (в LQ² раз меньше пикселей), на экран — только растянуть без фильтра.
   // Без усиления (обычный день) фильтр не нужен, а засветки нет: в 8-битном буфере L ≤ 1, значит g·L ≤ 1
   const lit = Math.abs(gain - 1) < 1e-3 ? lightC : simple ? gainPass(w, h, gain) : lightPass(0, w, h, `brightness(${gain})`);
+  // без усиления (день) буфер белый везде, кроме помещений с полумраком (фонари и вспышки только добавляют свет, а 1 — предел):
+  // умножать — только этот прямоугольник экрана (растеризация «умножения» на весь экран — самое дорогое в кадре); нет его — ничего
+  let r = { x0: 0, y0: 0, x1: w, y1: h };
+  if (Math.abs(gain - 1) < 1e-3) { r = darkScreenRect(cm, q, w, h); if (!r) return; }
   ctx.save();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.imageSmoothingEnabled = true;
   ctx.globalCompositeOperation = 'multiply';
-  ctx.drawImage(lit, 0, 0, w, h, 0, 0, w * q, h * q);
+  ctx.drawImage(lit, r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0, r.x0 * q, r.y0 * q, (r.x1 - r.x0) * q, (r.y1 - r.y0) * q);
   if (gain > 1 + 1e-3 && !simple) {
     // засветка (g·L − 1) / R: brightness(k) + contrast(c) дают c·k·L + 0,5 − 0,5c, откуда c = 1 + 2/R, k = g / (R·c)
     const R = LIGHT.overRange, c = 1 + 2 / R;
@@ -386,6 +390,33 @@ function drawLighting(offX, offY, view, lampClip = view) {
     ctx.drawImage(over, 0, 0, w, h, 0, 0, w * q, h * q);
   }
   ctx.restore();
+}
+
+// Прямоугольник буфера света (в его пикселях), где на экране не полный свет: клетки с освещённостью < 1 (с запасом на растекание
+// и размытие); null — на экране всё освещено днём. Клетки — только видимые (описывающий прямоугольник экрана в мире).
+function darkScreenRect(cm, q, w, h) {
+  const sp = screenPolyWorld(0).pts;
+  const tx0 = Math.max(0, Math.floor(Math.min(...sp.map((p) => p.x)) / TILE) - 1), ty0 = Math.max(0, Math.floor(Math.min(...sp.map((p) => p.y)) / TILE) - 1);
+  const tx1 = Math.min(map.w - 1, Math.floor(Math.max(...sp.map((p) => p.x)) / TILE) + 1), ty1 = Math.min(map.h - 1, Math.floor(Math.max(...sp.map((p) => p.y)) / TILE) + 1);
+  let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+  for (let y = ty0; y <= ty1; y++) for (let x = tx0; x <= tx1; x++) {
+    if (map.light[y * map.w + x] >= 0.999) continue;
+    if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+  }
+  // за краем карты буфер чёрный (умножение там гасит всё) — эти полосы экрана тоже
+  const wx0 = Math.min(...sp.map((p) => p.x)), wy0 = Math.min(...sp.map((p) => p.y)), wx1 = Math.max(...sp.map((p) => p.x)), wy1 = Math.max(...sp.map((p) => p.y));
+  const out = (ax, ay, bx, by) => { x0 = Math.min(x0, ax); y0 = Math.min(y0, ay); x1 = Math.max(x1, bx); y1 = Math.max(y1, by); };
+  if (wx0 < 0) out(Math.floor(wx0 / TILE) - 2, Math.floor(wy0 / TILE), -1, Math.ceil(wy1 / TILE));
+  if (wy0 < 0) out(Math.floor(wx0 / TILE), Math.floor(wy0 / TILE) - 2, Math.ceil(wx1 / TILE), -1);
+  if (wx1 > map.w * TILE) out(map.w, Math.floor(wy0 / TILE), Math.ceil(wx1 / TILE) + 2, Math.ceil(wy1 / TILE));
+  if (wy1 > map.h * TILE) out(Math.floor(wx0 / TILE), map.h, Math.ceil(wx1 / TILE), Math.ceil(wy1 / TILE) + 2);
+  if (x1 < x0) return null;
+  // мир → экран (углы прямоугольника, с запасом 4 клетки на растекание и размытие света), → пиксели буфера
+  const m = 4 * TILE, cs = [[x0 * TILE - m, y0 * TILE - m], [(x1 + 1) * TILE + m, y0 * TILE - m], [x0 * TILE - m, (y1 + 1) * TILE + m], [(x1 + 1) * TILE + m, (y1 + 1) * TILE + m]]
+    .map(([x, y]) => worldToScreen(x, y, cm));
+  const r = { x0: Math.max(0, Math.floor(Math.min(...cs.map((p) => p.x)) / q)), y0: Math.max(0, Math.floor(Math.min(...cs.map((p) => p.y)) / q)),
+    x1: Math.min(w, Math.ceil(Math.max(...cs.map((p) => p.x)) / q)), y1: Math.min(h, Math.ceil(Math.max(...cs.map((p) => p.y)) / q)) };
+  return r.x1 > r.x0 && r.y1 > r.y0 ? r : null;
 }
 
 // Усиление без фильтра: буфер × gain сложением копий ('lighter' — сумма, не выше 1): целые копии + дробная с прозрачностью

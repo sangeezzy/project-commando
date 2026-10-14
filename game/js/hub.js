@@ -161,9 +161,10 @@ function drawHubWorld() {
     ctx.strokeStyle = 'rgba(240,190,60,0.7)'; ctx.lineWidth = 2; ctx.setLineDash([6, 4]); ctx.strokeRect(X, Y, W, H); ctx.setLineDash([]);
     if (hold > 0) { ctx.fillStyle = 'rgba(240,190,60,0.85)'; ctx.fillRect(X, Y + H - 4, W * hold, 4); }
     ctx.fillStyle = '#f0d890'; ctx.font = '11px Consolas, monospace'; ctx.textAlign = 'center';
-    ctx.fillText(e.name, X + W / 2, Y + H + 14);
+    const south = e.y0 > HUB_H / 2, ty = south ? Y - 22 : Y + H + 14;      // у южного прохода — надпись над ним
+    ctx.fillText(e.name, X + W / 2, ty);
     ctx.fillStyle = 'rgba(232,228,216,0.6)'; ctx.font = '9px Consolas, monospace';
-    ctx.fillText(e.desc, X + W / 2, Y + H + 26);
+    ctx.fillText(e.desc, X + W / 2, ty + 12);
   });
   const tx = (HUB_TABLE.x0 + HUB_TABLE.x1 + 1) / 2 * TILE, ty = (HUB_TABLE.y1 + 1) * TILE;
   ctx.fillStyle = '#f0d890'; ctx.font = '11px Consolas, monospace'; ctx.textAlign = 'center';

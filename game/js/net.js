@@ -59,6 +59,16 @@ function onHostData(c, d) {
   p.sprintLock = d.sl; p.speed = d.v;
   p.inFire = !!d.f; p.inPress = (p.inPress || 0) + (d.pr | 0); p.inHoldF = !!d.hf;
   for (const k of d.acts || []) applyAct(p, k);
+  // гость за рулём: машину ведёт он — хост берёт её позу
+  if (d.vh && p.veh && p.seat === 0 && p.veh.id === d.vh[0]) {
+    const c = p.veh;
+    c.remote = true;
+    if (c.parked) unparkCar(c);
+    [, c.x, c.y, c.a, c.vx, c.vy, c.steer] = d.vh;
+    c.ctrl = { thr: d.vh[7], steer: 0, hb: 0 };
+    if (d.vh[8] > 0) engineDamage(c, d.vh[8]);          // удар передом у гостя — урон двигателю
+    if (d.vh[9] > 0) emit(['crash', c.x, c.y, d.vh[9]]);
+  }
 }
 
 // Курок гостя: удержание — как у своего, нажатия для одиночного огня копятся
@@ -203,6 +213,7 @@ function sendSnapshot() {
     D: map.doors.map((d) => (d.open ? 1 : 0) | (d.locked ? 2 : 0) | (d.broken ? 4 : 0)),
     K: map.keys.map((k) => (k.taken ? 1 : 0)),
     M: (map.mgs || []).map(mgState),          // стационарные пулемёты: тип, место, кто за ним, лента
+    V: (map.cars || []).map(carState),         // машины: поза, скорость, руль, двигатель, стоянка, кто где сидит
     fx: G.fxOut,
   });
   G.fxOut = [];
@@ -391,7 +402,9 @@ function guestSendInput() {
   if (!p || p.dead) { Net.inp.acts = []; Net.inp.press = 0; return; }   // раненый тоже шлёт: ползёт
   send({ t: 'i', seq: G.seq, x: r1(p.x), y: r1(p.y), a: r2(p.a), c: p.crouch ? 1 : 0, ads: r2(p.ads), lw: p.leanWant | 0,
     sp: p.sprint ? 1 : 0, sl: r2(p.sprintLock), v: r1(p.speed), f: Net.inp.fire ? 1 : 0, pr: Net.inp.press, acts: Net.inp.acts,
-    hf: keys.KeyF ? 1 : 0 });
+    hf: keys.KeyF ? 1 : 0,
+    // за рулём — поза своей машины (гость считает её сам, как своего бойца)
+    vh: p.veh && p.seat === 0 ? vehInput(p.veh) : 0 });
   Net.inp.press = 0; Net.inp.acts = [];
 }
 
@@ -400,6 +413,7 @@ function resetGuestWorld(seq, id = 'range', seed = 0) {
   G.mapId = id; G.mapSeed = seed; G.surv = null; G.weather = null;
   buildMap(id, seed);
   map.mgs = [];
+  initVehicles();
   G.seq = seq;
   G.players = []; G.enemies = []; G.bullets = []; G.parts = []; G.decals = []; G.hurt = [];
   G.hitmark = null; G.toast = null; G.muzzle = []; G.expo = null; G.barks = [];
@@ -475,6 +489,7 @@ function applySnapshot(s) {
     }
   });
   s.K.forEach((t, i) => { map.keys[i].taken = !!t; });
+  applyCarState(s.V);                        // после бойцов: машины и кто где сидит (o.veh, o.seat)
   applyMgState(s.M);                         // после бойцов: кто за пулемётом (o.mg, o.gun)
   for (const ev of s.fx) if (!predConsumes(ev)) playFx(ev);
   { const p = me(); if (p && !p.ai) predAmmo(p.gun); }
