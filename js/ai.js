@@ -354,7 +354,7 @@ function bark(e, text) {
   e.barked = e.barked || {};
   if (G.time - (e.barked[text] ?? -99) < ENEMY.barkCd) return;
   e.barked[text] = G.time;
-  emit(['bark', e.x, e.y, text, e.side]);
+  emit(['bark', e.x, e.y, text, e.side, e.id]);
 }
 
 // ---------- Стрельба через закрытую дверь ----------
@@ -543,6 +543,7 @@ function aiWeapons(e, dt, seen) {
 
 function updateAI(dt) {
   updateSquads(dt);
+  updateExecutions();
   updateIntel();
   const ais = aiList();
   for (const e of ais) {
@@ -588,7 +589,8 @@ function updateAI(dt) {
     if (!e.peek) e.leanWant = 0;
     if (e.side === 'p') checkLeash(e);
     const hurt = e.side === 'p' && !e.seeing ? downedToHelp(e) : null;
-    if (hurt && reviveStep(e, hurt, dt)) { /* поднимает раненого */ }
+    if (e.exec) execStep(e, dt);
+    else if (hurt && reviveStep(e, hurt, dt)) { /* поднимает раненого */ }
     else if (e.side === 'p' && G.surv && survBotStep(e, dt)) { /* у грузовика: пополниться, вылечиться */ }
     else if (e.regroup && !e.seeing) followLeader(e, dt);
     else if (e.peek) peekStep(e, dt, seen);
@@ -1047,6 +1049,81 @@ function reviveStep(e, t, dt) {
   e.crouch = true;          // присел рядом и поднимает
   e.reviveWant = true;
   return true;
+}
+
+// ---------- Добивание: в отряде на ногах никого — противники подходят к раненым и добивают ----------
+// Живые бойцы отряда есть, и все ранены
+function squadAllDown() {
+  const alive = G.players.filter((o) => !o.dead);
+  return alive.length > 0 && alive.every((o) => o.down);
+}
+
+// Кто кого добивает: ближайшие пары «противник — раненый», один противник на раненого (e.exec, t.execBy)
+function updateExecutions() {
+  const X = ENEMY.execute;
+  const on = X.on && G.mapId !== 'hub' && squadAllDown();
+  for (const e of G.enemies) {
+    const E = e.exec;
+    if (E && (!on || e.dead || E.t.dead || !E.t.down || E.t.god || G.time - E.t0 > X.giveUp)) endExec(e);
+  }
+  if (!on) return;
+  const busy = new Set(G.enemies.filter((e) => e.exec).map((e) => e.exec.t));
+  const targets = G.players.filter((t) => t.down && !t.dead && !t.god && !busy.has(t));
+  const free = G.enemies.filter((e) => !e.dead && !e.exec);
+  if (!targets.length || !free.length) return;
+  const pairs = [];
+  for (const t of targets) {
+    for (const e of free) {
+      if (e.execSkip && e.execSkip[t.id] > G.time) continue;
+      pairs.push({ d: Math.hypot(t.x - e.x, t.y - e.y), e, t });
+    }
+  }
+  pairs.sort((a, b) => a.d - b.d);
+  for (const { e, t } of pairs) {
+    if (e.exec || busy.has(t)) continue;
+    // путь есть (сквозь незапертые двери)
+    const f = fieldTo(t.x, t.y);
+    if (f.f[Math.floor(e.y / TILE) * map.w + Math.floor(e.x / TILE)] >= 1e9) { (e.execSkip = e.execSkip || {})[t.id] = G.time + X.skip; continue; }
+    e.exec = { t, phase: 'go', wait: 0, t0: G.time };
+    busy.add(t);
+  }
+}
+
+function endExec(e) {
+  e.exec = null; e.goal = null; e.burst = 0;
+}
+
+// Подойти вплотную, сказать фразу, выждать и выстрелить в упор (стреляет, пока раненый не погибнет)
+function execStep(e, dt) {
+  const X = ENEMY.execute, E = e.exec, t = E.t, g = e.gun;
+  const d = Math.hypot(t.x - e.x, t.y - e.y);
+  Object.assign(e, { peek: null, flank: null, fm: null, doorFire: null, role: null, leanWant: 0, crouch: false, kneel: false });
+  e.want = Math.atan2(t.y - e.y, t.x - e.x);
+  if (E.phase === 'go') {
+    if (d > X.reach || !los(e.x, e.y, t.x, t.y)) {
+      const step = fieldStep(e, fieldTo(t.x, t.y));
+      if (step === null && d > TILE) { (e.execSkip = e.execSkip || {})[t.id] = G.time + X.skip; endExec(e); return; }
+      const far = d > M(8);
+      e.sprint = far;
+      moveDir(e, step ?? e.want, far ? ENEMY.speed.run : ENEMY.speed.walk, dt);
+      return;
+    }
+    E.phase = 'talk';
+    if (!E.said) { E.said = true; E.wait = rand(X.pause[0], X.pause[1]); bark(e, X.lines[randi(0, X.lines.length - 1)]); }
+  }
+  e.sprint = false;
+  if (d > X.reach * 1.6) { E.phase = 'go'; return; }        // отполз — догнать (фраза уже сказана)
+  E.wait -= dt;
+  if (E.wait > 0) return;
+  if (e.melee || e.sw) return;
+  if (!g.chamber && !g.reloadT) {
+    // патронов нет ни в одном стволе — ножом
+    if (!canReload(g) && !e.kit.some((k) => k && k.chamber)) startMelee(e); else aiEmpty(e);
+    return;
+  }
+  if (Math.abs(angDiff(e.want, e.a)) > 0.05) return;
+  e.a = e.want;
+  pullTrigger(e, true, true, WEAPONS[g.t].mech);
 }
 
 // Дисциплина ведомого: союзный бот с живым ведущим не уходит от него дальше r (у противников ведущего нет — без ограничений)

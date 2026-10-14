@@ -58,6 +58,9 @@ UNIT_TESTS = {
     'weather': '',
     'survival': 'bots=1',
     'assault': 'bots=1',
+    'execute': 'bots=1',
+    'barks': '',
+    'touch': 'touch=1',
 }
 
 try:

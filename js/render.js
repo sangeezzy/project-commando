@@ -66,7 +66,9 @@ function render(dt = 1 / 60) {
   drawTeamTags();
   drawIntel();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
+  drawBarksOver(offX, offY);
   drawHUD();
+  drawTouch();
 }
 
 // ---------- Двери и ключи ----------
@@ -146,6 +148,34 @@ function drawIntel() {
     ctx.beginPath(); ctx.moveTo(it.x, it.y - r); ctx.lineTo(it.x + r, it.y); ctx.lineTo(it.x, it.y + r); ctx.lineTo(it.x - r, it.y); ctx.closePath(); ctx.stroke();
     ctx.fillStyle = '#ff5040'; ctx.font = '10px Consolas, monospace'; ctx.textAlign = 'center';
     ctx.fillText(age < 1 ? 'контакт' : `${Math.round(age)} с назад`, it.x, it.y - r - 4);
+  }
+  ctx.restore();
+}
+
+// Видно ли противника на экране сейчас (как значки «?»/«!»: в поле зрения и различим по свету)
+const enemyShown = (e) => !!e && !e.dead && (e.va || 0) > 0.3 && (G.noFog || perceivedAt(e.x, e.y) > LIGHT.seeMin);
+
+// Реплики видимых противников — над ними (b.over); остальные слышимые — внизу экрана (drawHUD)
+function drawBarksOver(offX, offY) {
+  if (!G.barks || !G.barks.length) return;
+  const z = G.zoom, stack = new Map();
+  ctx.save();
+  ctx.font = '13px Consolas, monospace';
+  ctx.textAlign = 'center';
+  for (let i = G.barks.length - 1; i >= 0; i--) {          // новые — ниже, старые поднимаются
+    const b = G.barks[i];
+    const e = b.foe && b.id !== undefined ? G.enemies.find((q) => q.id === b.id) : null;
+    b.over = enemyShown(e);
+    if (!b.over) continue;
+    const n = stack.get(e) || 0;
+    stack.set(e, n + 1);
+    const x = e.x * z + offX, y = (e.y - 34) * z + offY - n * 20;
+    const w = ctx.measureText(b.text).width + 12;
+    ctx.globalAlpha = Math.min(1, b.t);
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillRect(x - w / 2, y - 13, w, 18);
+    ctx.fillStyle = '#e8a080';
+    ctx.fillText(b.text, x, y);
   }
   ctx.restore();
 }

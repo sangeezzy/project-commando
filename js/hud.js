@@ -48,7 +48,7 @@ function drawHUD() {
   else if (!G.enemies.length) mono('противников нет — пристрелка' + (isAuth() ? ' · Backspace — в хаб' : ''), 26, 56, HUD_DIM);
   else mono(`противников осталось: ${left} из ${G.enemies.length}` + (isAuth() && G.mapId !== 'range' ? ' · Backspace — в хаб' : ''), 26, 56, left ? HUD_DIM : '#9fe870');
   if (G.mapId === 'hub' && tableNear(p) && !p.dead && !loadoutOpen()) txt('F — оружейный стол', VW / 2, VH - 120, 15, HUD_WARN, 'center');
-  mono('TAB — характеристики оружия · 1, 2, 3 — оружие · X — нож · H — управление', 14, 84, 'rgba(232,228,216,0.45)', 'left', 11);
+  if (!TouchUI.on) mono('TAB — характеристики оружия · 1, 2, 3 — оружие · X — нож · H — управление', 14, 84, 'rgba(232,228,216,0.45)', 'left', 11);
   if (p.keys && p.keys.size) {
     const names = [...p.keys].map((id) => keyName(id));
     mono('Ключи: ' + names.join(', '), 14, 102, '#d8c890', 'left', 12);
@@ -70,7 +70,11 @@ function drawHUD() {
     ctx.globalAlpha = 1;
   }
   // реплики (слышно): противников и своих ботов
-  if (G.barks) G.barks.forEach((b, i) => { ctx.globalAlpha = Math.min(1, b.t); mono(`${b.foe ? 'Противник' : 'Свой'}: «${b.text}»`, VW / 2, VH - 200 - (G.barks.length - 1 - i) * 18, b.foe ? '#e8a080' : '#a0c8e8', 'center', 13); ctx.globalAlpha = 1; });
+  if (G.barks) {
+    // над видимым противником реплика уже написана (drawBarksOver) — внизу только остальные слышимые, последние три
+    const low = G.barks.filter((b) => !b.over).slice(-3);
+    low.forEach((b, i) => { ctx.globalAlpha = Math.min(1, b.t); mono(`${b.foe ? 'Противник' : 'Свой'}: «${b.text}»`, VW / 2, VH - 200 - (low.length - 1 - i) * 18, b.foe ? '#e8a080' : '#a0c8e8', 'center', 13); ctx.globalAlpha = 1; });
+  }
   if (G.state === 'dead' || G.state === 'win') drawEnd();
   else if (G.runResult && G.mapId === 'hub') drawRunResult(G.runResult);
 }
@@ -90,7 +94,7 @@ function drawRunResult(r) {
 }
 
 function drawHealth(p) {
-  const x = 20, y = VH - 66;
+  const x = TouchUI.on ? Math.round(VW / 2 - 112) : 20, y = TouchUI.on ? 36 : VH - 66;   // телефон: вверху посередине
   box(x - 6, y - 22, 236, 64);
   txt(`${Math.ceil(p.hp)}`, x + 4, y + 18, 28, p.hp < 35 ? HUD_RED : HUD_COL);
   const k = p.hp / HP;
@@ -121,7 +125,7 @@ function drawHealth(p) {
 
 function drawWeapon(p) {
   const g = p.gun, W = WEAPONS[g.t];
-  const x = VW - 270, y = VH - 96;
+  const x = VW - 270, y = TouchUI.on ? 58 : VH - 96;     // телефон: вверху справа (внизу — стики)
   box(x, y, 256, 84);
   txt(W.name, x + 12, y + 22, 16);
   mono(W.cal, x + 12, y + 38, HUD_DIM, 'left', 11);
@@ -342,7 +346,7 @@ function drawRevivePrompt(p) {
 // Голос: микрофон, рация (в помещении связи нет), кто говорит
 function drawVoice(p) {
   if (!Voice.stream || (G.role !== 'host' && G.role !== 'guest')) return;
-  const x = 20, y = VH - 96;
+  const x = TouchUI.on ? Math.round(VW / 2 - 112) : 20, y = TouchUI.on ? 96 : VH - 96;
   let line = Voice.muted ? 'МИКРОФОН ВЫКЛ (M)' : Voice.sending ? 'ГОВОРИТЕ' : 'МИКРОФОН ВКЛ (M)';
   let col = Voice.muted ? HUD_DIM : Voice.sending ? '#9fe870' : HUD_COL;
   if (keys.KeyB) {
@@ -375,7 +379,7 @@ const pingColor = (ms) => (ms < 80 ? HUD_DIM : ms < 150 ? '#d8b44a' : HUD_RED);
 function drawTeam() {
   if (G.players.length < 2) return;
   const net = G.role === 'host' || G.role === 'guest';
-  const x = VW - 270, y0 = 14, guestLine = G.role === 'guest' ? 18 : 0;
+  const x = TouchUI.on ? 14 : VW - 270, y0 = TouchUI.on ? 112 : 14, guestLine = G.role === 'guest' ? 18 : 0;
   box(x, y0, 256, 14 + G.players.length * 22 + guestLine);
   [...G.players].sort((a, b) => a.slot - b.slot).forEach((o, i) => {
     const y = y0 + 22 + i * 22;

@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>Project Commando</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Russo+One&display=swap" rel="stylesheet">
@@ -12,6 +12,14 @@
   html, body { margin:0; height:100%; background:var(--bg); overflow:hidden; color:var(--fg); font-family:'Russo One', Consolas, sans-serif; }
   canvas { display:block; width:100vw; height:100vh; }
   canvas.playing { cursor:none; }
+  canvas { touch-action:none; -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; }
+  .tonly { display:none; }
+  .touch .tonly { display:block; }
+  .touch .kbd { display:none; }
+  #touchMenu { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; padding:12px; z-index:6; background:rgba(12,13,14,.72); }
+  #touchMenu .screen { max-width:420px; padding:14px; gap:8px; border:1px solid var(--line); border-radius:6px; background:rgba(22,23,24,.96); }
+  #touchMenu button { min-width:260px; padding:9px 14px; }
+  #touchMenu .row button { min-width:60px; }
   #menu { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; padding:16px; overflow:auto;
     background: radial-gradient(ellipse at center, rgba(40,42,38,.92), rgba(18,19,20,.98)); }
   .hidden { display:none !important; }
@@ -81,6 +89,21 @@
   </div>
 </div>
 
+<!-- Сенсорное управление: меню (≡) — то, что на ПК делают редкие клавиши -->
+<div id="touchMenu" class="hidden">
+  <div class="screen">
+    <h2>МЕНЮ</h2>
+    <button id="tmuResume">ПРОДОЛЖИТЬ</button>
+    <button id="tmuAgain">ЗАНОВО</button>
+    <button id="tmuHub">В ХАБ</button>
+    <div class="row"><label>Масштаб</label><button id="tmuOut">−</button><span id="tmuView" class="help"></span><button id="tmuIn">+</button></div>
+    <button id="tmuSpecs">ХАРАКТЕРИСТИКИ ОРУЖИЯ</button>
+    <button id="tmuMic">МИКРОФОН</button>
+    <button id="tmuFull">ВО ВЕСЬ ЭКРАН</button>
+    <button id="tmuLeave">ВЫЙТИ В ГЛАВНОЕ МЕНЮ</button>
+  </div>
+</div>
+
 <div id="menu">
   <div class="screen" id="mainMenu">
     <h1>PROJECT COMMANDO</h1>
@@ -100,7 +123,12 @@
         Друзья открывают адрес в браузере и жмут «Войти» (адрес подставится сам).</div>
     </div>
     <div id="status"></div>
-    <div class="help">
+    <div class="help tonly">
+      <b>Левый стик</b> — движение (палец за кольцо — бег) · <b>правый стик</b> — взгляд, у внешнего кольца — огонь<br>
+      Кнопки: прицел, огонь, перезарядка (дважды — быстрая), присед, оружие, нож, выглянуть ◀ ▶, дверь/подъём/стол — по месту<br>
+      <b>≡</b> — меню: заново, в хаб, масштаб, характеристики оружия, микрофон, выход · играть лучше горизонтально
+    </div>
+    <div class="help kbd">
       <b>WASD</b> — движение · <b>мышь</b> — прицел · <b>ЛКМ</b> — огонь · <b>ПКМ</b> — прицелиться · <b>R</b> — перезарядка · <b>V</b> — режим<br>
       <b>Q/E</b> — выглянуть · <b>F</b> — дверь · <b>G</b> — выбить · <b>L</b> — фонарь · <b>C</b> — присесть · <b>Shift</b> — бег<br>
       <b>B</b> (держать) — рация · <b>M</b> — микрофон вкл/выкл (голосовой чат включается в лобби)<br>
@@ -145,6 +173,7 @@
 <script src="js/assault.js"></script>
 <script src="js/render.js"></script>
 <script src="js/hud.js"></script>
+<script src="js/touch.js"></script>
 <script src="js/menu.js"></script>
 <script src="js/main.js"></script>
 </body>

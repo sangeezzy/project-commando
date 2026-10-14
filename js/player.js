@@ -46,11 +46,12 @@ function controlLocal(p, dt) {
   const busy = !!p.act || !!p.reviving;     // отпирает, бьёт ногой или поднимает раненого — стоит на месте
   // стойка: C — присесть/встать (Ctrl не используем: Ctrl+W закрывает вкладку)
   if (pressed.KeyC) p.crouchToggle = !p.crouchToggle;
-  let mx = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0), my = (keys.KeyS ? 1 : 0) - (keys.KeyW ? 1 : 0);
+  let [mx, my, mk] = moveInput();
   if (busy) mx = my = 0;              // отпирает или бьёт ногой — стоит на месте
   const ml = Math.hypot(mx, my);
   if (ml) { mx /= ml; my /= ml; }
-  const wantSprint = keys.ShiftLeft || keys.ShiftRight;
+  const wantSprint = keys.ShiftLeft || keys.ShiftRight || (TouchUI.on && TouchUI.sprint);
+  if (wantSprint) mk = 1;
   p.sprint = !!(wantSprint && ml && !mouse.r);
   if (p.sprint) { p.crouchToggle = false; p.sprintLock = SPRINT_TO_FIRE; }
   else p.sprintLock = Math.max(0, p.sprintLock - dt);
@@ -63,7 +64,7 @@ function controlLocal(p, dt) {
   p.leanWant = p.sprint ? 0 : (keys.KeyE ? 1 : 0) - (keys.KeyQ ? 1 : 0);
   let sp = p.sprint ? SPEED.sprint : p.crouch ? (p.ads > 0.5 ? SPEED.crouchAds : SPEED.crouch) : p.ads > 0.5 ? SPEED.ads : SPEED.walk;
   if (Math.abs(p.lean) > 0.3) sp = Math.min(sp, LEAN.speed);
-  const k = ml ? dirSpeedK(Math.atan2(my, mx), p.a) : 1;
+  const k = (ml ? dirSpeedK(Math.atan2(my, mx), p.a) : 1) * mk;
   moveCircle(p, mx * M(sp * k) * dt, my * M(sp * k) * dt, PR);
 
   const w = screenToWorld(mouse.x, mouse.y);
@@ -88,6 +89,15 @@ function controlLocal(p, dt) {
     if (p.sfxT <= 0) { p.sfxT = p.sprint ? 0.3 : 0.45; SFX.step(p.sprint ? 0.2 : p.crouch ? 0.05 : 0.11); }
   }
   clearPressed();
+}
+
+// Направление движения: WASD или сенсорный стик (TouchUI.mv); третье — доля скорости (стик отклонён не до конца — медленнее)
+function moveInput() {
+  if (TouchUI.on && TouchUI.mv) {
+    const m = Math.hypot(TouchUI.mv.x, TouchUI.mv.y);
+    return [TouchUI.mv.x, TouchUI.mv.y, clamp(m / 0.8, 0.35, 1)];
+  }
+  return [(keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0), (keys.KeyS ? 1 : 0) - (keys.KeyW ? 1 : 0), 1];
 }
 
 // Действие бойца: в одиночке и у хоста — сразу, у гостя — уходит хосту со следующим пакетом ввода
@@ -156,7 +166,7 @@ const eyeOf = (o) => (o.leanPx ? { x: o.lx, y: o.ly, crouch: o.crouch } : o);
 
 // Ранен: ползком, медленно; смотрит за мышкой; стрелять, бегать, выглядывать нельзя
 function crawl(p, dt) {
-  let mx = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0), my = (keys.KeyS ? 1 : 0) - (keys.KeyW ? 1 : 0);
+  let [mx, my] = moveInput();
   const ml = Math.hypot(mx, my);
   if (ml) { mx /= ml; my /= ml; moveCircle(p, mx * M(DOWN.crawl) * dt, my * M(DOWN.crawl) * dt, PR); }
   const w = screenToWorld(mouse.x, mouse.y);

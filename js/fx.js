@@ -125,10 +125,11 @@ function playFx(ev) {
     }
     SFX.door(v, what, type);
   } else if (k === 'bark') {
-    const [, x, y, text, side] = ev;
+    const [, x, y, text, side, id] = ev;
     if (p && Math.hypot(x - p.x, y - p.y) < M(35)) {
-      G.barks = (G.barks || []).filter((b) => b.t > 0).slice(-2);
-      G.barks.push({ text, t: 2.5, foe: side !== p.side });
+      // id — кто сказал: видимого противника реплика висит над ним (drawBarksOver), иначе — внизу экрана
+      G.barks = (G.barks || []).filter((b) => b.t > 0).slice(-5);
+      G.barks.push({ text, t: 2.5, foe: side !== p.side, id, over: false });
     }
   } else if (k === 'down') {
     const [, x, y, id] = ev;

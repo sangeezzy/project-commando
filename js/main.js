@@ -48,6 +48,7 @@ function update(dt) {
   if (pressed.Backspace && isAuth()) backToHub();          // хост: обратно в хаб (забег — поражение, с итогами)
   if (G.state === 'dead' && G.run && isAuth() && G.stateT >= RUN_DEAD_T) backToHub();   // отряд погиб в забеге — в хаб
   const p = me();
+  touchFrame();                                         // сенсорное управление: стики → «мышь» и движение
   if (p && G.state === 'play' && !uiOpen()) controlLocal(p, dt);
   else clearPressed();
   if (isAuth()) updateWorld(dt);
@@ -170,23 +171,27 @@ function updateLocalFx(dt) {
 
 function resize() {
   if (!mouse.x && !mouse.y) { mouse.x = innerWidth / 2; mouse.y = innerHeight / 2 - 120; }
-  VW = canvas.width = innerWidth;
-  VH = canvas.height = innerHeight;
+  // телефон: холст чётче CSS-пикселей (TouchUI.scale), на ПК — 1
+  const k = TouchUI.scale();
+  VW = canvas.width = Math.round(innerWidth * k);
+  VH = canvas.height = Math.round(innerHeight * k);
   applyZoom();
 }
 
 // Масштаб: G.view — сколько метров видно по вертикали (плавно догоняет G.viewT — цель колёсика), запоминается в браузере
 function applyZoom() { G.zoom = clamp(VH / M(G.view), 0.25, 3); }
+// на телефоне свой масштаб (экран маленький — по умолчанию ближе)
+const VIEW_KEY = TouchUI.on ? 'pcr-view-touch' : 'pcr-view';
 {
-  let v = VIEW_M;
-  try { v = +localStorage.getItem('pcr-view') || VIEW_M; } catch (e) { /* ignore */ }
+  let v = TouchUI.on ? TOUCH.view : VIEW_M;
+  try { v = +localStorage.getItem(VIEW_KEY) || v; } catch (e) { /* ignore */ }
   G.view = G.viewT = clamp(v, CAM.viewMin, CAM.viewMax);
 }
 canvas.addEventListener('wheel', (e) => {
   e.preventDefault();
   if (!map || G.state === 'menu' || G.state === 'lobby' || !e.deltaY) return;
   G.viewT = clamp(G.viewT * Math.pow(CAM.wheelStep, Math.sign(e.deltaY)), CAM.viewMin, CAM.viewMax);   // вниз — дальше
-  try { localStorage.setItem('pcr-view', G.viewT.toFixed(1)); } catch (err) { /* ignore */ }
+  try { localStorage.setItem(VIEW_KEY, G.viewT.toFixed(1)); } catch (err) { /* ignore */ }
 }, { passive: false });
 addEventListener('resize', resize);
 resize();

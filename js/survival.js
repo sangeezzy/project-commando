@@ -417,7 +417,7 @@ if (truckMenuEl) {
   truckMenuEl.querySelector('#tmCancel').addEventListener('click', closeTruckMenu);
   addEventListener('keydown', (ev) => { if (ev.code === 'Escape' && truckMenuOpen()) { ev.stopImmediatePropagation(); closeTruckMenu(); } }, true);
 }
-const uiOpen = () => loadoutOpen() || truckMenuOpen();
+const uiOpen = () => loadoutOpen() || truckMenuOpen() || touchMenuOpen();
 
 // ---------- Снимок ----------
 const survState = () => {
