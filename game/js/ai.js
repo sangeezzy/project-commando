@@ -427,6 +427,7 @@ function moveDir(e, ang, mps, dt) {
   if (aiDoorAhead(e, ang, dt)) return false;
   if (e.unstuckT > 0) { e.unstuckT -= dt; ang = e.unstuckA; }
   const x0 = e.x, y0 = e.y;
+  mps *= armorSpeedK(e);                     // броня — медленнее (как у людей)
   const hit = moveCircle(e, Math.cos(ang) * M(mps) * dt, Math.sin(ang) * M(mps) * dt, PR);
   const want = M(mps) * dt;
   if (want > 0.3 && Math.hypot(e.x - x0, e.y - y0) < want * 0.2) {
@@ -513,7 +514,7 @@ function aiEmpty(e) {
 // Раз в 0,4 с: в бою — лучший ствол для дистанции (если заметно лучше и не посреди очереди); спокоен — к полноразмерному,
 // пустое — перезарядить. Каждый кадр: нож, если цель вплотную, а оружие не готово (или просто вплотную — изредка)
 function aiWeapons(e, dt, seen) {
-  if (e.sw || e.melee || e.down) return;
+  if (e.sw || e.melee || e.down || e.mg) return;          // за пулемётом — свои стволы не трогает
   if (seen && e.seeing && seen.d < KNIFE.range + PR && (!e.gun.chamber || e.gun.reloadT > 0 || Math.random() < dt * 1.5)) {
     e.a = e.want = Math.atan2(seen.t.y - e.y, seen.t.x - e.x);
     if (startMelee(e)) return;
@@ -590,8 +591,10 @@ function updateAI(dt) {
     if (e.side === 'p') checkLeash(e);
     const hurt = e.side === 'p' && !e.seeing ? downedToHelp(e) : null;
     if (e.exec) execStep(e, dt);
+    else if (e.mg && mgStep(e, dt, seen)) { /* за станковым пулемётом */ }
     else if (hurt && reviveStep(e, hurt, dt)) { /* поднимает раненого */ }
     else if (e.side === 'p' && G.surv && survBotStep(e, dt)) { /* у грузовика: пополниться, вылечиться */ }
+    else if (mgSeek(e, dt)) { /* идёт занять свободный пулемёт */ }
     else if (e.regroup && !e.seeing) followLeader(e, dt);
     else if (e.peek) peekStep(e, dt, seen);
     else if (e.flank) flankStep(e, dt, seen);
@@ -744,7 +747,7 @@ function shootAt(e, t, d, dt, inCover) {
   if (e.react > 0 || off > 0.05) return;
   if (friendlyInLine(e, t)) return;
 
-  const spread = WEAPONS[g.t].mech + ENEMY.aim * (e.kneel ? ENEMY.kneel.aimK : 1) + ENEMY.aimFirst * Math.exp(-e.aimT / ENEMY.settle) +
+  const spread = WEAPONS[g.t].mech + ENEMY.aim * (e.kneel ? ENEMY.kneel.aimK : 1) * (e.mg ? MG.aimK : 1) + ENEMY.aimFirst * Math.exp(-e.aimT / ENEMY.settle) +
     e.supp * ENEMY.suppAim + e.blind * ENEMY.blindAim + clamp(t.speed / M(3), 0, 1.5) * 6 + g.bloom +
     clamp(e.speed / M(ENEMY.speed.walk), 0, 1.5) * ENEMY.moveAim;      // на ходу — хуже
   if (e.burst > 0) {
@@ -757,6 +760,7 @@ function shootAt(e, t, d, dt, inCover) {
       const cls = WEAPONS[g.t].cls;
       if (cls === 'shotgun') { e.burst = 1; e.pause = 60 / WEAPONS[g.t].rpm + rand(0.05, 0.25); }   // выстрел — цевьё — выстрел
       else if (cls === 'pistol') { e.burst = randi(2, 3); e.pause = rand(0.35, 0.7); }
+      else if (WEAPONS[g.t].cls === 'mg') { e.burst = randi(ENEMY.lmgBurst[0] + 2, ENEMY.lmgBurst[1] + 4); e.pause = rand(0.4, 0.9); }   // станковый — длинные очереди на любой дальности
       else if (d > ENEMY.semiRange || g.mode === 'semi') { e.burst = 1; e.pause = rand(ENEMY.semiGap[0], ENEMY.semiGap[1]); }   // далеко или одиночный режим
       else if (WEAPONS[g.t].lmg) { e.burst = randi(ENEMY.lmgBurst[0], ENEMY.lmgBurst[1]); e.pause = rand(ENEMY.burstPause[0], ENEMY.burstPause[1]) * 1.3; }   // пулемёт — длиннее
       else { e.burst = randi(ENEMY.burst[0], ENEMY.burst[1]); e.pause = rand(ENEMY.burstPause[0], ENEMY.burstPause[1]); }
@@ -1281,7 +1285,7 @@ function followLeader(e, dt) {
 // Раздвинуть людей, стоящих друг в друге
 // Не стоять друг в друге. Уступает тот, кто идёт: стоящего у угла (выглядывает, держит угол), с колена или на месте
 // не двигают — иначе подошедший вытолкнул бы его из-за угла на открытое место. Оба стоят или оба идут — поровну.
-const anchored = (e) => !!e.peek || e.kneel || e.speed < M(0.3);
+const anchored = (e) => !!e.peek || !!e.mg || e.kneel || e.speed < M(0.3);
 function separate(list, minD) {
   for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) {
     const a = list[i], b = list[j];

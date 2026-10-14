@@ -30,7 +30,7 @@ const allPeople = () => [...G.players, ...G.enemies];
 const teamOf = (side) => (side === 'e' ? G.enemies : G.players);
 const foesOf = (o) => (o.side === 'e' ? G.players : G.enemies);
 const aiList = () => [...G.enemies, ...G.players.filter((q) => q.ai)];
-const SLOT_COLORS = ['#e0c040', '#40a0e0', '#e06040', '#60d080'];
+const SLOT_COLORS = ['#e0c040', '#40a0e0', '#e06040', '#60d080', '#c070e0', '#e0e0e0', '#40d0c0', '#e08ab0'];   // до 8 мест
 
 // Оружие на руках: патроны в магазине, патрон в патроннике, запасные магазины (сколько в каждом)
 // mags — сколько магазинов с собой (вместе с тем, что в оружии); у ружья — патронов россыпью (pouch: [число])
@@ -68,8 +68,8 @@ function giveKit(o, p1, p2, pt = 'm1911') {
 const randomPistol = (rnd = Math.random) => PISTOL_IDS[Math.floor(rnd() * PISTOL_IDS.length)];
 
 // Случайный набор для ИИ: случайный пистолет, нож и 1–2 разных полноразмерных (rnd — генератор карты: при перезапуске то же)
-function randomKit(o, rnd = Math.random) {
-  const ids = [...PRIMARY_IDS];
+function randomKit(o, rnd = Math.random, pool = PRIMARY_IDS) {
+  const ids = [...pool];
   const p1 = ids.splice(Math.floor(rnd() * ids.length), 1)[0];
   const p2 = rnd() < 0.5 ? ids[Math.floor(rnd() * ids.length)] : null;
   return giveKit(o, p1, p2, randomPistol(rnd));
@@ -130,7 +130,10 @@ function makeHuman(slot, x, y, a, name) {
 }
 
 // Места отряда на старте: вокруг центра
-const SPAWN_OFF = [[0, 0], [1.3, 0], [-1.3, 0], [0, 1.3]];
+const SPAWN_OFF = [[0, 0], [1.3, 0], [-1.3, 0], [0, 1.3], [1.3, 1.3], [-1.3, 1.3], [0, 2.6], [1.3, 2.6]];
+// мест в отряде на этой игре (лобби: 2–8; тесты и старые вызовы — 4) и их стартовые смещения
+const squadN = () => clamp(G.squadSize || 4, 2, 8);
+const spawnOffs = () => SPAWN_OFF.slice(0, squadN());
 
 // Запуск полигона (классический: тесты, автотест). squad — места отряда: [{ slot, human, name }]; bots — заполнить пустые места ботами.
 function startRange(squad = null, bots = false) { startMap('range', 0, squad, bots); }
@@ -138,13 +141,15 @@ function startRange(squad = null, bots = false) { startMap('range', 0, squad, bo
 // Запуск карты id (hub, big, clear, range). seed — всё случайное на карте (старт отряда, противники, наборы ботов):
 // тот же seed — та же расстановка (перезапуск с самой карты). Снаряжение людей — выбранное в хабе (G.kits по месту).
 function startMap(id, seed = 0, squad = null, bots = false) {
-  if (id === 'assault' && !(seed >>> 20)) seed = assaultSeed(seed, 1);     // «Штурм» из хаба — локация 1
+  if (id === 'assault' && !((seed >>> 20) & 0x7F)) seed = assaultSeed(seed, 1);     // без номера локации — локация 1
   G.mapId = id; G.mapSeed = seed >>> 0;
   buildMap(id, G.mapSeed);
+  map.mgs = [];                                   // стационарные пулемёты (js/mg.js): ставит карта / режим
   const rnd = makeRng(G.mapSeed || 1);
   G.surv = null; G.weather = null; G.hubHold = null;
   const mission = id === 'clear' ? missionSetup(rnd) : null;
   if (mission) map.start = mission.start;
+  if (id === 'big') placeRangeMGs();              // полигон ×1,5: M2, ПКМ, ДШК у старта — пристрелять
   nextId = 1;
   G.seq = (G.seq || 0) + 1;
   G.players = []; G.enemies = []; G.bullets = []; G.parts = []; G.decals = []; G.hurt = [];
@@ -153,7 +158,7 @@ function startMap(id, seed = 0, squad = null, bots = false) {
   G.lastSquad = squad; G.lastBots = bots;
   const s = map.start;
   const humans = squad.filter((q) => q.human).map((q) => q.slot);
-  for (let slot = 0; slot < 4; slot++) {
+  for (let slot = 0; slot < squadN(); slot++) {
     const q = squad.find((z) => z.slot === slot);
     const [ox, oy] = SPAWN_OFF[slot];
     const sp = freeSpotNear((s.x + ox) * TILE, (s.y + oy) * TILE);

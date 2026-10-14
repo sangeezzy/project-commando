@@ -105,7 +105,7 @@ function updateWorld(dt) {
     if (!p.net) trackSpeed(p, dt);
     p.supp = Math.max(0, p.supp - dt * 0.6); p.hurtT += dt;
   }
-  if (G.state === 'play') { updateAI(dt); stepNoises(dt); updateDowned(dt); updateHub(dt); updateSurvival(dt); }
+  if (G.state === 'play') { updateAI(dt); updateMGs(); stepNoises(dt); updateDowned(dt); updateHub(dt); updateSurvival(dt); }
   updateWeather(dt);
   for (const e of G.enemies) trackSpeed(e, dt);
   for (const o of allPeople()) if (!o.dead || o.side === 'p') updateAnim(o, dt);

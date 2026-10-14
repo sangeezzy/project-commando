@@ -54,6 +54,12 @@ function drawHUD() {
     mono('Ключи: ' + names.join(', '), 14, 102, '#d8c890', 'left', 12);
   }
   if (!p.dead && G.state === 'play') drawDoorPrompt(p);
+  if (!p.dead && !p.down && G.state === 'play') {
+    // станковый пулемёт: рядом — занять, за ним — оставить
+    const m = mgNear(p);
+    if (m) mono(p.mg ? `ПУЛЕМЁТ ${WEAPONS[m.t].name} · сектор ±${Math.round(m.arc * 180 / Math.PI)}° · F — оставить` : `F — занять пулемёт ${WEAPONS[m.t].name}`,
+      VW / 2, VH - 100, HUD_WARN, 'center', 13);
+  }
   if (keys.KeyH) drawControls();
   if (keys.Tab || keys.KeyI) drawSpecs();
   if (G.toast) txt(G.toast.text, VW / 2, VH - 150, 16, HUD_WARN, 'center');
@@ -106,7 +112,8 @@ function drawHealth(p) {
     const ak = clamp(p.armor.hp / 100, 0, 1);
     ctx.fillStyle = 'rgba(255,255,255,0.12)'; ctx.fillRect(x + 64, y + 13, 150, 5);
     ctx.fillStyle = '#8fb4d8'; ctx.fillRect(x + 64, y + 13, 150 * ak, 5);
-    mono(`БРОНЯ ${p.armor.cls}` + (ak <= 0 ? ' — РАЗБИТА' : ''), x + 214, y - 6, ak <= 0 ? HUD_RED : '#8fb4d8', 'right', 11);
+    const slow = Math.round((1 - armorSpeedK(p)) * 100);
+    mono(`БРОНЯ ${p.armor.cls}` + (ak <= 0 ? ' — РАЗБИТА' : slow ? ` −${slow}%` : ''), x + 214, y - 6, ak <= 0 ? HUD_RED : '#8fb4d8', 'right', 11);
   }
   const stance = p.sprint ? 'БЕГ' : p.crouch ? 'ПРИСЕД' : 'СТОЯ';
   const lean = p.lean < -0.3 ? ' · ВЫГЛЯДЫВАЕТ ВЛЕВО' : p.lean > 0.3 ? ' · ВЫГЛЯДЫВАЕТ ВПРАВО' : '';
@@ -383,9 +390,10 @@ function drawTeam() {
   if (G.players.length < 2) return;
   const net = G.role === 'host' || G.role === 'guest';
   const x = TouchUI.on ? 14 : VW - 270, y0 = TouchUI.on ? 112 : 14, guestLine = G.role === 'guest' ? 18 : 0;
-  box(x, y0, 256, 14 + G.players.length * 22 + guestLine);
+  const rh = G.players.length > 4 ? 17 : 22;          // больше 4 бойцов — строки плотнее
+  box(x, y0, 256, 14 + G.players.length * rh + guestLine);
   [...G.players].sort((a, b) => a.slot - b.slot).forEach((o, i) => {
-    const y = y0 + 22 + i * 22;
+    const y = y0 + 22 + i * rh;
     ctx.fillStyle = SLOT_COLORS[o.slot]; ctx.fillRect(x + 10, y - 9, 8, 8);
     mono(o.name + (o.ai ? ' · бот' : '') + (o.slot === G.mySlot ? ' (вы)' : ''), x + 24, y, o.dead ? HUD_DIM : HUD_COL, 'left', 12);
     if (!o.ai) talkIcon(x + 140, y - 4, o.slot);
@@ -402,7 +410,7 @@ function drawTeam() {
   });
   // гость: сколько снимков приходит и на сколько позже показаны остальные (интерполяция)
   if (guestLine) {
-    const y = y0 + 22 + G.players.length * 22;
+    const y = y0 + 22 + G.players.length * rh;
     mono(`снимки ${Net.snapHz}/с · задержка показа ${Math.round(interpDelay())} мс`, x + 246, y, HUD_DIM, 'right', 11);
   }
 }

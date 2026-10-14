@@ -18,9 +18,10 @@ const Net = {
   pingT: 0, snapN: 0, snapHz: 0, rateT: 0,      // гость: снимков за секунду
 };
 
-// Лобби: 4 места; human — занято человеком; ready — нажал «Готов»
-const Lobby = { slots: [], bots: true };
-const emptySlots = () => [0, 1, 2, 3].map((slot) => ({ slot, human: false, name: '', ready: false }));
+// Лобби: size мест (2–8, выбирает хост / одиночка в главном меню); human — занято человеком; ready — нажал «Готов»
+const SQUAD_MIN = 2, SQUAD_MAX = 8;
+const Lobby = { slots: [], bots: true, size: 4 };
+const emptySlots = (n = Lobby.size) => Array.from({ length: clamp(n | 0, SQUAD_MIN, SQUAD_MAX) }, (_, slot) => ({ slot, human: false, name: '', ready: false }));
 
 function send(msg) {
   if (Net.conn && Net.conn.open) { try { Net.conn.send(msg); } catch (e) { /* канал закрыт */ } }
@@ -83,8 +84,9 @@ function onHello(c, d) {
     if (old && old !== c) { onGuestLeft(old); try { old.close(); } catch (e) { /* ignore */ } }
     const back = Net.left[name];
     if (back != null && free(back)) slot = back;
-    if (slot < 0) slot = [0, 1, 2, 3].find((s) => free(s) && G.players.some((q) => q.slot === s && q.ai && !q.dead)) ?? -1;
-    if (slot < 0) slot = [0, 1, 2, 3].find(free) ?? -1;
+    const all = Lobby.slots.map((s) => s.slot);
+    if (slot < 0) slot = all.find((s) => free(s) && G.players.some((q) => q.slot === s && q.ai && !q.dead)) ?? -1;
+    if (slot < 0) slot = all.find(free) ?? -1;
   }
   if (slot < 0) { c.send({ t: 'full' }); setTimeout(() => c.close(), 300); return; }
   c.slot = slot; c.op = !!d.op;
@@ -157,6 +159,7 @@ function startGameFromLobby() {
   const squad = Lobby.slots.filter((s) => s.human).map((s) => ({ slot: s.slot, human: true, name: s.name }));
   hideMenu();
   G.lastSquad = squad; G.lastBots = Lobby.bots;
+  G.squadSize = Lobby.slots.length;      // мест в отряде: пустые — боты (если включены)
   launchMap('hub', 0);                    // после лобби — хаб: оружейный стол и проходы на карты
 }
 
@@ -199,6 +202,7 @@ function sendSnapshot() {
     P: allPeople().map(personState),
     D: map.doors.map((d) => (d.open ? 1 : 0) | (d.locked ? 2 : 0) | (d.broken ? 4 : 0)),
     K: map.keys.map((k) => (k.taken ? 1 : 0)),
+    M: (map.mgs || []).map(mgState),          // стационарные пулемёты: тип, место, кто за ним, лента
     fx: G.fxOut,
   });
   G.fxOut = [];
@@ -395,6 +399,7 @@ function guestSendInput() {
 function resetGuestWorld(seq, id = 'range', seed = 0) {
   G.mapId = id; G.mapSeed = seed; G.surv = null; G.weather = null;
   buildMap(id, seed);
+  map.mgs = [];
   G.seq = seq;
   G.players = []; G.enemies = []; G.bullets = []; G.parts = []; G.decals = []; G.hurt = [];
   G.hitmark = null; G.toast = null; G.muzzle = []; G.expo = null; G.barks = [];
@@ -470,6 +475,7 @@ function applySnapshot(s) {
     }
   });
   s.K.forEach((t, i) => { map.keys[i].taken = !!t; });
+  applyMgState(s.M);                         // после бойцов: кто за пулемётом (o.mg, o.gun)
   for (const ev of s.fx) if (!predConsumes(ev)) playFx(ev);
   { const p = me(); if (p && !p.ai) predAmmo(p.gun); }
 }

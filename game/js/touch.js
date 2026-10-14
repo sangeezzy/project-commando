@@ -66,6 +66,8 @@ const vtap = (code) => { vkey(code, true); vkey(code, false); };
 function touchUseLabel(p) {
   if (!p || p.dead || p.down) return null;
   if (G.players.some((q) => q !== p && q.down && !q.dead && Math.hypot(q.x - p.x, q.y - p.y) < DOWN.reviveR)) return 'ПОДНЯТЬ';
+  if (p.mg) return 'ОСТАВИТЬ';
+  if (mgNear(p)) return 'ПУЛЕМЁТ';
   if (G.surv && nearRear(p)) return 'ГРУЗОВИК';
   if (G.surv && nearMedic(p)) return 'МЕДИК';
   if (tableNear(p)) return 'СТОЛ';

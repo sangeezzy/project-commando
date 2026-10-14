@@ -37,12 +37,16 @@ window.__result = (() => {
         }
       }
     });
-    check('волна 1 — 4 противника; появились вне видимости отряда и не ближе 25 м', all === SURV.size(1) && !bad.length, [all, bad.slice(0, 4)]);
+    check('волна 1 — 0,8–1,2 × отряда; появились вне видимости отряда и не ближе 25 м', all === SURV.size(1, G.surv.first) && !bad.length, [all, G.surv.first, bad.slice(0, 4)]);
+    const sq = G.players.length;
+    check('первая волна — от 0,8 до 1,2 × бойцов отряда', G.surv.first >= Math.round(sq * 0.8) && G.surv.first <= Math.round(sq * 1.2), [G.surv.first, sq]);
     const { cx, cy } = map.surv;
     const closer = [...spawnedAt].filter(([e, s0]) => Math.hypot(e.x - cx * TILE, e.y - cy * TILE) < Math.hypot(s0.x - cx * TILE, s0.y - cy * TILE) - M(3)).length;
     check('противники идут к центру (хотя бы половина за 18 с)', closer >= 2, closer);
     check('волна 1 — только пистолеты', [...spawnedAt.keys()].every((e) => !e.kit[0] && !e.kit[1] && PISTOL_IDS.includes(e.gun.t)));
-    check('размер растёт: 4, 6, 8, 10…', [1, 2, 3, 4, 5].map(SURV.size).join() === '4,6,8,10,12');
+    check('размер растёт от первой по 2: 5, 7, 9, 11…', [1, 2, 3, 4, 5].map((n) => SURV.size(n, 5)).join() === '5,7,9,11,13');
+    const fc = new Set(); for (let i = 0; i < 400; i++) fc.add(firstCount(5)); 
+    check('первая: 5 бойцов — 4…6 противников, все варианты', [...fc].sort().join() === '4,5,6', [...fc]);
     check('грузовик — после волн 3, 6, 9, 12, дальше — каждой второй', [3, 6, 9, 12, 14, 16].every(SURV.truckDue) && ![1, 2, 4, 5, 13, 15].some(SURV.truckDue));
     // оружие по волнам (много раз)
     const rnd = makeRng(5), e = makeEnemy(0, 0, 0, null);

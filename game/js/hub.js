@@ -17,10 +17,10 @@ function missionSetup(rnd) {
   for (let y = 2; y < h - 2; y++) for (let x = 2; x < w - 2; x++) {
     const de = Math.min(x, y, w - 1 - x, h - 1 - y);
     if (de > 4 || !ok(x, y)) continue;
-    if (SPAWN_OFF.every(([ox, oy]) => ok(Math.round(x + ox), Math.round(y + oy)))) edge.push([x, y]);
+    if (spawnOffs().every(([ox, oy]) => ok(Math.round(x + ox), Math.round(y + oy)))) edge.push([x, y]);
   }
   const [sx, sy] = edge[Math.floor(rnd() * edge.length)];
-  const team = SPAWN_OFF.map(([ox, oy]) => ({ x: (sx + 0.5 + ox) * TILE, y: (sy + 0.5 + oy) * TILE }));
+  const team = spawnOffs().map(([ox, oy]) => ({ x: (sx + 0.5 + ox) * TILE, y: (sy + 0.5 + oy) * TILE }));
   // лицом — к середине карты
   const start = { x: sx + 0.5, y: sy + 0.5, a: Math.atan2(h / 2 - sy, w / 2 - sx) };
   // противники: дойти можно (через незапертые двери), не ближе 16 м к отряду, ни одного не видно со старта (и им — отряд),
@@ -68,7 +68,7 @@ function updateHub(dt) {
   G.hubHold.t += dt;
   if (G.hubHold.t >= HUB_HOLD) {
     const id = HUB_EXITS[i].map, seed = (Math.random() * 4294967296) >>> 0;
-    launchMap(id, id === 'assault' ? assaultSeed(seed, 1) : seed);      // «Штурм» из хаба — всегда с 1-й локации
+    launchMap(id, id === 'assault' ? assaultSeed(seed, 1, firstCount(G.players.length)) : seed);   // «Штурм» из хаба — с 1-й локации; противников — по отряду
   }
 }
 

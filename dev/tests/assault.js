@@ -15,7 +15,7 @@ window.__result = (() => {
       startMap('assault', assaultSeed(base, 1), squad, false);
       shapes.add(map.assault.shape);
       a1 += floorN();
-      if (G.enemies.length !== ASSAULT.enemies(1)) bad.push(['число', G.enemies.length]);
+      if (G.enemies.length !== assaultEnemies(G.mapSeed)) bad.push(['число', G.enemies.length]);
       const st = me();
       for (const e of G.enemies) if (los(e.x, e.y, st.x, st.y)) bad.push(['видит старт', k]);
       // ключи: каждый запертой двери — есть, и дойти до него можно, не открывая ни одной запертой
@@ -78,8 +78,9 @@ window.__result = (() => {
     tick(60 * HUB_HOLD + 10);
     check('из хаба — «Штурм» с 1-й локации, счёт с нуля', G.mapId === 'assault' && G.surv.stage === 1 && G.run && G.run.cleared === 0 && G.run.kills === 0,
       [G.mapId, G.surv && G.surv.stage, G.run]);
-    check('противников на 1-й — 4, с пистолетами', G.enemies.length === ASSAULT.enemies(1) && ASSAULT.enemies(1) === 4 && G.enemies.every((e) => !e.kit[0]),
-      G.enemies.length);
+    const sq = G.players.length, f1 = assaultFirst(G.mapSeed);
+    check('противников на 1-й — 0,8–1,2 × отряда (в seed), с пистолетами', G.enemies.length === f1 && f1 >= Math.round(sq * 0.8) && f1 <= Math.round(sq * 1.2) &&
+      G.enemies.every((e) => !e.kit[0]), [G.enemies.length, f1, sq]);
     me().god = true;
     killPerson(G.enemies[0]); killPerson(G.enemies[1]);
     const bot = G.players.find((q) => q.ai); killPerson(bot);
@@ -153,7 +154,7 @@ window.__result = (() => {
     // «Выживание»: шанс бросается в начале волны, после конца волны — не приходит
     startMap('surv', 78, squad, false);
     G.surv.wave = 0; G.surv.phase = 'break'; G.surv.t = 0; tick(2);
-    check('«Выживание»: шанс — в начале волны', !!G.surv.reinf && G.surv.reinf.base === SURV.size(1));
+    check('«Выживание»: шанс — в начале волны', !!G.surv.reinf && G.surv.reinf.base === SURV.size(1, G.surv.first));
     G.surv.reinf.on = true; G.enemies.forEach((e) => { e.dead = true; }); G.surv.toSpawn = 0; tick(2);
     check('волна кончилась — подкрепления уже не будет', G.surv.reinf.done && !G.enemies.some((e) => e.reinf));
   });

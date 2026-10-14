@@ -9,7 +9,7 @@
 
 const SURV = {
   W: 80, H: 60,
-  size: (n) => Math.min(40, 4 + 2 * (n - 1)),     // противников в волне
+  size: (n, first = 4) => Math.min(40, first + 2 * (n - 1)),     // противников в волне: первая — first (по отряду, firstCount), дальше +2
   truckDue: (n) => (n <= 12 ? n % 3 === 0 : n % 2 === 0),
   maxAlive: 14,                                    // одновременно на карте
   group: [2, 4], groupGap: [3, 6],                 // группа: человек; между группами, с
@@ -101,10 +101,13 @@ function survInit(rnd) {
     spawns.push([x, y]);
   }
   G.surv = { mode: 'survival', rnd, wave: 0, stage: 0, phase: 'break', t: SURV.firstBreak, toSpawn: 0, spawnT: 0, dirT: 0, trucks: 0, stop: 0,
-    truck: null, medic: null, spawns, recent: [], tilesOn: false, waitT: 0, reinf: null };
+    truck: null, medic: null, spawns, recent: [], tilesOn: false, waitT: 0, reinf: null, first: firstCount(G.players.length, rnd) };
   initWeather(rollWeather(rnd));
   for (const p of G.players) p.armor = null;          // начинают без брони
 }
+
+// Первая волна «Выживания» / первая локация «Штурма»: случайно 0,8–1,2 × бойцов отряда (люди и боты), не меньше 1
+const firstCount = (squad, rnd = Math.random) => Math.max(1, Math.round(Math.max(1, squad) * (0.8 + 0.4 * rnd())));
 
 const survLeft = () => (G.surv ? G.surv.toSpawn + G.enemies.filter((e) => !e.dead).length : 0);
 // Грузовик едет по дороге x = map.truck.cx (север — вперёд): въезд с from до park, отъезд до to (передний край, клетки)
@@ -156,7 +159,7 @@ function updateSurvival(dt) {
 function startWave() {
   const s = G.surv;
   s.wave++;
-  s.toSpawn = SURV.size(s.wave);
+  s.toSpawn = SURV.size(s.wave, s.first);
   s.spawnT = 0; s.dirT = SURV.dirT; s.phase = 'wave';
   // тела позапрошлых волн убрать (держать список коротким)
   G.enemies = G.enemies.filter((e) => !e.dead || (e.wave || 0) >= s.wave - 1);
@@ -227,7 +230,7 @@ function spawnGroup() {
 function kitForWave(e, n, rnd) {
   if (n <= 2) giveKit(e, null, null, randomPistol(rnd));
   else if (n <= 4 || (n <= 6 && rnd() < 0.5)) giveKit(e, rnd() < 0.5 ? 'w1300' : null, null, randomPistol(rnd));
-  else randomKit(e, rnd);
+  else randomKit(e, rnd, unlockedPrimaries(n));          // открытые к этой волне (UNLOCK): пулемёты — позже
 }
 
 // Не в бою и без цели — к отряду (примерно: точка в 12 м от середины отряда)
@@ -349,7 +352,8 @@ function updateMedic(dt) {
 function survAct(p, k) {
   const s = G.surv;
   if (!s || p.dead || p.down || p.act) return;
-  if (k === 'supply' && nearRear(p)) p.act = { kind: 'supply', t: 0, dur: SURV.supplyT };
+  // supply:a,b,c,броня — свой выбор (меню у борта); просто supply — те же стволы и лучшая доступная броня (боты)
+  if (k.startsWith('supply') && nearRear(p)) p.act = { kind: 'supply', t: 0, dur: SURV.supplyT, pick: k.length > 7 ? k.slice(7).split(',') : null };
   else if (k === 'heal' && nearMedic(p) && p.hp < HP && !s.medic.heal) { p.act = { kind: 'heal', t: 0, dur: SURV.healT }; s.medic.heal = p.id; }
   else if (k === 'evac' && nearRear(p) && !p.ai && p.slot === 0) backToHub(true);     // покинуть боевую зону — весь отряд в хаб с итогами (решает хост)
 }
@@ -361,17 +365,42 @@ function survActStep(p, a, dt) {
   a.t += dt;
   if (a.t < a.dur) return true;
   if (a.kind === 'supply') {
-    p.kit = p.kit.map((g) => (g ? Object.assign(makeGun(g.t, ammoFor(g.t, p.side, p.ai)), { mode: g.mode }) : null));
-    p.gun = p.kit[p.cur] || p.kit[2];
-    giveArmor(p, ARMOR_ORDER[Math.min(s.trucks, 4)]);
+    const sup = truckSupply(p, a.pick);
     p.supplied = s.stop;
-    emit(['toast', p.id, `ПОПОЛНЕНО: боеприпасы, броня ${p.armor.cls}`]);
+    emit(['toast', p.id, `ПОПОЛНЕНО: ${sup.names}; броня ${sup.arm || 'нет'}`]);
   } else {
     p.hp = HP; p.healed = s.stop; s.medic.heal = 0;
     emit(['toast', p.id, 'ВЫЛЕЧЕН']);
   }
   p.act = null;
   return false;
+}
+
+// Что можно взять у грузовика сейчас: открытые к этой волне (локации) стволы, свои — тоже; броня — до лучшей привезённой
+function truckOffer(p) {
+  const s = G.surv, n = s.mode === 'assault' ? s.stage : s.wave;
+  const own = p.kit.slice(0, 2).filter(Boolean).map((g) => g.t);
+  return { prim: PRIMARY_IDS.filter((t) => unlockedPrimaries(n).includes(t) || own.includes(t)), pist: PISTOL_IDS,
+    armors: ARMOR_ORDER.slice(0, Math.min(s.trucks, 4) + 1) };       // [null, 'IIIA', …] — без брони тоже можно (быстрее)
+}
+// Выдать у грузовика: pick = [ствол 1, ствол 2, пистолет, броня] (проверяется по truckOffer; неверный — как без выбора);
+// без выбора — те же стволы и лучшая доступная броня. Всё — с полным боекомплектом.
+function truckSupply(p, pick) {
+  const off = truckOffer(p);
+  let kitT = p.kit.map((g) => g && g.t), arm = off.armors[off.armors.length - 1];
+  if (pick) {
+    const [w1, w2, pt, ar] = pick;
+    const ok = (t) => !t || off.prim.includes(t);
+    if (ok(w1) && ok(w2) && (!w1 || w1 !== w2) && off.pist.includes(pt)) kitT = [w1 || null, w2 || null, pt];
+    const ai = ar ? off.armors.indexOf(ar) : 0;
+    if (ai >= 0) arm = off.armors[ai];
+  }
+  const old = p.kit;
+  p.kit = kitT.map((t, i) => (t ? Object.assign(makeGun(t, ammoFor(t, p.side, p.ai)), { mode: old[i] && old[i].t === t ? old[i].mode : WEAPONS[t].modes[0] }) : null));
+  if (!p.kit[p.cur]) p.cur = p.kit[0] ? 0 : p.kit[1] ? 1 : 2;
+  p.gun = p.kit[p.cur]; p.off = -1; p.sw = null;
+  giveArmor(p, arm);
+  return { arm, names: p.kit.filter(Boolean).map((g) => WEAPONS[g.t].name).join(' + ') };
 }
 
 // Бот отряда (вне боя), пока грузовик стоит: к заднему борту — пополниться, потом к медику — если ранен. Возвращает true, если занят этим
@@ -406,13 +435,32 @@ function openTruckMenu() {
   const ev = truckMenuEl.querySelector('#tmEvac');
   ev.disabled = !host;
   ev.textContent = host ? 'ПОКИНУТЬ БОЕВУЮ ЗОНУ — ВСЕМ В ХАБ' : 'ПОКИНУТЬ БОЕВУЮ ЗОНУ (решает хост)';
-  truckMenuEl.querySelector('#tmSupply').textContent = `ПОПОЛНИТЬ БОЕПРИПАСЫ И БРОНЮ (${ARMOR_ORDER[Math.min(G.surv.trucks, 4)]}) — ${String(SURV.supplyT).replace('.', ',')} с`;
+  truckMenuEl.querySelector('#tmSupply').textContent = `ВЗЯТЬ И ПОПОЛНИТЬ — ${String(SURV.supplyT).replace('.', ',')} с`;
+  // выбор: открытые к этой волне стволы (и свои), пистолет, броня до привезённой (тяжелее — защищает лучше, но медленнее)
+  const p = me(), off = truckOffer(p), cur = p.kit.map((g) => g && g.t);
+  const opt = (ids, sel, none) => (none ? `<option value="">${none}</option>` : '') +
+    ids.map((t) => `<option value="${t}"${t === sel ? ' selected' : ''}>${WEAPONS[t].name} — ${WEAPONS[t].cal}</option>`).join('');
+  truckMenuEl.querySelector('#tmW1').innerHTML = opt(off.prim, cur[0], '— пусто —');
+  truckMenuEl.querySelector('#tmW2').innerHTML = opt(off.prim, cur[1], '— пусто —');
+  truckMenuEl.querySelector('#tmP').innerHTML = opt(off.pist, cur[2], null);
+  // по умолчанию — своя броня, если её ещё можно взять, иначе лучшая привезённая
+  const best = off.armors[off.armors.length - 1], selA = p.armor && off.armors.includes(p.armor.cls) ? p.armor.cls : best;
+  truckMenuEl.querySelector('#tmArmor').innerHTML = off.armors.map((c) => `<option value="${c || ''}"${c === selA ? ' selected' : ''}>` +
+    (c ? `${c} — ${ARMOR[c].desc}; скорость −${Math.round((1 - ARMOR[c].speed) * 100)}%` : 'без брони — быстрее всех') + '</option>').join('');
+  truckMenuEl.querySelector('#tmErr').textContent = '';
   truckMenuEl.classList.remove('hidden');
   for (const k in keys) keys[k] = false;
 }
 function closeTruckMenu() { if (truckMenuEl) truckMenuEl.classList.add('hidden'); }
 if (truckMenuEl) {
-  truckMenuEl.querySelector('#tmSupply').addEventListener('click', () => { const p = me(); if (p) doAct(p, 'supply'); closeTruckMenu(); });
+  truckMenuEl.querySelector('#tmSupply').addEventListener('click', () => {
+    const v = (id) => truckMenuEl.querySelector(id).value;
+    const a = v('#tmW1'), b = v('#tmW2');
+    if (a && a === b) { truckMenuEl.querySelector('#tmErr').textContent = 'Два одинаковых ствола брать незачем — выберите разные.'; return; }
+    const p = me();
+    if (p) doAct(p, `supply:${a},${b},${v('#tmP')},${v('#tmArmor')}`);
+    closeTruckMenu();
+  });
   truckMenuEl.querySelector('#tmEvac').addEventListener('click', () => { const p = me(); if (p) doAct(p, 'evac'); closeTruckMenu(); });
   truckMenuEl.querySelector('#tmCancel').addEventListener('click', closeTruckMenu);
   addEventListener('keydown', (ev) => { if (ev.code === 'Escape' && truckMenuOpen()) { ev.stopImmediatePropagation(); closeTruckMenu(); } }, true);

@@ -39,6 +39,7 @@ function render(dt = 1 / 60) {
   for (const k of map.keys) if (!k.taken && onScreen(k.x, k.y)) drawKey(k);
   drawTruck();
   for (const o of allPeople()) if (o.dead && !o.evac && onScreen(o.x, o.y)) drawBody(o);
+  drawMGs();                          // станковые пулемёты (под бойцами: стрелок — за ними)
   for (const e of G.enemies) {
     if (e.dead || !onScreen(e.x, e.y)) { e.va = 0; continue; }
     const v = p && (p.dead || G.noFog || playerSees(p, e)) ? 1 : 0;      // отладка ]: видно всех
@@ -445,6 +446,12 @@ function drawPerson(o, alpha) {
   const ads = an.ads;
   const ln = o.leanPx || 0;                 // выглядывание: плечи наполовину, голова и оружие целиком
   ctx.translate(0, ln * 0.5);
+  if (o.mg) {
+    // за станковым пулемётом: свой ствол — за спиной, руки — на рукоятках пулемёта (сам пулемёт — drawMGs)
+    ctx.fillStyle = isP ? '#5e6b42' : '#4a4038';
+    ctx.beginPath(); ctx.arc(9, -3, 3, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(9, 3, 3, 0, Math.PI * 2); ctx.fill();
+  } else {
   // оружие опущено: на бегу сильнее, при перезарядке — к себе
   const lowK = Math.max(an.low, an.reload);
   const rot = an.low * 0.75 + an.reload * 0.5 * (1 - an.low);
@@ -484,6 +491,7 @@ function drawPerson(o, alpha) {
     ctx.beginPath(); ctx.arc(fx, fy, 3, 0, Math.PI * 2); ctx.fill();
     const bx = lerp(3, 8, reach), by = lerp(7 - ads * 3, 11, reach);
     ctx.beginPath(); ctx.arc(bx, by, 3, 0, Math.PI * 2); ctx.fill();
+  }
   }
   // нож: рука с клинком выбрасывается вперёд и возвращается
   if (o.melee) {

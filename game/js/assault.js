@@ -8,7 +8,7 @@
 // погибшие на неё не попадают — их привозит грузовик (truckReinforce).
 
 const ASSAULT = {
-  enemies: (n) => Math.min(30, 4 + 2 * (n - 1)),     // как волны «Выживания»: 4, 6, 8…
+  enemies: (n, first = 4) => Math.min(30, first + 2 * (n - 1)),     // как волны «Выживания»: первая — по отряду (first), дальше +2
   area: (k) => 1600 + k * 170,               // м² (клеток) на k противников
   shapes: ['rect', 'square', 'L', 'T', 'cross', 'U'],
 };
@@ -20,8 +20,12 @@ const SHAPE_CELLS = {
   cross: [[1, 0], [0, 1], [1, 1], [2, 1], [1, 2]],
   U: [[0, 0], [2, 0], [0, 1], [1, 1], [2, 1]],
 };
-const assaultSeed = (base, stage) => (((base & 0xFFFFF) | (stage << 20)) >>> 0);
-const assaultStage = (seed) => Math.max(1, seed >>> 20);
+// seed: биты 0–19 — основа, 20–26 — номер локации (до 127), 27–31 — противников на первой (0 — 4, как раньше): размер карты от них,
+// гость строит ту же карту по seed
+const assaultSeed = (base, stage, first = assaultFirst(base)) => (((base & 0xFFFFF) | ((stage & 0x7F) << 20) | ((first & 0x1F) << 27)) >>> 0);
+const assaultStage = (seed) => Math.max(1, (seed >>> 20) & 0x7F);
+const assaultFirst = (seed) => (seed >>> 27) || 4;
+const assaultEnemies = (seed) => ASSAULT.enemies(assaultStage(seed), assaultFirst(seed));
 const KEY_IDS = [['red', 'Красный ключ'], ['blue', 'Синий ключ'], ['green', 'Зелёный ключ'], ['yellow', 'Жёлтый ключ'], ['white', 'Белый ключ'], ['black', 'Чёрный ключ']];
 
 function buildAssault(seed) {
@@ -30,7 +34,7 @@ function buildAssault(seed) {
   const shape = ASSAULT.shapes[Math.floor(rnd() * ASSAULT.shapes.length)];
   const cells = SHAPE_CELLS[shape];
   const cols = Math.max(...cells.map((c) => c[0])) + 1, rows = Math.max(...cells.map((c) => c[1])) + 1;
-  const area = ASSAULT.area(ASSAULT.enemies(stage));
+  const area = ASSAULT.area(assaultEnemies(seed));
   // размер клетки сетки: площадь формы ≈ area; прямоугольник — вытянутый, квадрат — нет
   let cw, ch;
   if (shape === 'rect') { const asp = 1.3 + rnd() * 0.7; cw = Math.round(Math.sqrt(area * asp)); ch = Math.round(area / cw); }
@@ -154,7 +158,7 @@ function buildAssault(seed) {
 // Как «Зачистка»: дойти можно, ≥ 16 м от старта, ни один не на прямой линии со стартом, друг от друга ≥ 4 м; 30–60% — патрули
 function assaultSetup(rnd) {
   const { w, h } = map, stage = map.assault.stage, st = map.start;
-  const team = SPAWN_OFF.map(([ox, oy]) => ({ x: (st.x + ox) * TILE, y: (st.y + oy) * TILE }));
+  const team = spawnOffs().map(([ox, oy]) => ({ x: (st.x + ox) * TILE, y: (st.y + oy) * TILE }));
   const reach = bfsFrom(team[0].x, team[0].y, 1e9, true);
   const cand = [];
   for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
@@ -163,7 +167,7 @@ function assaultSetup(rnd) {
     if (team.some((t) => Math.hypot(t.x - cx, t.y - cy) < M(16) || los(t.x, t.y, cx, cy))) continue;
     cand.push([x, y]);
   }
-  const n = ASSAULT.enemies(stage), enemies = [];
+  const n = assaultEnemies(G.mapSeed), enemies = [];
   for (let tries = 0; tries < 6000 && enemies.length < n && cand.length; tries++) {
     const [x, y] = cand[Math.floor(rnd() * cand.length)];
     if (enemies.some((e) => Math.hypot(e.x - (x + 0.5), e.y - (y + 0.5)) < 4)) continue;
@@ -185,6 +189,18 @@ function kitForStage(e, n, rnd) { kitForWave(e, n, rnd); }
 function assaultInit(rnd) {
   const stage = map.assault.stage, setup = assaultSetup(rnd);
   for (const m of setup.enemies) { const e = makeEnemy(m.x * TILE, m.y * TILE, m.a, m.patrol); kitForStage(e, stage, rnd); G.enemies.push(e); }
+  // с локации MG.fromStage — с шансом MG.chance стационарный пулемёт и стрелок за ним (логичное место вне видимости отряда, js/mg.js)
+  if (stage >= MG.fromStage && rnd() < MG.chance) {
+    const st = map.start, team = spawnOffs().map(([ox, oy]) => ({ x: (st.x + ox) * TILE, y: (st.y + oy) * TILE }));
+    const pos = placeAssaultMG(rnd, setup.spawns, team);
+    if (pos) {
+      const m = addMG(MG_IDS[Math.floor(rnd() * MG_IDS.length)], pos.x, pos.y, pos.a), s = mgSeat(m);
+      const g = makeEnemy(s.x, s.y, pos.a, null);
+      kitForStage(g, stage, rnd);
+      G.enemies.push(g);
+      mgMount(g, m);
+    }
+  }
   if (stage === 1) G.assaultCarry = null;           // новый заход из хаба — без старого отряда
   const carry = stage > 1 ? G.assaultCarry : null;
   G.surv = { mode: 'assault', rnd, stage, wave: 0, phase: 'fight', t: 0, toSpawn: 0, trucks: carry ? carry.trucks : 0, stop: carry ? carry.trucks : 0,

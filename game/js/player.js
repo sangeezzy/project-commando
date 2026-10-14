@@ -41,13 +41,14 @@ function controlLocal(p, dt) {
   if (pressed.KeyF && G.surv && nearRear(p)) openTruckMenu();          // «Выживание»: задний борт грузовика — меню
   else if (pressed.KeyF && G.surv && nearMedic(p)) doAct(p, 'heal');    // …медик — лечиться
   else if (pressed.KeyF && tableNear(p)) openLoadout();                  // хаб: оружейный стол — выбор снаряжения (у себя на экране)
+  else if (pressed.KeyF && (p.mg || mgNear(p)) && !downNear) doAct(p, 'mg');     // стационарный пулемёт: занять / оставить
   else if (pressed.KeyF && near && !downNear) doAct(p, 'door');
-  if (pressed.KeyG && near) doAct(p, 'kick');
+  if (pressed.KeyG && near && !p.mg) doAct(p, 'kick');
   const busy = !!p.act || !!p.reviving;     // отпирает, бьёт ногой или поднимает раненого — стоит на месте
   // стойка: C — присесть/встать (Ctrl не используем: Ctrl+W закрывает вкладку)
   if (pressed.KeyC) p.crouchToggle = !p.crouchToggle;
   let [mx, my, mk] = moveInput();
-  if (busy) mx = my = 0;              // отпирает или бьёт ногой — стоит на месте
+  if (busy || p.mg) mx = my = 0;      // отпирает, бьёт ногой или за пулемётом — стоит на месте
   const ml = Math.hypot(mx, my);
   if (ml) { mx /= ml; my /= ml; }
   const wantSprint = keys.ShiftLeft || keys.ShiftRight || (TouchUI.on && TouchUI.sprint);
@@ -55,21 +56,28 @@ function controlLocal(p, dt) {
   p.sprint = !!(wantSprint && ml && !mouse.r);
   if (p.sprint) { p.crouchToggle = false; p.sprintLock = SPRINT_TO_FIRE; }
   else p.sprintLock = Math.max(0, p.sprintLock - dt);
+  if (p.mg) p.crouchToggle = false;   // за пулемётом — стоя (станок высокий)
   p.crouch = !p.sprint && !!p.crouchToggle;
   // прицеливание: ПКМ (не на бегу и не во время перезарядки)
-  const adsWant = mouse.r && !p.sprint && !g.reloadT;
+  const adsWant = (mouse.r || !!p.mg) && !p.sprint && !g.reloadT;     // за пулемётом — всегда «в прицел» (станок)
   p.ads = clamp(p.ads + (adsWant ? dt : -dt) / ADS_TIME, 0, 1);
 
   // выглядывание: Q — влево, E — вправо (держать); на бегу нельзя
-  p.leanWant = p.sprint ? 0 : (keys.KeyE ? 1 : 0) - (keys.KeyQ ? 1 : 0);
+  p.leanWant = p.sprint || p.mg ? 0 : (keys.KeyE ? 1 : 0) - (keys.KeyQ ? 1 : 0);
   let sp = p.sprint ? SPEED.sprint : p.crouch ? (p.ads > 0.5 ? SPEED.crouchAds : SPEED.crouch) : p.ads > 0.5 ? SPEED.ads : SPEED.walk;
   if (Math.abs(p.lean) > 0.3) sp = Math.min(sp, LEAN.speed);
-  const k = (ml ? dirSpeedK(Math.atan2(my, mx), p.a) : 1) * mk;
+  const k = (ml ? dirSpeedK(Math.atan2(my, mx), p.a) : 1) * mk * armorSpeedK(p);     // броня — медленнее
   moveCircle(p, mx * M(sp * k) * dt, my * M(sp * k) * dt, PR);
 
   const w = screenToWorld(mouse.x, mouse.y);
   const aim = Math.atan2(w.y - p.y, w.x - p.x);
   p.a = aim;   // взгляд всегда за мышкой — и на бегу (оружие при этом опущено)
+  if (p.mg) {
+    // за пулемётом: на месте стрелка, ствол — только в секторе станка
+    const s = mgSeat(p.mg);
+    p.x = s.x; p.y = s.y;
+    p.a = mgClamp(p.mg, p.a);
+  }
 
   if (pressed.KeyL) doAct(p, 'lamp');
   // оружие: 1, 2 — полноразмерные, 3 — пистолет; X — удар ножом
@@ -107,6 +115,8 @@ function doAct(p, k) {
 
 function applyAct(p, k) {
   if (p.dead) return;
+  if (k === 'mg') { mgToggle(p); return; }
+  if (p.mg && /^(w[0-2]|knife|mode|door|kick)$/.test(k)) return;      // за пулемётом — ни смены оружия, ни ножа, ни дверей
   const g = p.gun;
   if (k === 'door') { const d = doorNear(p); if (d) useDoor(p, d); }
   else if (k === 'kick') { const d = doorNear(p); if (d) startKick(p, d); }
@@ -116,7 +126,7 @@ function applyAct(p, k) {
   else if (k === 'w0' || k === 'w1' || k === 'w2') switchTo(p, +k[1]);
   else if (k === 'knife') startMelee(p);
   else if (k.startsWith('kit:')) applyKitAct(p, k);
-  else if (k === 'supply' || k === 'heal' || k === 'evac') survAct(p, k);
+  else if (k === 'supply' || k.startsWith('supply:') || k === 'heal' || k === 'evac') survAct(p, k);
   else if (k === 'god') {
     p.god = !p.god;
     if (p.god) { if (p.down) reviveUp(p); p.hp = HP; }        // включил раненым — сразу на ногах и с полным здоровьем

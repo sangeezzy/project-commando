@@ -41,7 +41,7 @@ function renderLobby() {
     line('small', 'в приложении — так и ввести в «Войти»; в браузере — http://' + addrs[0]);
   }
   document.getElementById('lobbyCode').textContent = G.role === 'solo' ? 'ИГРА ОДНОМУ'
-    : `ПРЯМОЕ ПОДКЛЮЧЕНИЕ · ИГРОКОВ: ${nHum} из 4` + (G.role === 'host' && appServer() ? ' · ХОСТ НА ТЕЛЕФОНЕ: НЕ СВОРАЧИВАЙТЕ ИГРУ' : '');
+    : `ПРЯМОЕ ПОДКЛЮЧЕНИЕ · ИГРОКОВ: ${nHum} из ${Lobby.slots.length}` + (G.role === 'host' && appServer() ? ' · ХОСТ НА ТЕЛЕФОНЕ: НЕ СВОРАЧИВАЙТЕ ИГРУ' : '');
   slotsEl.innerHTML = '';
   for (const s of Lobby.slots) {
     const el = document.createElement('div');
@@ -99,6 +99,11 @@ try {
 } catch (e) { /* ignore */ }
 function saveBots() { try { localStorage.setItem('pcr-bots', botsChk.checked ? '1' : '0'); } catch (e) { /* ignore */ } }
 botsChk.addEventListener('change', saveBots);
+// мест в отряде (2–8): одиночка и хост выбирают в главном меню, запоминается
+const slotsSel = document.getElementById('slotsN');
+try { Lobby.size = clamp(+localStorage.getItem('pcr-slots') || 4, SQUAD_MIN, SQUAD_MAX); } catch (e) { /* ignore */ }
+slotsSel.value = String(Lobby.size);
+slotsSel.addEventListener('change', () => { Lobby.size = clamp(+slotsSel.value || 4, SQUAD_MIN, SQUAD_MAX); try { localStorage.setItem('pcr-slots', String(Lobby.size)); } catch (e) { /* ignore */ } });
 
 function readName() {
   const n = nameEl.value.trim().slice(0, 16) || 'Боец';
