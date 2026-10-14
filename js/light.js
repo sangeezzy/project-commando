@@ -317,9 +317,11 @@ function drawFlashLight(g, m) {
 
 // Наложить свет на уже нарисованный мир: умножение на яркость × усиление глаза, затем засветка там, где ярче 1
 // Контур луча на свету: там, где яркость и так на максимуме, добавка фонаря пропадает —
-// рисуем поверх слабое свечение, тем заметнее, чем светлее вокруг (в темноте луч и так виден)
-function drawLampDaylight() {
+// рисуем поверх слабое свечение, тем заметнее, чем светлее вокруг (в темноте луч и так виден).
+// clip — многоугольник видимости игрока: луч за стеной (в тумане войны) не рисуется, иначе он выдаёт светящего
+function drawLampDaylight(clip) {
   ctx.save();
+  if (clip) ctx.clip(clip);
   ctx.globalCompositeOperation = 'lighter';
   for (const o of [...G.players, ...G.enemies]) {
     if (!lampOn(o) || !onScreen(o.x, o.y, LIGHT.lampRange)) continue;
@@ -329,8 +331,10 @@ function drawLampDaylight() {
   ctx.restore();
 }
 
-// view — многоугольник видимости игрока: за его пределами глаз не участвует, экспозиция нейтральная
-function drawLighting(offX, offY, view) {
+// view — многоугольник видимости игрока: за его пределами глаз не участвует, экспозиция нейтральная.
+// lampClip — где рисовать свет фонарей и вспышек выстрелов (тот же многоугольник; null — везде, отладка «без тумана»): луч или вспышка
+// за стеной сквозь туман войны просвечивали и выдавали противника; освещённое ими место, которое игрок видит, — по-прежнему светлое
+function drawLighting(offX, offY, view, lampClip = view) {
   const z = G.zoom, w = Math.ceil(VW / LQ), h = Math.ceil(VH / LQ);
   if (lightC.width !== w || lightC.height !== h) { lightC.width = w; lightC.height = h; }
   const g = lightX;
@@ -342,8 +346,11 @@ function drawLighting(offX, offY, view) {
   g.imageSmoothingEnabled = true;
   g.drawImage(map.lightCanvas, 0, 0, map.w * TILE, map.h * TILE);
   g.globalCompositeOperation = 'lighter';
+  g.save();
+  if (lampClip) g.clip(lampClip);
   for (const o of [...G.players, ...G.enemies]) if (lampOn(o) && onScreen(o.x, o.y, LIGHT.lampRange)) drawLamp(g, o);
   if (G.muzzle) for (const m of G.muzzle) if (onScreen(m.x, m.y, LIGHT.flashR)) drawFlashLight(g, m);
+  g.restore();
   const gain = G.expo ? G.expo.gain : 1;
   if (view && gain > 1.01) {
     // вне видимости делим на усиление: после brightness(gain) там останется обычная яркость без засветки

@@ -63,5 +63,64 @@ window.__result = (() => {
     check('кадр с фонарём противника рисуется', true);
     ENEMY.lamps = true;
   });
+  run('луч за стеной (в тумане войны) не виден', () => {
+    ENEMY.lamps = true;
+    G.enemies = [e];
+    at(e, 62, 46); e.a = Math.PI; e.crouch = false; e.dead = false;
+    const spot = { x: (59 + 0.5) * TILE, y: (46 + 0.5) * TILE };      // сюда светит
+    // свет в буфере на месте луча (игрок в p): фонарь горит минус не горит
+    const lit = (on) => {
+      e.lamp = on; G.shake = 0; G.noFog = false; G.cam.x = p.x; G.cam.y = p.y;
+      render(1 / 60);
+      const z = G.zoom, offX = Math.round(VW / 2 - G.cam.x * z), offY = Math.round(VH / 2 - G.cam.y * z);
+      const bx = Math.floor((spot.x * z + offX) / LQ), by = Math.floor((spot.y * z + offY) / LQ);
+      return lightX.getImageData(bx, by, 1, 1).data[0];
+    };
+    const diff = () => lit(true) - lit(false);
+    // место, откуда луча не видно (стена между), но он на экране — ищем рядом
+    let hidden = null;
+    for (let r = 4; r < 13 && !hidden; r++) for (let dy = -r; dy <= r && !hidden; dy++) for (let dx = -r; dx <= r && !hidden; dx++) {
+      const tx = 59 + dx, ty = 46 + dy;
+      if (!walkable(tx, ty)) continue;
+      const cx = (tx + 0.5) * TILE, cy = (ty + 0.5) * TILE;
+      if (!los(cx, cy, spot.x, spot.y) && !los(cx, cy, e.x, e.y)) hidden = [tx, ty];
+    }
+    check('нашлось место за стеной от луча', !!hidden, hidden);
+    if (!hidden) return;
+    at(p, ...hidden); p.a = Math.atan2(spot.y - p.y, spot.x - p.x); p.crouch = false; p.leanPx = 0; p.lean = 0;
+    const dHidden = diff();
+    at(p, 57, 46); p.a = 0;
+    const dSeen = diff();
+    check('из-за стены луча нет (в буфере света), на виду — есть', dHidden <= 2 && dSeen > 20, [dHidden, dSeen, hidden]);
+    G.noFog = true;
+    at(p, ...hidden);
+    const dDebug = (() => { e.lamp = true; G.cam.x = p.x; G.cam.y = p.y; render(1 / 60);
+      const z = G.zoom, offX = Math.round(VW / 2 - G.cam.x * z), offY = Math.round(VH / 2 - G.cam.y * z);
+      const a = lightX.getImageData(Math.floor((spot.x * z + offX) / LQ), Math.floor((spot.y * z + offY) / LQ), 1, 1).data[0];
+      e.lamp = false; render(1 / 60);
+      const b = lightX.getImageData(Math.floor((spot.x * z + offX) / LQ), Math.floor((spot.y * z + offY) / LQ), 1, 1).data[0];
+      return a - b; })();
+    G.noFog = false;
+    check('отладка ] (без тумана) — луч виден и за стеной', dDebug > 20, dDebug);
+    // вспышка выстрела там же (в гараже): свет вокруг неё в буфере и язык пламени поверх
+    e.lamp = false;
+    const flash = (on) => {
+      G.muzzle = on ? [{ x: spot.x, y: spot.y, a: Math.PI, t: 0.05 }] : [];
+      G.shake = 0; G.cam.x = p.x; G.cam.y = p.y;
+      render(1 / 60);
+      const z = G.zoom, offX = Math.round(VW / 2 - G.cam.x * z), offY = Math.round(VH / 2 - G.cam.y * z);
+      const buf = lightX.getImageData(Math.floor((spot.x * z + offX) / LQ), Math.floor((spot.y * z + offY) / LQ), 1, 1).data[0];
+      const scr = ctx.getImageData(Math.round(spot.x * z + offX + 2 * z), Math.round(spot.y * z + offY), 1, 1).data;
+      return [buf, scr[0] + scr[1] + scr[2]];
+    };
+    const fd = () => { const a = flash(true), b = flash(false); return [a[0] - b[0], a[1] - b[1]]; };
+    at(p, ...hidden);
+    const fHidden = fd();
+    at(p, 57, 46); p.a = 0;
+    const fSeen = fd();
+    G.muzzle = [];
+    check('вспышка из-за стены не видна (ни свет, ни пламя), на виду — видна', fHidden[0] <= 2 && Math.abs(fHidden[1]) <= 6 && fSeen[0] > 20 && fSeen[1] > 60,
+      [fHidden, fSeen]);
+  });
   return T_.checks;
 })();

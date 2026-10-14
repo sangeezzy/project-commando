@@ -50,11 +50,12 @@ function render(dt = 1 / 60) {
   drawMedic();
   for (const q of G.parts) if (q.shape !== 5) drawPart(q);
   const view = p && !p.dead ? viewPolygon(p) : null;
-  drawLighting(offX, offY, view);
+  const fogClip = G.noFog ? null : view;      // туман войны: чужие лучи и вспышки за стенами не видно (отладка ] — видно всё)
+  drawLighting(offX, offY, view, fogClip);
   // светится само: вспышки выстрелов; значки внимания — только у тех, кого можно разглядеть
   ctx.setTransform(z, 0, 0, z, offX, offY);
-  drawLampDaylight();
-  drawMuzzle();
+  drawLampDaylight(fogClip);
+  drawMuzzle(fogClip);
   if (p && !p.dead) for (const o of allPeople()) if (o !== p && lampOn(o) && onScreen(o.x, o.y) && los(p.x, p.y, o.x, o.y)) drawLampGlare(o, p);
   for (const e of G.enemies) if (!e.dead && e.va > 0.3 && (G.noFog || perceivedAt(e.x, e.y) > LIGHT.seeMin)) drawAwareness(e);
   if (view && !G.noFog) drawFog(offX, offY, p, view);
@@ -251,8 +252,11 @@ function drawLampGlare(o, p) {
   ctx.beginPath(); ctx.arc(lx, ly, r, 0, Math.PI * 2); ctx.fill();
 }
 
-function drawMuzzle() {
-  if (!G.muzzle) return;
+// clip — многоугольник видимости игрока: вспышка за стеной (в тумане войны) не рисуется
+function drawMuzzle(clip) {
+  if (!G.muzzle || !G.muzzle.length) return;
+  ctx.save();
+  if (clip) ctx.clip(clip);
   for (const m of G.muzzle) {
     ctx.save(); ctx.translate(m.x, m.y); ctx.rotate(m.a);
     ctx.fillStyle = 'rgba(255,230,150,0.9)';
@@ -261,6 +265,7 @@ function drawMuzzle() {
     ctx.beginPath(); ctx.arc(2, 0, 9, 0, Math.PI * 2); ctx.fill();
     ctx.restore();
   }
+  ctx.restore();
 }
 
 // ---------- Люди сверху ----------
