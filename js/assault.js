@@ -4,10 +4,11 @@
 // квадрат, Г, Т, крест, П; здания (одиночные и Г-образные), двери трёх типов, часть заперта — ключи лежат там, куда можно дойти без этих
 // дверей; машины, контейнеры, укрытия. Противники — как в «Зачистке»: охрана и патрули, вне видимости старта. Погода — своя на локации.
 // Подкрепление — 20% (REINF). Все уничтожены — после 3, 6, 9, 12, дальше каждой второй локации — грузовик (как в «Выживании»),
-// потом открывается переход (в дальнем конце; хост стоит 2 с). Состояние отряда (оружие, патроны, здоровье, броня) — на следующую локацию.
+// потом открывается переход (в дальнем конце; хост стоит 2 с). Состояние отряда (оружие, патроны, здоровье, броня) — на следующую локацию;
+// погибшие на неё не попадают — их привозит грузовик (truckReinforce).
 
 const ASSAULT = {
-  enemies: (n) => Math.min(30, 6 + 2 * (n - 1)),
+  enemies: (n) => Math.min(30, 4 + 2 * (n - 1)),     // как волны «Выживания»: 4, 6, 8…
   area: (k) => 1600 + k * 170,               // м² (клеток) на k противников
   shapes: ['rect', 'square', 'L', 'T', 'cross', 'U'],
 };
@@ -177,8 +178,8 @@ function assaultSetup(rnd) {
   }
   return { enemies, spawns: cand };
 }
-// Оружие: первая локация — пистолеты и ружья, дальше — как на других картах
-function kitForStage(e, n, rnd) { if (n <= 1) kitForWave(e, 3, rnd); else randomKit(e, rnd); }
+// Оружие — как в волнах «Выживания»: 1–2 — пистолеты, 3–4 — и ружья, 5–6 — появляются винтовки, дальше — любое
+function kitForStage(e, n, rnd) { kitForWave(e, n, rnd); }
 
 // startMap('assault', seed): противники, погода, подкрепление; со второй локации — отряд как был в конце прошлой (G.assaultCarry)
 function assaultInit(rnd) {
@@ -194,8 +195,9 @@ function assaultInit(rnd) {
     if (!c) continue;
     q.kit = c.kit.map((k) => (k ? Object.assign(makeGun(k.t), { mag: k.mag, chamber: k.chamber, pouch: [...k.pouch], mode: k.mode }) : null));
     q.cur = c.cur; q.gun = q.kit[q.cur] || q.kit[2];
-    q.hp = c.dead ? 50 : c.hp;                     // погибшие — снова в строю, но потрёпанные
+    q.hp = c.hp;
     q.armor = c.armor ? { ...c.armor } : null;
+    if (c.dead) Object.assign(q, { dead: true, hp: 0, evac: true });   // погибшие — не здесь: приедут с грузовиком
   } else for (const q of G.players) q.armor = null;
 }
 
@@ -206,6 +208,7 @@ function updateAssault(dt) {
     updateReinf();
     if (!G.enemies.some((e) => !e.dead)) {
       if (s.reinf) s.reinf.done = true;
+      if (G.run) G.run.cleared++;
       if (SURV.truckDue(s.stage)) {
         s.phase = 'truck'; s.trucks++; s.stop++; s.waitT = 0;
         s.truck = { state: 'in', t: 0, fy: map.truck.from };

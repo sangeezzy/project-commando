@@ -457,23 +457,31 @@ function weightedField(x, y, cost, maxD = 4000) {
   const sx = Math.floor(x / TILE), sy = Math.floor(y / TILE);
   const res = { f, x, y, doors: true };
   if (sx < 0 || sy < 0 || sx >= w || sy >= h) return res;
-  const buckets = new Map();
-  const push = (d, i) => { let b = buckets.get(d); if (!b) buckets.set(d, (b = [])); b.push(i); };
-  f[sy * w + sx] = 0; push(0, sy * w + sx);
-  for (let dd = 0; dd <= maxD && buckets.size; dd++) {
-    const b = buckets.get(dd);
+  // корзины по стоимости (Дейкстра с целыми весами), соседи — без выделения памяти (вызывается на всю карту: обход ИИ)
+  const buckets = [];
+  let left = 1;
+  const g = map.grid, FLOOR = T.FLOOR, DOOR = T.DOOR;
+  const ok = (j) => g[j] === FLOOR || (g[j] === DOOR && walkable(j % w, (j / w) | 0, true));
+  const relax = (j, dd) => {
+    if (!ok(j)) return;
+    const nd = dd + cost(j);
+    if (nd > maxD || nd >= f[j]) return;
+    f[j] = nd; (buckets[nd] || (buckets[nd] = [])).push(j); left++;
+  };
+  f[sy * w + sx] = 0; buckets[0] = [sy * w + sx];
+  for (let dd = 0; dd <= maxD && left; dd++) {
+    const b = buckets[dd];
     if (!b) continue;
-    buckets.delete(dd);
+    buckets[dd] = null;
+    left -= b.length;
     for (let k = 0; k < b.length; k++) {
       const i = b[k];
       if (f[i] !== dd) continue;
       const x0 = i % w, y0 = (i / w) | 0;
-      for (const [nx, ny] of [[x0 + 1, y0], [x0 - 1, y0], [x0, y0 + 1], [x0, y0 - 1]]) {
-        if (!walkable(nx, ny, true)) continue;
-        const j = ny * w + nx, nd = dd + cost(j);
-        if (nd > maxD || nd >= f[j]) continue;
-        f[j] = nd; push(nd, j);
-      }
+      if (x0 + 1 < w) relax(i + 1, dd);
+      if (x0 > 0) relax(i - 1, dd);
+      if (y0 + 1 < h) relax(i + w, dd);
+      if (y0 > 0) relax(i - w, dd);
     }
   }
   return res;

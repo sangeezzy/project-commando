@@ -8,63 +8,117 @@ const LSUB = 4;                 // карта освещённости: 4 яче
 const LQ = 4;                   // экранный буфер света в 4 раза меньше экрана: дёшево и мягко
 
 // ---------- Карта освещённости ----------
+// Строится один раз на карту (buildLightMap); дверь открыли/закрыли — пересчитывается только кусок вокруг неё (updateLightAt):
+// свет растекается не дальше LIGHT.spillSteps клеток, остальная карта от двери не зависит.
+const LBLUR = 'blur(1.5px)', LBLUR_M = 5;    // размытие текстуры света и сколько пикселей ячеек оно задевает вокруг
+
 function buildLightMap(base) {
   const { w, h } = map;
-  const open = (i) => !opaqueT(map.grid[i]);   // закрытая дверь держит свет
-  // свет затекает из дверей и проёмов (но не сквозь стены)
-  let L = Float32Array.from(base);
+  map.light = new Float32Array(w * h);
+  spillLight(base, 0, 0, w - 1, h - 1, 0, 0, w - 1, h - 1);
+  const W = w * LSUB, H = h * LSUB;
+  map.lightSub = new Float32Array(W * H); map.lw = W; map.lh = H;
+  map.lightRaw = document.createElement('canvas');
+  map.lightRaw.width = W; map.lightRaw.height = H;
+  map.lightCanvas = document.createElement('canvas');
+  map.lightCanvas.width = W; map.lightCanvas.height = H;
+  lightCells(0, 0, w - 1, h - 1);
+  paintLight(0, 0, w - 1, h - 1);
+}
+
+// Дверь в клетке (tx, ty) открылась или закрылась
+function updateLightAt(tx, ty) {
+  const R = LIGHT.spillSteps, { w, h } = map;
+  const c = (v, n) => clamp(v, 0, n - 1);
+  // растекание считаем в окне 2R вокруг двери (пути длиной ≤ R от изменившихся клеток не выходят из него),
+  // берём — изменившиеся клетки (≤ R от двери); ячейки и текстура — ещё на клетку шире (стены берут свет соседнего пола)
+  spillLight(map.lightBase, c(tx - 2 * R - 1, w), c(ty - 2 * R - 1, h), c(tx + 2 * R + 1, w), c(ty + 2 * R + 1, h),
+    c(tx - R, w), c(ty - R, h), c(tx + R, w), c(ty + R, h));
+  const x0 = c(tx - R - 1, w), y0 = c(ty - R - 1, h), x1 = c(tx + R + 1, w), y1 = c(ty + R + 1, h);
+  lightCells(x0, y0, x1, y1);
+  paintLight(x0, y0, x1, y1);
+}
+
+// Свет затекает из дверей и проёмов (но не сквозь стены; закрытая дверь держит свет): spillSteps шагов в окне (x0..x1, y0..y1)
+// от исходной освещённости base; в map.light записываются клетки (cx0..cx1, cy0..cy1)
+function spillLight(base, x0, y0, x1, y1, cx0, cy0, cx1, cy1) {
+  const { w, h } = map, ww = x1 - x0 + 1, wh = y1 - y0 + 1, g = map.grid, k = LIGHT.spill;
+  const open = new Uint8Array(ww * wh);
+  let L = new Float32Array(ww * wh);
+  for (let y = 0; y < wh; y++) for (let x = 0; x < ww; x++) {
+    const i = (y0 + y) * w + x0 + x;
+    L[y * ww + x] = base[i];
+    open[y * ww + x] = opaqueT(g[i]) ? 0 : 1;
+  }
+  // как во всей карте: крайние клетки карты сами не меняются, но отдают свет соседям
+  const ax = Math.max(0, 1 - x0), ay = Math.max(0, 1 - y0), bx = Math.min(ww - 1, w - 2 - x0), by = Math.min(wh - 1, h - 2 - y0);
+  let n = new Float32Array(ww * wh);
   for (let it = 0; it < LIGHT.spillSteps; it++) {
-    const n = L.slice();
-    for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
-      const i = y * w + x;
-      if (!open(i)) continue;
-      let m = L[i];
-      for (const j of [i - 1, i + 1, i - w, i + w]) if (open(j)) m = Math.max(m, L[j] * LIGHT.spill);
+    n.set(L);
+    for (let y = ay; y <= by; y++) for (let x = ax; x <= bx; x++) {
+      const i = y * ww + x;
+      if (!open[i]) continue;
+      let m = L[i], v;
+      if (x > 0 && open[i - 1] && (v = L[i - 1] * k) > m) m = v;
+      if (x < ww - 1 && open[i + 1] && (v = L[i + 1] * k) > m) m = v;
+      if (y > 0 && open[i - ww] && (v = L[i - ww] * k) > m) m = v;
+      if (y < wh - 1 && open[i + ww] && (v = L[i + ww] * k) > m) m = v;
       n[i] = m;
     }
-    L = n;
+    const t = L; L = n; n = t;
   }
-  map.light = L;
-  // ячейки: стена берёт освещённость ближайшей к ячейке соседней клетки пола
-  const W = w * LSUB, H = h * LSUB;
-  const sub = new Float32Array(W * H);
-  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+  for (let y = cy0; y <= cy1; y++) for (let x = cx0; x <= cx1; x++) map.light[y * w + x] = L[(y - y0) * ww + x - x0];
+}
+
+// Ячейки LSUB×LSUB на клетку: стена берёт освещённость ближайшей к ячейке соседней клетки пола
+function lightCells(x0, y0, x1, y1) {
+  const { w, h } = map, L = map.light, W = map.lw, sub = map.lightSub;
+  const open = (i) => !opaqueT(map.grid[i]);
+  for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
     const i = y * w + x;
+    if (open(i)) {
+      for (let sy = 0; sy < LSUB; sy++) sub.fill(L[i], (y * LSUB + sy) * W + x * LSUB, (y * LSUB + sy) * W + x * LSUB + LSUB);
+      continue;
+    }
     for (let sy = 0; sy < LSUB; sy++) for (let sx = 0; sx < LSUB; sx++) {
-      let v = L[i];
-      if (!open(i)) {
-        const cx = x + (sx + 0.5) / LSUB, cy = y + (sy + 0.5) / LSUB;
-        let bd = 1e9;
-        v = 0;
-        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-          const nx = x + dx, ny = y + dy;
-          if (nx < 0 || ny < 0 || nx >= w || ny >= h || !open(ny * w + nx)) continue;
-          const d = Math.hypot(clamp(cx, nx, nx + 1) - cx, clamp(cy, ny, ny + 1) - cy);
-          if (d < bd) { bd = d; v = L[ny * w + nx]; }
-        }
-        if (bd === 1e9) v = 1;
+      const cx = x + (sx + 0.5) / LSUB, cy = y + (sy + 0.5) / LSUB;
+      let bd = 1e9, v = 0;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const nx = x + dx, ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= w || ny >= h || !open(ny * w + nx)) continue;
+        const d = Math.hypot(clamp(cx, nx, nx + 1) - cx, clamp(cy, ny, ny + 1) - cy);
+        if (d < bd) { bd = d; v = L[ny * w + nx]; }
       }
+      if (bd === 1e9) v = 1;
       sub[(y * LSUB + sy) * W + x * LSUB + sx] = v;
     }
   }
-  map.lightSub = sub; map.lw = W; map.lh = H;
-  const raw = document.createElement('canvas');
-  raw.width = W; raw.height = H;
-  const g = raw.getContext('2d');
-  const img = g.createImageData(W, H);
-  for (let k = 0; k < W * H; k++) {
-    const c = Math.round(clamp(sub[k], 0, 1) * 255);
-    img.data[k * 4] = img.data[k * 4 + 1] = img.data[k * 4 + 2] = c; img.data[k * 4 + 3] = 255;
+}
+
+// Текстура света для клеток (x0..x1, y0..y1): ячейки → пиксели (lightRaw), сверху — лёгкое размытие (lightCanvas, края света мягкие).
+// Размытие куска: источник берётся с запасом, рисуется только внутри куска (+ сколько задевает размытие) — шов не виден
+function paintLight(x0, y0, x1, y1) {
+  const W = map.lw, H = map.lh, sub = map.lightSub;
+  const X0 = x0 * LSUB, Y0 = y0 * LSUB, RW = (x1 - x0 + 1) * LSUB, RH = (y1 - y0 + 1) * LSUB;
+  const raw = map.lightRaw, rg = raw.getContext('2d');
+  const img = rg.createImageData(RW, RH), d = img.data;
+  for (let y = 0; y < RH; y++) for (let x = 0; x < RW; x++) {
+    const c = Math.round(clamp(sub[(Y0 + y) * W + X0 + x], 0, 1) * 255), o = (y * RW + x) * 4;
+    d[o] = d[o + 1] = d[o + 2] = c; d[o + 3] = 255;
   }
-  g.putImageData(img, 0, 0);
-  // лёгкое размытие: края света мягкие
-  const c = document.createElement('canvas');
-  c.width = W; c.height = H;
-  const cg = c.getContext('2d');
-  cg.drawImage(raw, 0, 0);
-  cg.filter = 'blur(1.5px)';
-  cg.drawImage(raw, 0, 0);
-  map.lightCanvas = c;
+  rg.putImageData(img, X0, Y0);
+  const box = (m) => {
+    const ax = Math.max(0, X0 - m), ay = Math.max(0, Y0 - m);
+    return [ax, ay, Math.min(W, X0 + RW + m) - ax, Math.min(H, Y0 + RH + m) - ay];
+  };
+  const [cx, cy, cw, ch] = box(LBLUR_M), [sx, sy, sw, sh] = box(LBLUR_M * 2 + 2);
+  const g = map.lightCanvas.getContext('2d');
+  g.save();
+  g.beginPath(); g.rect(cx, cy, cw, ch); g.clip();
+  g.drawImage(raw, sx, sy, sw, sh, sx, sy, sw, sh);
+  g.filter = LBLUR;
+  g.drawImage(raw, sx, sy, sw, sh, sx, sy, sw, sh);
+  g.restore();
 }
 
 // Освещённость помещения/улицы в точке (билинейно по ячейкам)

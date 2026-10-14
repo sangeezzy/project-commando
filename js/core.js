@@ -170,6 +170,7 @@ function startMap(id, seed = 0, squad = null, bots = false) {
     if (e.kind !== 'enemy') continue;
     G.enemies.push(makeEnemy(e.x * TILE, e.y * TILE, e.a || 0, e.patrol));
   }
+  startRun(id);                               // счёт забега: новый — из хаба, «Штурм» — переносится с локации на локацию
   if (id === 'surv') survInit(rnd);           // волны, грузовик, погода
   if (id === 'assault') assaultInit(rnd);     // локация: противники, погода, подкрепление; отряд — как в конце прошлой
   const p = me() || G.players[0];

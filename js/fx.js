@@ -100,6 +100,9 @@ function playFx(ev) {
     // сообщение по рации (видно и слышно всем своим): щелчок рации и текст
     G.radioMsg = { text: ev[1], t: 6 };
     if (AC) SFX.click(0.6);
+  } else if (k === 'result') {
+    // итоги забега (в хабе): победа/поражение, «Штурм»?, зачищено/отбито, убито, потерь
+    G.runResult = { win: !!ev[1], assault: !!ev[2], cleared: ev[3], kills: ev[4], losses: ev[5], t: RUN_RESULT_T };
   } else if (k === 'banner') {
     G.banner = { text: ev[1], sub: ev[2], t: 4 };
   } else if (k === 'arm') {

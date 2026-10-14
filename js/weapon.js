@@ -331,6 +331,7 @@ function killPerson(o, ang) {
   o.hp = 0; o.dead = true; o.down = false; o.deadT = G.time; o.deadA = ang ?? o.deadA ?? o.a;
   o.gun.reloadT = 0; o.act = null; o.reviving = 0;
   emit(['die', o.x, o.y, o.deadA, o.side]);
+  runCount(o);
   makeNoise(o.x, o.y, M(NOISE.body), 'step', o);
 }
 

@@ -192,18 +192,25 @@ function cornerCaught(e, t) {
 }
 
 // Обход: путь, избегающий клеток, которые цель сейчас видит, к точке в 4–10 м от неё вне её поля зрения
-function planFlank(e, t) {
+// Какие клетки (в P.range) цель t видит сейчас — одна и та же для всех, кто планирует обход этой цели (updateSquads считает раз)
+function flankVis(t) {
   const P = ENEMY.peek, { w, h } = map;
   const te = eyeOf(t);
   const vis = new Uint8Array(w * h);
-  const R = Math.ceil(P.range / TILE);
+  const R = Math.ceil(P.range / TILE), fov = fovOf(t) + 0.15;
   const tx = Math.floor(te.x / TILE), ty = Math.floor(te.y / TILE);
   for (let y = Math.max(0, ty - R); y <= Math.min(h - 1, ty + R); y++) for (let x = Math.max(0, tx - R); x <= Math.min(w - 1, tx + R); x++) {
     if (!walkable(x, y, true)) continue;
     const cx = (x + 0.5) * TILE, cy = (y + 0.5) * TILE, d = Math.hypot(cx - te.x, cy - te.y);
-    if (d > NEAR_SENSE && Math.abs(angDiff(Math.atan2(cy - te.y, cx - te.x), t.a)) > fovOf(t) + 0.15) continue;
+    if (d > NEAR_SENSE && Math.abs(angDiff(Math.atan2(cy - te.y, cx - te.x), t.a)) > fov) continue;
     if (los(te.x, te.y, cx, cy)) vis[y * w + x] = 1;
   }
+  return { te, tx, ty, vis };
+}
+
+function planFlank(e, t, fv = flankVis(t)) {
+  const P = ENEMY.peek, { w, h } = map;
+  const { te, tx, ty, vis } = fv;
   const cost = (i) => (vis[i] ? P.seenCost : 1);
   const from = weightedField(e.x, e.y, cost, P.maxFlank * 3);
   let best = null, bc = 1e9;
@@ -267,8 +274,9 @@ function updateSquads(dt) {
       if (sup) sup.role = 'suppress';
     }
     if (S.flankCd > 0 || eng.some((e) => e.flank)) continue;
+    let fv = null;
     for (const f of eng.filter((e) => e !== sup && !e.peek).sort((a, b) => dT(a) - dT(b))) {
-      const pl = planFlank(f, t);
+      const pl = planFlank(f, t, fv || (fv = flankVis(t)));
       if (!pl) continue;
       f.flank = pl; f.role = 'flank';
       if (sup) bark(sup, 'Прикрываю!');

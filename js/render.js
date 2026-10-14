@@ -2,6 +2,8 @@
 // ---------- Отрисовка мира ----------
 
 const VIS_RAYS = 720;
+const VIS_DX = Float64Array.from({ length: VIS_RAYS }, (_, i) => Math.cos((i / VIS_RAYS) * Math.PI * 2));   // направления лучей обзора
+const VIS_DY = Float64Array.from({ length: VIS_RAYS }, (_, i) => Math.sin((i / VIS_RAYS) * Math.PI * 2));
 
 const onScreen = (x, y, pad = 60) => Math.abs(x - G.cam.x) < VW / 2 / G.zoom + pad && Math.abs(y - G.cam.y) < VH / 2 / G.zoom + pad;
 
@@ -57,7 +59,7 @@ function render(dt = 1 / 60) {
   for (const e of G.enemies) if (!e.dead && e.va > 0.3 && (G.noFog || perceivedAt(e.x, e.y) > LIGHT.seeMin)) drawAwareness(e);
   if (view && !G.noFog) drawFog(offX, offY, p, view);
   if (G.noFog) drawAllEnemies();
-  drawWeather();
+  drawWeather(offX, offY, p);
   drawHubWorld();
   drawAssaultExit();
   drawTeamTags();
@@ -537,14 +539,20 @@ function viewPolygon(body) {
     ? (tx, ty, t) => { const k = tileAt(tx, ty); return opaqueT(k) || (k === T.LOW && t < COVER_NEAR); }
     : opaqueTile;
   const maxR = Math.hypot(VW, VH) / G.zoom;
+  // многоугольник нужен только для экрана (туман, свет): луч идёт до края экрана в своём направлении (с запасом на тряску),
+  // а не на диагональ — на открытой карте вдвое меньше клеток; глаза вне экрана — как раньше, на всю диагональ
+  const pad = 48, hx = VW / 2 / G.zoom + pad, hy = VH / 2 / G.zoom + pad;
+  const rx0 = G.cam.x - hx, rx1 = G.cam.x + hx, ry0 = G.cam.y - hy, ry1 = G.cam.y + hy;
+  const inside = p.x > rx0 && p.x < rx1 && p.y > ry0 && p.y < ry1;
   const poly = new Path2D();
   for (let i = 0; i < VIS_RAYS; i++) {
-    const a = (i / VIS_RAYS) * Math.PI * 2;
-    const dx = Math.cos(a), dy = Math.sin(a);
-    const hit = castRay(p.x, p.y, dx, dy, maxR, opq);
+    const dx = VIS_DX[i], dy = VIS_DY[i];
+    const lim = inside ? Math.min(dx > 1e-9 ? (rx1 - p.x) / dx : dx < -1e-9 ? (rx0 - p.x) / dx : 1e9,
+      dy > 1e-9 ? (ry1 - p.y) / dy : dy < -1e-9 ? (ry0 - p.y) / dy : 1e9, maxR) : maxR;
+    const hit = castRay(p.x, p.y, dx, dy, lim, opq);
     // закрытая дверь стоит посреди проёма — её створку видно целиком
     const door = tileAt(Math.floor((p.x + dx * (hit + 1)) / TILE), Math.floor((p.y + dy * (hit + 1)) / TILE)) === T.DOOR;
-    const d = Math.min(maxR, hit + (door ? 22 : 6));
+    const d = hit >= lim ? lim : Math.min(lim, hit + (door ? 22 : 6));
     if (i === 0) poly.moveTo(p.x + dx * d, p.y + dy * d); else poly.lineTo(p.x + dx * d, p.y + dy * d);
   }
   poly.closePath();

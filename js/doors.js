@@ -40,7 +40,7 @@ function syncDoorTile(d) {
   map.grid[d.i] = doorPassable(d) ? T.FLOOR : T.DOOR;
   map.ver++;
   fieldCache.clear();
-  buildLightMap(map.lightBase);
+  updateLightAt(d.x, d.y);          // свет — только вокруг двери (полный пересчёт на большой карте — десятки мс)
 }
 
 // Кто-то стоит в проёме — закрыть нельзя

@@ -31,9 +31,8 @@
   button { cursor:pointer; min-width:240px; }
   button:hover:not(:disabled) { background:rgba(232,228,216,.1); }
   button:disabled { opacity:.35; cursor:default; }
-  #code, #ocode { width:110px; text-transform:uppercase; text-align:center; letter-spacing:.3em; }
   #name { width:220px; text-align:center; }
-  #btnJoin, #btnJoinLocal { min-width:110px; }
+  #btnJoinLocal { min-width:110px; }
   #addr { width:300px; text-align:center; }
   .block { display:flex; flex-direction:column; align-items:center; gap:8px; width:100%; padding:10px; border:1px solid var(--line); border-radius:4px; }
   .btitle { color:var(--fg); font-family:Consolas, monospace; font-size:13px; }
@@ -53,14 +52,6 @@
   #btnStart { border-color:rgba(159,232,112,.6); }
   #btnReady.on { background:rgba(159,232,112,.18); border-color:rgba(159,232,112,.6); }
   #btnLeave { min-width:120px; }
-  #netBox { width:100%; max-width:520px; font-family:Consolas, monospace; font-size:13px; color:var(--dim); }
-  #netBox summary { cursor:pointer; text-align:center; padding:4px; }
-  #netBox input { width:100%; margin-top:6px; font-size:13px; }
-  .netrow { display:flex; gap:8px; justify-content:center; margin-top:6px; }
-  .netrow button { min-width:0; flex:1; font-size:13px; }
-  .netrow input { flex:1; }
-  #invite { width:340px; max-width:100%; font-size:13px; }
-  #netReport { white-space:pre-wrap; color:var(--fg); font-size:12px; min-height:0; margin:6px 0; }
 </style>
 </head>
 <body>
@@ -98,53 +89,17 @@
     <label><input type="checkbox" id="botsChk" checked> Заполнять пустые места союзными ботами</label>
     <button id="btnSolo">ИГРАТЬ ОДНОМУ</button>
     <div class="block">
-      <div class="btitle">Онлайн — через интернет по коду комнаты</div>
-      <button id="btnHostOnline">СОЗДАТЬ ОНЛАЙН-КОМНАТУ</button>
-      <div class="row">
-        <input type="text" id="ocode" placeholder="КОД" maxlength="5" autocomplete="off" spellcheck="false">
-        <button id="btnJoinOnline">ВОЙТИ</button>
-      </div>
-      <div class="help" id="onlineHelp"></div>
-    </div>
-    <div class="block">
-      <div class="btitle">Прямое подключение — без интернета и сторонних серверов</div>
+      <div class="btitle">Кооператив — прямое подключение к компьютеру хоста</div>
       <button id="btnHostLocal">СОЗДАТЬ КОМНАТУ НА ЭТОМ КОМПЬЮТЕРЕ</button>
       <div class="row">
-        <input type="text" id="addr" placeholder="адрес хоста: 26.x.x.x:8000 или ссылка https://…" autocomplete="off" spellcheck="false">
+        <input type="text" id="addr" placeholder="адрес хоста: 192.168.x.x:8000 или 26.x.x.x:8000" autocomplete="off" spellcheck="false">
         <button id="btnJoinLocal">ВОЙТИ</button>
       </div>
       <div class="help">Хост запускает <b>start.bat</b> (Python не нужен) — в окне сервера адреса для друзей.<br>
-        В одной сети или через Radmin VPN / ZeroTier / Tailscale — адрес вида http://26.x.x.x:8000.<br>
-        Через интернет без общей сети — хост запускает ещё и <b>tunnel.bat</b> и отправляет друзьям ссылку https://….trycloudflare.com.<br>
-        Друзья открывают адрес или ссылку в браузере и жмут «Войти» (адрес подставится сам).</div>
-    </div>
-    <div class="block">
-      <div class="btitle">Через интернет напрямую (PeerJS, запасной вариант)</div>
-      <button id="btnHost">СОЗДАТЬ КОМНАТУ</button>
-      <div class="row">
-        <input type="text" id="code" placeholder="КОД" maxlength="5" autocomplete="off" spellcheck="false">
-        <button id="btnJoin">ВОЙТИ</button>
-      </div>
+        В одной сети или через Radmin VPN / ZeroTier / Tailscale / Hamachi — адрес вида http://26.x.x.x:8000.<br>
+        Друзья открывают адрес в браузере и жмут «Войти» (адрес подставится сам).</div>
     </div>
     <div id="status"></div>
-    <details id="netBox">
-      <summary>Сеть: онлайн-сервер, проверка, свой TURN-сервер</summary>
-      <div class="help">Онлайн-сервер (для «Онлайн»): пусто — сервер, с которого открыта игра. Свой — после deploy.bat: https://project-commando.<i>имя</i>.workers.dev</div>
-      <div class="netrow">
-        <input type="text" id="relayAddr" placeholder="https://….workers.dev" autocomplete="off" spellcheck="false">
-        <button id="btnRelaySave">СОХРАНИТЬ</button>
-      </div>
-      <div class="netrow"><button id="btnNetCheck">ПРОВЕРИТЬ СЕТЬ</button></div>
-      <pre id="netReport"></pre>
-      <div class="help">Если соединение не устанавливается («прямое соединение не удалось»), нужен TURN-ретранслятор.<br>
-        Бесплатный можно получить, например, на metered.ca (Open Relay) или поднять свой (coturn). Данные одинаковые у всех игроков.</div>
-      <input type="text" id="turnUrls" placeholder="turn:адрес:3478, turns:адрес:443?transport=tcp" autocomplete="off" spellcheck="false">
-      <div class="netrow">
-        <input type="text" id="turnUser" placeholder="логин" autocomplete="off" spellcheck="false">
-        <input type="text" id="turnPass" placeholder="пароль" autocomplete="off" spellcheck="false">
-      </div>
-      <div class="netrow"><button id="btnTurnSave">СОХРАНИТЬ TURN</button><button id="btnTurnClear">СБРОСИТЬ</button></div>
-    </details>
     <div class="help">
       <b>WASD</b> — движение · <b>мышь</b> — прицел · <b>ЛКМ</b> — огонь · <b>ПКМ</b> — прицелиться · <b>R</b> — перезарядка · <b>V</b> — режим<br>
       <b>Q/E</b> — выглянуть · <b>F</b> — дверь · <b>G</b> — выбить · <b>L</b> — фонарь · <b>C</b> — присесть · <b>Shift</b> — бег<br>
@@ -157,7 +112,6 @@
   <div class="screen hidden" id="lobby">
     <h2>ОТРЯД</h2>
     <div class="sub" id="lobbyCode"></div>
-    <div class="row hidden" id="inviteRow"><input type="text" id="invite" readonly><button id="btnCopyInvite">КОПИРОВАТЬ</button></div>
     <div id="slots"></div>
     <label><input type="checkbox" id="lobbyBots"> Пустые места занимают союзные боты</label>
     <div class="row"><label><input type="checkbox" id="voiceChk"> Голосовой чат (микрофон): рядом слышно без рации, <b>B</b> — рация, <b>M</b> — микрофон</label></div>
@@ -168,11 +122,10 @@
     </div>
     <button id="btnLeave">ВЫЙТИ</button>
     <div id="lobbyStatus"></div>
-    <div class="help">Начать можно, когда все игроки нажали «Готов». Код комнаты продиктуйте друзьям — они вводят его в главном меню.</div>
+    <div class="help">Начать можно, когда все игроки нажали «Готов». Адрес выше отправьте друзьям — они вводят его в главном меню.</div>
   </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script src="js/util.js"></script>
 <script src="js/data.js"></script>
 <script src="js/world.js"></script>

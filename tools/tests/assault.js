@@ -1,5 +1,6 @@
 // «Штурм»: генерация локаций (форма, площадь по числу противников, двери и ключи — решаемо, переход), переход на следующую
-// (состояние отряда переносится), грузовик на 3-й, Enter — та же локация; подкрепление (и в «Выживании»); «покинуть боевую зону» — в хаб
+// (состояние отряда переносится, погибшие — нет; их привозит грузовик), грузовик на 3-й, Enter в забеге не перезапускает;
+// подкрепление (и в «Выживании»); забег: счёт, итоги, «покинуть боевую зону» — победа, Backspace и гибель — поражение, всё — в хаб
 window.__result = (() => {
   const { check, run } = T_;
   const squad = [{ slot: 0, human: true, name: 'Тест' }];
@@ -54,12 +55,50 @@ window.__result = (() => {
     const p2 = me(), b2 = G.players.find((q) => q.slot === bot.slot);
     check('здоровье, броня, патроны — как были', p2.hp === 70 && p2.armor && p2.armor.cls === 'III' && p2.armor.hp === 55 && p2.gun.mag === 9,
       [p2.hp, p2.armor, p2.gun.mag]);
-    check('погибший товарищ — снова в строю (50 здоровья)', b2 && !b2.dead && b2.hp === 50, b2 && [b2.dead, b2.hp]);
-    // Enter — та же локация, тем же составом
-    const g2 = map.grid.join('');
-    p2.hp = 10;
+    check('погибший товарищ на новую локацию не попал', b2 && b2.dead, b2 && [b2.dead, b2.hp]);
+    check('счёт забега: зачищена 1 локация', G.run && G.run.cleared === 1, G.run);
+    // Enter в забеге — ничего (забег кончается только в хабе)
+    const seq = G.seq;
     restartRange();
-    check('Enter — та же локация, отряд — как в её начале', map.grid.join('') === g2 && me().hp === 70 && G.surv.stage === 2);
+    check('Enter в забеге не перезапускает', G.seq === seq && G.surv.stage === 2);
+    // грузовик привозит погибшего
+    G.surv.phase = 'fight'; G.surv.stage = 3; p2.god = true;
+    G.enemies.forEach((e) => { e.dead = true; });
+    tick(2); tick(60 * SURV.drive + 10);
+    const b3 = G.players.find((q) => q.slot === bot.slot);
+    check('грузовик приехал — погибший снова в строю у борта, здоровье полное', G.surv.truck && G.surv.truck.state === 'park' && !b3.dead && b3.hp === HP &&
+      Math.hypot(b3.x - truckRear().x, b3.y - truckRear().y) < M(5), [b3.dead, b3.hp]);
+  });
+
+  run('забег: счёт и итоги', () => {
+    // из хаба — всегда 1-я локация
+    startMap('hub', 0, squad, true);
+    const ex = HUB_EXITS.find((e) => e.map === 'assault');
+    me().x = me().px = (ex.x0 + 2.5) * TILE; me().y = me().py = (ex.y0 + 0.5) * TILE;
+    tick(60 * HUB_HOLD + 10);
+    check('из хаба — «Штурм» с 1-й локации, счёт с нуля', G.mapId === 'assault' && G.surv.stage === 1 && G.run && G.run.cleared === 0 && G.run.kills === 0,
+      [G.mapId, G.surv && G.surv.stage, G.run]);
+    check('противников на 1-й — 4, с пистолетами', G.enemies.length === ASSAULT.enemies(1) && ASSAULT.enemies(1) === 4 && G.enemies.every((e) => !e.kit[0]),
+      G.enemies.length);
+    me().god = true;
+    killPerson(G.enemies[0]); killPerson(G.enemies[1]);
+    const bot = G.players.find((q) => q.ai); killPerson(bot);
+    check('убито 2, потеря 1', G.run.kills === 2 && G.run.losses === 1, G.run);
+    // Backspace — поражение, итоги в хабе
+    pressed.Backspace = true; T_.step(1);
+    check('Backspace — в хаб, итоги: поражение, убито 2, потерь 1', G.mapId === 'hub' && G.runResult && !G.runResult.win && G.runResult.kills === 2 && G.runResult.losses === 1 && !G.run,
+      G.runResult);
+    G.cam.x = me().x; G.cam.y = me().y; render(1 / 60);
+    // новый забег — счёт с нуля
+    startMap('assault', assaultSeed(99, 1), squad, true);
+    check('новый забег — счёт с нуля, итоги убраны', G.run && G.run.kills === 0 && G.run.losses === 0 && !G.runResult);
+    // гибель отряда — экран, потом хаб с поражением
+    me().god = false; killPerson(me());
+    tick(2);
+    check('отряд погиб — экран итогов', G.state === 'dead');
+    G.cam.x = me().x; G.cam.y = me().y; G.stateT = 2; render(1 / 60);
+    for (let i = 0; i < 60 * (RUN_DEAD_T + 1) && G.mapId !== 'hub'; i++) T_.step(1);
+    check(`через ${RUN_DEAD_T} с — хаб, поражение`, G.mapId === 'hub' && G.runResult && !G.runResult.win && G.runResult.losses >= 1, [G.mapId, G.runResult]);
   });
 
   run('грузовик на 3-й', () => {
@@ -78,11 +117,11 @@ window.__result = (() => {
     tick(60 * 30, () => G.surv.phase === 'truck');
     check('уехал — переход открыт', G.surv.phase === 'exit', G.surv.phase);
     // покинуть боевую зону (хост) — в хаб
-    G.surv.phase = 'fight'; G.enemies = []; startMap('assault', assaultSeed(4321, 3), squad, false);
+    G.surv.phase = 'fight'; G.enemies = []; G.run = null; startMap('assault', assaultSeed(4321, 3), squad, false);
     G.enemies.forEach((e) => { e.dead = true; }); tick(2); tick(60 * (SURV.drive + SURV.medicWalk) + 30);
     const r2 = truckRear(); me().x = me().px = r2.x; me().y = me().py = r2.y + M(0.3);
     doAct(me(), 'evac'); tick(2);
-    check('«покинуть боевую зону» (хост) — весь отряд в хабе', G.mapId === 'hub');
+    check('«покинуть боевую зону» (хост) — весь отряд в хабе, итоги: успех, зачищено 1', G.mapId === 'hub' && G.runResult && G.runResult.win && G.runResult.cleared === 1, G.runResult);
   });
 
   run('подкрепление', () => {
@@ -93,8 +132,10 @@ window.__result = (() => {
       const s = G.surv, base = s.reinf.base;
       s.reinf.on = true;                                         // выпало (шанс 20%)
       const n0 = G.enemies.length;
-      tick(60 * 2);
-      check(`${mode}: до тревоги — не приходит`, G.enemies.length === n0 && s.reinf.alarmAt === null);
+      // 2 с все стоят на месте: появились вне видимости отряда — тревогу поднять некому (а не «повезло с местом появления»)
+      const pos = allPeople().map((o) => [o, o.x, o.y]);
+      tick(60 * 2, () => { for (const [o, x, y] of pos) { o.x = o.px = x; o.y = o.py = y; } });
+      check(`${mode}: до тревоги — не приходит`, G.enemies.length === n0 && s.reinf.alarmAt === null, [n0, G.enemies.length, s.reinf.alarmAt, G.enemies.filter((e) => e.st === 2).length]);
       const e0 = G.enemies.find((e) => !e.dead);
       e0.st = 2; e0.lastX = me().x; e0.lastY = me().y; e0.lastSeen = G.time;
       tick(2);

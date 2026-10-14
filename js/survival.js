@@ -168,6 +168,7 @@ function startWave() {
 function waveDone() {
   const s = G.surv;
   if (s.reinf) s.reinf.done = true;            // волна кончилась — подкрепления уже не будет
+  if (G.run) G.run.cleared = s.wave;
   if (SURV.truckDue(s.wave)) {
     s.phase = 'truck'; s.trucks++; s.stop++; s.waitT = 0;
     s.truck = { state: 'in', t: 0, fy: map.truck.from };
@@ -180,22 +181,37 @@ function waveDone() {
   }
 }
 
+// Случайная клетка появления, подходящая под условие ok(x, y, px, py): клетки — в случайном порядке до первой подходящей
+// (равномерно среди подходящих, но без проверки видимости до всех ~2000 клеток края)
+function pickSpawn(list, rnd, ok) {
+  const idx = Uint32Array.from(list.keys());
+  for (let n = idx.length; n > 0; n--) {
+    const k = Math.floor(rnd() * n), i = idx[k];
+    idx[k] = idx[n - 1];
+    const [x, y] = list[i];
+    if (ok(x, y, (x + 0.5) * TILE, (y + 0.5) * TILE)) return list[i];
+  }
+  return null;
+}
+// Места n бойцов группы у клетки (x, y): рядами по cols, через 1,2 м
+const groupAt = (x, y, n, cols) => Array.from({ length: n }, (_, i) =>
+  freeSpotNear((x + 0.5 + (i % cols) * 1.2) * TILE, (y + 0.5 + Math.floor(i / cols) * 1.2) * TILE));
+// Отряду не видно ни одного из мест (и не ближе SURV.spawnMin) — проверяются все, а не только первая клетка
+const hiddenFrom = (squad, pts) => pts.every((p) => !squad.some((q) => Math.hypot(q.x - p.x, q.y - p.y) < SURV.spawnMin || los(q.x, q.y, p.x, p.y)));
+
 // Группа 2–4 у края: вне прямой видимости отряда (и отряда им не видно), не ближе spawnMin, не там же, где прошлые две
 function spawnGroup() {
   const s = G.surv, rnd = s.rnd;
   const squad = G.players.filter((q) => !q.dead);
-  const ok = s.spawns.filter(([x, y]) => {
-    const px = (x + 0.5) * TILE, py = (y + 0.5) * TILE;
-    if (squad.some((q) => Math.hypot(q.x - px, q.y - py) < SURV.spawnMin || los(q.x, q.y, px, py))) return false;
-    return !s.recent.some((r) => Math.hypot(r[0] - x, r[1] - y) < 15);
-  });
-  if (!ok.length) return;
-  const [x, y] = ok[Math.floor(rnd() * ok.length)];
-  s.recent = [[x, y], ...s.recent].slice(0, 2);
   const n = Math.min(s.toSpawn, SURV.group[0] + Math.floor(rnd() * (SURV.group[1] - SURV.group[0] + 1)));
+  let pts = null;
+  const spot = pickSpawn(s.spawns, rnd, (x, y, px, py) => !s.recent.some((r) => Math.hypot(r[0] - x, r[1] - y) < 15) &&
+    hiddenFrom(squad, [{ x: px, y: py }]) && hiddenFrom(squad, (pts = groupAt(x, y, n, 2))));
+  if (!spot) return;
+  const [x, y] = spot;
+  s.recent = [[x, y], ...s.recent].slice(0, 2);
   const { cx, cy } = map.surv;
-  for (let i = 0; i < n; i++) {
-    const sp = freeSpotNear((x + 0.5 + (i % 2) * 1.2) * TILE, (y + 0.5 + Math.floor(i / 2) * 1.2) * TILE);
+  for (const sp of pts) {
     const e = makeEnemy(sp.x, sp.y, Math.atan2(cy * TILE - sp.y, cx * TILE - sp.x), null);
     kitForWave(e, s.wave, rnd);
     e.wave = s.wave;
@@ -206,10 +222,11 @@ function spawnGroup() {
   s.toSpawn -= n;
 }
 
-// Оружие волны: 1–2 — пистолеты; 3–4 — пистолеты и ружья; дальше — случайный набор, как на других картах
+// Оружие по номеру волны («Штурм» — локации): 1–2 — пистолеты; 3–4 — пистолеты и ружья; 5–6 — половина так же, половина —
+// случайный набор (винтовки); дальше — случайный набор, как на других картах
 function kitForWave(e, n, rnd) {
   if (n <= 2) giveKit(e, null, null);
-  else if (n <= 4) giveKit(e, rnd() < 0.5 ? 'w1300' : null, null);
+  else if (n <= 4 || (n <= 6 && rnd() < 0.5)) giveKit(e, rnd() < 0.5 ? 'w1300' : null, null);
   else randomKit(e, rnd);
 }
 
@@ -248,14 +265,10 @@ function spawnReinf(r) {
   let tx = 0, ty = 0, best = -1;
   for (const e of G.enemies) if (!e.dead && e.st === 2 && e.lastSeen > best) { best = e.lastSeen; tx = e.lastX; ty = e.lastY; }
   if (best < 0) { tx = squad.reduce((a, q) => a + q.x, 0) / squad.length; ty = squad.reduce((a, q) => a + q.y, 0) / squad.length; }
-  const ok = s.spawns.filter(([x, y]) => {
-    const px = (x + 0.5) * TILE, py = (y + 0.5) * TILE;
-    return !squad.some((q) => Math.hypot(q.x - px, q.y - py) < SURV.spawnMin || los(q.x, q.y, px, py));
-  });
-  if (!ok.length) return;
-  const [x, y] = ok[Math.floor(rnd() * ok.length)];
-  for (let i = 0; i < n; i++) {
-    const sp = freeSpotNear((x + 0.5 + (i % 3) * 1.2) * TILE, (y + 0.5 + Math.floor(i / 3) * 1.2) * TILE);
+  let pts = null;
+  const spot = pickSpawn(s.spawns, rnd, (x, y, px, py) => hiddenFrom(squad, [{ x: px, y: py }]) && hiddenFrom(squad, (pts = groupAt(x, y, n, 3))));
+  if (!spot) return;
+  for (const sp of pts) {
     const e = makeEnemy(sp.x, sp.y, Math.atan2(ty - sp.y, tx - sp.x), null);
     if (s.mode === 'assault') kitForStage(e, s.stage, rnd); else kitForWave(e, s.wave, rnd);
     e.wave = s.wave; e.reinf = true;
@@ -273,7 +286,7 @@ function updateTruck(dt) {
   tr.t += dt;
   if (tr.state === 'in') {
     tr.fy = map.truck.from + (park - map.truck.from) * easeOut(clamp(tr.t / SURV.drive, 0, 1));
-    if (tr.t >= SURV.drive) { tr.state = 'park'; tr.t = 0; tr.fy = park; setTruckTiles(true); md.state = 'exit'; md.t = 0; }
+    if (tr.t >= SURV.drive) { tr.state = 'park'; tr.t = 0; tr.fy = park; setTruckTiles(true); md.state = 'exit'; md.t = 0; truckReinforce(); }
   } else if (tr.state === 'park') {
     updateMedic(dt);
     s.waitT += dt;
@@ -292,6 +305,27 @@ function updateTruck(dt) {
       if (s.mode === 'assault') s.phase = 'exit'; else { s.phase = 'break'; s.t = SURV.afterTruck; }
     }
   }
+}
+// Погибшие бойцы отряда (в новой волне и на новой локации их нет) приезжают на грузовике: у заднего борта, полное здоровье,
+// снаряжение — со стола (люди) или новое (боты), без брони — пополнятся у борта
+function truckReinforce() {
+  const r = truckRear(), back = G.players.filter((q) => q.dead);
+  back.forEach((q, i) => {
+    const sp = freeSpotNear(r.x + (i - (back.length - 1) / 2) * M(1.2), r.y + M(1.5));
+    Object.assign(q, { dead: false, down: false, evac: false, hp: HP, x: sp.x, y: sp.y, px: sp.x, py: sp.y, lx: sp.x, ly: sp.y, a: Math.PI / 2,
+      vx: 0, vy: 0, bleed: 0, rev: 0, reviving: 0, revivedBy: null, act: null, armor: null, supp: 0, crouch: false, sprint: false,
+      lean: 0, leanWant: 0, leanPx: 0, ads: 0, lamp: false, hurtT: 9 });
+    if (q.ai) {
+      const { leader, name } = q;
+      makeAI(q, q.a, null);
+      Object.assign(q, { leader, name });
+      randomKit(q, G.surv.rnd);
+    } else {
+      const k = (G.kits || {})[q.slot];
+      if (k) giveKit(q, k[0], k[1]); else giveKit(q, 'm4a1', null);
+    }
+  });
+  if (back.length) emit(['radio', `Грузовик привёз пополнение: ${back.map((q) => q.name).join(', ')}`]);
 }
 function updateMedic(dt) {
   const md = G.surv.medic, door = medicDoor(), spot = medicSpot();
@@ -317,7 +351,7 @@ function survAct(p, k) {
   if (!s || p.dead || p.down || p.act) return;
   if (k === 'supply' && nearRear(p)) p.act = { kind: 'supply', t: 0, dur: SURV.supplyT };
   else if (k === 'heal' && nearMedic(p) && p.hp < HP && !s.medic.heal) { p.act = { kind: 'heal', t: 0, dur: SURV.healT }; s.medic.heal = p.id; }
-  else if (k === 'evac' && nearRear(p) && !p.ai && p.slot === 0) backToHub();     // покинуть боевую зону — весь отряд в хаб (решает хост)
+  else if (k === 'evac' && nearRear(p) && !p.ai && p.slot === 0) backToHub(true);     // покинуть боевую зону — весь отряд в хаб с итогами (решает хост)
 }
 // Каждый кадр, пока идёт действие: отошёл — бросил; время вышло — готово
 function survActStep(p, a, dt) {
@@ -392,15 +426,17 @@ const survState = () => {
   const tr = s.truck, md = s.medic;
   return [s.wave, SURV_PHASES.indexOf(s.phase), r1(s.t), s.toSpawn, s.trucks, s.stop, MODES.indexOf(s.mode), s.stage || 0,
     tr ? [TRUCK_STATES.indexOf(tr.state), r2(tr.fy)] : 0,
-    md ? [MEDIC_STATES.indexOf(md.state), r1(md.x), r1(md.y), r2(md.a), md.heal || 0] : 0];
+    md ? [MEDIC_STATES.indexOf(md.state), r1(md.x), r1(md.y), r2(md.a), md.heal || 0] : 0,
+    G.run ? [G.run.cleared, G.run.kills, G.run.losses] : 0];
 };
 function applySurvState(a) {
-  if (!a) { G.surv = null; return; }
+  if (!a) { G.surv = null; G.run = null; return; }
   const s = G.surv || (G.surv = { tilesOn: false });
   [s.wave, , s.t, s.toSpawn, s.trucks, s.stop] = a;
   s.phase = SURV_PHASES[a[1]]; s.mode = MODES[a[6]]; s.stage = a[7];
   s.truck = a[8] ? { state: TRUCK_STATES[a[8][0]], fy: a[8][1] } : null;
   s.medic = a[9] ? { state: MEDIC_STATES[a[9][0]], x: a[9][1], y: a[9][2], a: a[9][3], heal: a[9][4] } : null;
+  G.run = a[10] ? { mode: s.mode === 'assault' ? 'assault' : 'surv', cleared: a[10][0], kills: a[10][1], losses: a[10][2] } : null;
   setTruckTiles(!!(s.truck && s.truck.state === 'park'));
 }
 

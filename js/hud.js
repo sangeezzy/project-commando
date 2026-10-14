@@ -72,6 +72,21 @@ function drawHUD() {
   // реплики (слышно): противников и своих ботов
   if (G.barks) G.barks.forEach((b, i) => { ctx.globalAlpha = Math.min(1, b.t); mono(`${b.foe ? 'Противник' : 'Свой'}: «${b.text}»`, VW / 2, VH - 200 - (G.barks.length - 1 - i) * 18, b.foe ? '#e8a080' : '#a0c8e8', 'center', 13); ctx.globalAlpha = 1; });
   if (G.state === 'dead' || G.state === 'win') drawEnd();
+  else if (G.runResult && G.mapId === 'hub') drawRunResult(G.runResult);
+}
+
+// Итоги забега: в хабе после возвращения («покинуть боевую зону» — успех, Backspace или гибель отряда — поражение)
+function runLines(r, assault) {
+  return [assault ? `зачищено локаций: ${r.cleared}` : `пережито волн: ${r.cleared}`, `убито противников: ${r.kills}`, `потери отряда: ${r.losses}`];
+}
+function drawRunResult(r) {
+  ctx.globalAlpha = Math.min(1, r.t);
+  const x = VW / 2, y = 70;
+  box(x - 190, y - 34, 380, 128, 0.7);
+  txt(r.win ? 'ЗАБЕГ ЗАВЕРШЁН — ЭВАКУАЦИЯ' : 'ЗАБЕГ ПРОВАЛЕН', x, y - 6, 20, r.win ? '#9fe870' : HUD_RED, 'center');
+  mono(r.assault ? '«Штурм»' : '«Выживание»', x, y + 14, HUD_COL, 'center', 12);
+  runLines(r, r.assault).forEach((l, i) => mono(l, x, y + 38 + i * 18, '#f0d890', 'center', 14));
+  ctx.globalAlpha = 1;
 }
 
 function drawHealth(p) {
@@ -284,11 +299,12 @@ function drawEnd() {
   if (G.stateT < 0.6) return;
   const solo = G.players.filter((q) => !q.ai).length < 2;
   if (G.surv) {
-    // «Выживание»: кто-то ушёл на грузовике — эвакуированы, иначе погибли; сколько волн отбито
-    const s = G.surv;
+    // забег («Выживание», «Штурм»): отряд погиб — итоги, через RUN_DEAD_T с — в хаб
+    const s = G.surv, r = G.run || { cleared: 0, kills: 0, losses: 0 };
     txt(solo ? 'ВЫ ПОГИБЛИ' : 'ОТРЯД ПОГИБ', VW / 2, VH / 2 - 10, 40, HUD_RED, 'center');
-    mono(s.mode === 'assault' ? `зачищено локаций: ${Math.max(0, s.stage - 1)}` : `отбито волн: ${Math.max(0, s.wave - (s.phase === 'wave' ? 1 : 0))}`,
-      VW / 2, VH / 2 + 50, HUD_COL, 'center', 15);
+    runLines(r, s.mode === 'assault').forEach((l, i) => mono(l, VW / 2, VH / 2 + 26 + i * 20, '#f0d890', 'center', 15));
+    mono(`возвращение в хаб через ${Math.max(0, Math.ceil(RUN_DEAD_T - G.stateT))} с · Esc — в меню`, VW / 2, VH / 2 + 96, HUD_COL, 'center', 13);
+    return;
   } else txt(win ? 'ПОЛИГОН ЗАЧИЩЕН' : solo ? 'ВЫ ПОГИБЛИ' : 'ОТРЯД ПОГИБ', VW / 2, VH / 2 - 10, 40, win ? '#9fe870' : HUD_RED, 'center');
   mono(isAuth() ? 'Enter — заново (та же расстановка)' + (G.mapId !== 'range' ? ' · Backspace — в хаб' : '') + ' · Esc — в меню'
     : 'Enter — попросить хоста начать заново · Esc — в меню', VW / 2, VH / 2 + 26, HUD_COL, 'center', 14);

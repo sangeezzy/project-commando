@@ -40,12 +40,13 @@ document.addEventListener('visibilitychange', () => { last = performance.now(); 
 
 function update(dt) {
   G.stateT += dt;
-  // Enter — заново: у хоста и в одиночке сразу, гость просит хоста (после гибели отряда или победы)
-  if (pressed.Enter && G.mapId !== 'hub') {
+  // Enter — заново: у хоста и в одиночке сразу, гость просит хоста (после гибели отряда или победы); в забеге («Выживание», «Штурм») — нет
+  if (pressed.Enter && G.mapId !== 'hub' && !G.surv) {
     if (isAuth()) restartRange();
     else if (G.state !== 'play') send({ t: 'restart' });
   }
-  if (pressed.Backspace && isAuth()) backToHub();          // хост: обратно в хаб
+  if (pressed.Backspace && isAuth()) backToHub();          // хост: обратно в хаб (забег — поражение, с итогами)
+  if (G.state === 'dead' && G.run && isAuth() && G.stateT >= RUN_DEAD_T) backToHub();   // отряд погиб в забеге — в хаб
   const p = me();
   if (p && G.state === 'play' && !uiOpen()) controlLocal(p, dt);
   else clearPressed();
@@ -73,7 +74,7 @@ function viewer() {
 
 // Заново — та же карта с тем же seed (та же расстановка)
 function restartRange() {
-  if (G.mapId === 'hub') return;
+  if (G.mapId === 'hub' || G.surv) return;
   launchMap(G.mapId || 'range', G.mapSeed || 0);
 }
 
@@ -162,6 +163,7 @@ function updateLocalFx(dt) {
   if (G.hitmark) { G.hitmark.t -= dt; if (G.hitmark.t <= 0) G.hitmark = null; }
   if (G.toast) { G.toast.t -= dt; if (G.toast.t <= 0) G.toast = null; }
   if (G.banner) { G.banner.t -= dt; if (G.banner.t <= 0) G.banner = null; }
+  if (G.runResult) { G.runResult.t -= dt; if (G.runResult.t <= 0) G.runResult = null; }
   if (G.radioMsg) { G.radioMsg.t -= dt; if (G.radioMsg.t <= 0) G.radioMsg = null; }
   if (G.barks) { for (const b of G.barks) b.t -= dt; G.barks = G.barks.filter((b) => b.t > 0); }
 }

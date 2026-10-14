@@ -153,5 +153,23 @@ window.__result = (() => {
     render(1 / 60);
     check('кадр в темноте с фонарём рисуется', true);
   });
+  run('дверь: свет пересчитывается куском, как целиком', () => {
+    startMap('assault', assaultSeed(4321, 6), [{ slot: 0, human: true, name: 'Т' }], false);
+    const px = () => map.lightCanvas.getContext('2d').getImageData(0, 0, map.lw, map.lh).data;
+    let worst = [0, 0, 0], n = 0;
+    for (const d of map.doors.filter((q) => !q.locked).slice(0, 6)) {
+      d.open = !d.open; syncDoorTile(d);                    // кусок вокруг двери
+      const part = { L: map.light.slice(), S: map.lightSub.slice(), P: px() };
+      buildLightMap(map.lightBase);                         // целиком
+      const full = { L: map.light, S: map.lightSub, P: px() };
+      let dl = 0, ds = 0, dp = 0;
+      for (let i = 0; i < full.L.length; i++) dl = Math.max(dl, Math.abs(full.L[i] - part.L[i]));
+      for (let i = 0; i < full.S.length; i++) ds = Math.max(ds, Math.abs(full.S[i] - part.S[i]));
+      for (let i = 0; i < full.P.length; i++) dp = Math.max(dp, Math.abs(full.P[i] - part.P[i]));
+      worst = [Math.max(worst[0], dl), Math.max(worst[1], ds), Math.max(worst[2], dp)];
+      n++;
+    }
+    check(`${n} дверей: освещённость и ячейки — те же, текстура — до 2/255`, n >= 3 && worst[0] < 1e-6 && worst[1] < 1e-6 && worst[2] <= 2, [n, worst]);
+  });
   return T_.checks;
 })();

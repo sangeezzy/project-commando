@@ -3,7 +3,7 @@
 <style>html,body{margin:0;overflow:hidden;background:#000}iframe{border:0;width:100vw;height:100vh;display:block}</style></head>
 <body>
 <!-- Профиль кадра: сцена боя (отряд с ботами, противники в тревоге), полная отрисовка со светом.
-     ?scene=fight|dark  &n=кадров  &raf=1 — настоящие кадры с выводом на экран (иначе подряд, без вывода).
+     ?scene=fight|dark|surv|assault  &n=кадров  &raf=1 — настоящие кадры с выводом на экран (иначе подряд, без вывода).
      Запуск: python tools/prof.py. Итог — JSON в элементе out и POST /report. -->
 <iframe id="f"></iframe>
 <pre id="out"></pre>
@@ -22,11 +22,13 @@ f.onload = async () => {
     // обёртки: время включительно (вложенные вызовы входят в родителя) и число вызовов
     const names = ['update', 'render', 'updateWorld', 'updateAI', 'updateBullets', 'updateDoors', 'stepNoises', 'updateExposure', 'updateAnim',
       'updateIntel', 'updateSquads', 'checkBodies', 'perceive', 'makeNoise', 'findCover', 'bfsFrom', 'soundField', 'weightedField', 'fieldTo',
-      'los', 'sightLine', 'castRay', 'lightAt', 'seenBrightness', 'glareAt', 'exposureKey',
+      'los', 'sightLine', 'lightAt', 'seenBrightness', 'glareAt', 'exposureKey',
       'drawLighting', 'drawFog', 'viewPolygon', 'lightPoly', 'drawLamp', 'drawPerson', 'drawHUD', 'drawDecal', 'drawPart', 'playerSees',
       'drawDoor', 'drawBody', 'drawLampGlare', 'drawLampDaylight', 'drawIntel', 'drawTeamTags', 'drawAwareness', 'drawMuzzle',
       'fight', 'hunt', 'idle', 'planFlank', 'flankStep', 'tryCornerPeek', 'peekStep', 'suppressStep', 'coverToward', 'hiddenSpotNear', 'exposedTo',
-      'fireMoveCheck', 'freeSpotNear', 'coverNear', 'followLeader', 'downedToHelp', 'reviveStep', 'lookAround', 'doorFront', 'startDoorFire', 'moveDir', 'fieldStep'];
+      'fireMoveCheck', 'freeSpotNear', 'coverNear', 'followLeader', 'downedToHelp', 'reviveStep', 'lookAround', 'doorFront', 'startDoorFire', 'moveDir', 'fieldStep',
+      'updateSurvival', 'spawnGroup', 'directEnemies', 'updateReinf', 'drawWeather', 'aiWeapons', 'updateKeys', 'updateDowned', 'updateWeather', 'updateLocalFx',
+      'drawTruck', 'drawMedic', 'drawAssaultExit', 'drawHubWorld', 'trackSpeed', 'updateLean', 'updateGun', 'updateAct', 'separate', 'canSuppress', 'fireLineK', 'buildLightMap', 'syncDoorTile', 'aiDoorAhead', 'moveCircle', 'foeBehindDoor', 'nearLeader', 'fovOf'];
     // ?skip=имя,имя — отключить функции (проверить, куда уходит время)
     for (const nm of (q.get('skip') || '').split(',').filter(Boolean)) w[nm] = () => {};
     for (const nm of names) {
@@ -42,6 +44,8 @@ f.onload = async () => {
       };
     }
     w.eval(`
+      ${scene === 'surv' ? "startMap('surv', 778, [{ slot: 0, human: true, name: 'Т' }], true); G.surv.wave = 9; G.surv.phase = 'break'; G.surv.t = 0; setWeather('heavy'); for (let i = 0; i < 1200 && G.enemies.filter((e) => !e.dead).length < 12; i++) { G.time += 1/60; updateWorld(1/60); for (const p of G.players) p.hp = 1e9; }" : ''}
+      ${scene === 'assault' ? "startMap('assault', assaultSeed(4321, 12), [{ slot: 0, human: true, name: 'Т' }], true);" : ''}
       for (const p of G.players) { p.hp = 1e9; }
       ${scene === 'dark' ? "{ const p = me(); p.x = p.px = 10.5 * TILE; p.y = p.py = 8.5 * TILE; p.lamp = true; }" : ''}
       for (const e of G.enemies) alertEnemy(e, me().x, me().y, true);
@@ -78,7 +82,7 @@ f.onload = async () => {
     const n = ft.length;
     ft.sort((a, b) => a - b);
     out.frame = { avg: ft.reduce((s, x) => s + x, 0) / n, p50: ft[n >> 1], p95: ft[Math.floor(n * 0.95)], max: ft[n - 1] };
-    out.state = w.eval('({ st: G.state, alive: G.enemies.filter((e) => !e.dead).length, bullets: G.bullets.length, decals: G.decals.length, parts: G.parts.length })');
+    out.state = w.eval('({ mapPx: map.canvas.width + "x" + map.canvas.height, st: G.state, alive: G.enemies.filter((e) => !e.dead).length, bullets: G.bullets.length, decals: G.decals.length, parts: G.parts.length })');
   } catch (e) { out.err = String(e) + ' ' + e.stack; }
   document.getElementById('out').textContent = JSON.stringify(out);
   fetch('/report', { method: 'POST', body: JSON.stringify(out) }).catch(() => {});

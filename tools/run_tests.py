@@ -3,11 +3,9 @@
 Запуск из корня проекта:
     python tools/run_tests.py                 # все юнит-тесты
     python tools/run_tests.py --only m4,cover
-    python tools/run_tests.py --net           # + сетевой тест через PeerJS (нужен интернет, ~40 с)
-    python tools/run_tests.py --only netlocal # только прямое подключение (server.py, без интернета; входит в обычный прогон)
+    python tools/run_tests.py --only netlocal # только сеть: прямое подключение через server.ps1 / server.py (без интернета)
 
 Chrome ищется в стандартных местах; путь можно задать переменной CHROME.
-Если интернет идёт через прокси (HTTPS_PROXY/HTTP_PROXY), сетевой тест передаёт его в Chrome.
 """
 import argparse
 import html
@@ -50,7 +48,6 @@ UNIT_TESTS = {
     'voice': '',
     'netaddr': '',
     'allies': 'bots=1',
-    'relay': '',
     'debug': '',
     'aiwall': '',
     'aicorner': '',
@@ -143,108 +140,6 @@ def free_port():
     raise OSError('не удалось найти свободный порт')
 
 
-def run_net(chrome):
-    print('\n[net] хост + 2 гостя через PeerJS (около 40 с реального времени)')
-    reports = {}
-
-    class Handler(http.server.SimpleHTTPRequestHandler):
-        def __init__(self, *a, **kw):
-            super().__init__(*a, directory=str(ROOT), **kw)
-
-        def log_message(self, *a):
-            pass
-
-        def do_POST(self):
-            data = self.rfile.read(int(self.headers.get('Content-Length', 0)))
-            try:
-                rep = json.loads(data)
-                if rep.get('final') or not reports.get('last', {}).get('final'):
-                    reports['last'] = rep
-            except ValueError:
-                pass
-            self.send_response(200)
-            self.end_headers()
-
-    port = free_port()
-    server = http.server.ThreadingHTTPServer(('127.0.0.1', port), Handler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-
-    prof = tempfile.mkdtemp()
-    cmd = [chrome, '--headless=new', '--disable-gpu', f'--user-data-dir={prof}', '--remote-debugging-port=0',
-           '--disable-features=WebRtcHideLocalIpsWithMdns',  # без этого WebRTC в headless не соединяется
-           '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream',   # «микрофон» для голосового чата
-           '--autoplay-policy=no-user-gesture-required',
-           '--window-size=1800,1100']
-    proxy = os.environ.get('HTTPS_PROXY') or os.environ.get('HTTP_PROXY')
-    if proxy:
-        cmd += [f'--proxy-server={proxy}', '--proxy-bypass-list=127.0.0.1;localhost']
-    cmd.append(f'http://127.0.0.1:{port}/tools/net.html')
-    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    try:
-        deadline = time.time() + 90
-        while time.time() < deadline and not reports.get('last', {}).get('final'):
-            time.sleep(1)
-    finally:
-        proc.kill()
-        server.shutdown()
-        shutil.rmtree(prof, ignore_errors=True)
-
-    r = reports.get('last')
-    if not r or 'checks' not in r:
-        Report.check('отчёт получен', False, r)
-        return
-    for c in r['checks']:
-        Report.check(c['name'], c['ok'], c.get('got'))
-    Report.check('финальная фаза дошла до конца', bool(r.get('final')), r.get('log'))
-
-
-def tls_proxy(port_to, cert, key):
-    """https-прокси перед сервером игры (как туннель): TLS снаружи, байты внутрь. Возвращает порт."""
-    import asyncio, ssl
-    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    ctx.load_cert_chain(cert, key)
-    port = free_port()
-    ready = threading.Event()
-
-    async def pipe(r, w):
-        try:
-            while True:
-                b = await r.read(65536)
-                if not b:
-                    break
-                w.write(b)
-                await w.drain()
-        except Exception:
-            pass
-        finally:
-            try:
-                w.close()
-            except Exception:
-                pass
-
-    async def handle(r, w):
-        try:
-            r2, w2 = await asyncio.open_connection('127.0.0.1', port_to)
-        except OSError:
-            w.close()
-            return
-        await asyncio.gather(pipe(r, w2), pipe(r2, w))
-
-    def run():
-        # Selector, а не Proactor (Windows): у Proactor первая же ошибка приёма (браузер оборвал лишнее соединение)
-        # закрывает слушающий сокет — прокси перестаёт пускать, страница не может прислать отчёт (так и сбоили прогоны)
-        loop = asyncio.SelectorEventLoop() if sys.platform == 'win32' else asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.set_exception_handler(lambda l, c: None)   # обрывы соединений при закрытии браузера — не ошибка
-        loop.run_until_complete(asyncio.start_server(handle, '127.0.0.1', port, ssl=ctx))
-        ready.set()
-        loop.run_forever()
-
-    threading.Thread(target=run, daemon=True).start()
-    ready.wait(5)
-    return port
-
-
 def run_srvrst(server='py'):
     """Сервер не перестаёт пускать игроков после клиентов, оборвавших соединение сбросом (RST) ещё до приёма.
     Так делают браузеры с лишними заранее открытыми соединениями; у asyncio на Windows (Proactor) первая такая
@@ -288,14 +183,11 @@ def run_srvrst(server='py'):
         subprocess.run(['taskkill', '/F', '/T', '/PID', str(srv.pid)], capture_output=True) if sys.platform == 'win32' else srv.kill()
 
 
-def run_netlocal(chrome, server='py', tls=False, mode='ws', lag=0, jitter=0):
-    """Прямое подключение: сервер хоста (server.py или server.ps1 — без Python), хост и 2 гостя через WebSocket.
-    tls — через https-прокси (как туннель tunnel.bat или онлайн-сервер): страница по https, соединение wss. Интернет не нужен.
-    mode='room' — онлайн-комната по коду (/ws?room=КОД, как на онлайн-сервере cloud/worker.js) и проверки протокола комнат.
-    lag/jitter (мс, только server.py) — помехи как в интернете: каждое сообщение от сервера позже на lag ± jitter."""
-    title = {'py': 'server.py', 'ps1': 'server.ps1 (без Python)'}[server] + (' через https' if tls else '') +         (f', помехи {lag}±{jitter} мс в одну сторону' if lag or jitter else '')
-    what = 'онлайн-комната по коду' if mode == 'room' else 'прямое подключение'
-    print(f'\n[netlocal] {what}, {title}: хост + 2 гостя (около 30 с)')
+def run_netlocal(chrome, server='py', lag=0, jitter=0):
+    """Прямое подключение: сервер хоста (server.py или server.ps1 — без Python), хост и 2 гостя через WebSocket. Интернет не нужен.
+    lag/jitter (мс, только server.py) — помехи как в сети через VPN: каждое сообщение от сервера позже на lag ± jitter."""
+    title = {'py': 'server.py', 'ps1': 'server.ps1 (без Python)'}[server] + (f', помехи {lag}±{jitter} мс в одну сторону' if lag or jitter else '')
+    print(f'\n[netlocal] прямое подключение, {title}: хост + 2 гостя (около 30 с)')
     port = free_port()
     tmp = Path(tempfile.mkdtemp())
     rep = tmp / 'report.json'
@@ -308,18 +200,6 @@ def run_netlocal(chrome, server='py', tls=False, mode='ws', lag=0, jitter=0):
     env = dict(os.environ, PYTHONUNBUFFERED='1', PYTHONIOENCODING='utf-8')
     srv = subprocess.Popen(cmd_srv, stdout=srv_log, stderr=subprocess.STDOUT, env=env)
     base = f'http://127.0.0.1:{port}'
-    if tls:
-        # openssl: в PATH или из состава Git для Windows; нет — вариант пропускается
-        ossl = shutil.which('openssl') or next((p for p in (r'C:\Program Files\Git\usr\bin\openssl.exe', r'C:\Program Files\Git\mingw64\bin\openssl.exe') if Path(p).exists()), None)
-        if not ossl:
-            print('  (пропущено: нужен openssl для тестового сертификата — есть в составе Git для Windows)')
-            srv.kill()
-            subprocess.run(['taskkill', '/F', '/T', '/PID', str(srv.pid)], capture_output=True)
-            return
-        cert, key = tmp / 'c.pem', tmp / 'k.pem'
-        subprocess.run([ossl, 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1', '-subj', '/CN=127.0.0.1',
-                        '-keyout', str(key), '-out', str(cert)], capture_output=True)
-        base = f'https://127.0.0.1:{tls_proxy(port, str(cert), str(key))}'
     # сервер на PowerShell компилирует C# при запуске — подождать, пока начнёт отвечать
     deadline = time.time() + 30
     while time.time() < deadline:
@@ -332,7 +212,7 @@ def run_netlocal(chrome, server='py', tls=False, mode='ws', lag=0, jitter=0):
     cmd = [chrome, '--headless=new', '--disable-gpu', f'--user-data-dir={prof}', '--remote-debugging-port=0',
            '--autoplay-policy=no-user-gesture-required', '--window-size=1800,1100', '--no-proxy-server',
            '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream',   # «микрофон» для голосового чата
-           '--ignore-certificate-errors', f'{base}/tools/net.html?mode={mode}&lag={lag}&jitter={jitter}']
+           f'{base}/tools/net.html?lag={lag}&jitter={jitter}']
     chrome_log = open(tmp / 'chrome.log', 'wb')         # журнал Chrome: падения процессов страниц
     proc = subprocess.Popen(cmd + ['--enable-logging=stderr', '--v=0'], stdout=subprocess.DEVNULL, stderr=chrome_log)
     r = None
@@ -407,29 +287,20 @@ def run_netlocal(chrome, server='py', tls=False, mode='ws', lag=0, jitter=0):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--only', help='через запятую: имена юнит-тестов (net — только сетевой)')
-    ap.add_argument('--net', action='store_true', help='добавить сетевой тест (интернет: сигнальный сервер PeerJS)')
+    ap.add_argument('--only', help='через запятую: имена юнит-тестов (netlocal — сеть)')
     args = ap.parse_args()
     chrome = find_chrome()
     names = args.only.split(',') if args.only else list(UNIT_TESTS)
     netlocal = 'netlocal' in names or not args.only
     if 'netlocal' in names:
         names.remove('netlocal')
-    if 'net' in names:
-        names.remove('net')
-        args.net = True
     run_unit(chrome, names)
     if netlocal:
         run_srvrst('py')
         run_srvrst('ps1')
         run_netlocal(chrome, 'ps1')
         run_netlocal(chrome, 'py')
-        run_netlocal(chrome, 'ps1', tls=True)
-        run_netlocal(chrome, 'py', tls=True, mode='room')
-        run_netlocal(chrome, 'ps1', mode='room')
-        run_netlocal(chrome, 'py', tls=True, mode='room', lag=60, jitter=20)     # как через интернет: пинг ~120 мс
-    if args.net:
-        run_net(chrome)
+        run_netlocal(chrome, 'py', lag=60, jitter=20)     # как через VPN с большим пингом: ~120 мс
     print(f'\nИтого: {Report.total - Report.failed}/{Report.total} проверок прошло')
     sys.exit(1 if Report.failed else 0)
 

@@ -70,19 +70,25 @@ function weatherFx(dt) {
   }
 }
 
-// Отрисовка поверх мира (экранные координаты): дымка (туман, дождь), косые струи, вспышка молнии
-function drawWeather() {
+// Отрисовка поверх мира (экранные координаты): дымка (туман, дождь), косые струи, вспышка молнии.
+// offX, offY — сдвиг мира на экране (как в render), p — чьими глазами смотрим.
+function drawWeather(offX = VW / 2 - G.cam.x * G.zoom, offY = VH / 2 - G.cam.y * G.zoom, p = null) {
   const w = G.weather;
   if (!w) return;
   ctx.save();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  // дымка: от края экрана к центру — сильнее при плохой видимости
-  const haze = w.fog * 0.75 + (1 - w.vis) * 0.25;
-  if (haze > 0.01) {
-    const r0 = Math.min(VW, VH) * (0.1 + 0.5 * w.vis), r1 = Math.max(VW, VH) * (0.35 + 0.4 * w.vis);
-    const gr = ctx.createRadialGradient(VW / 2, VH / 2, r0, VW / 2, VH / 2, r1);
-    gr.addColorStop(0, 'rgba(150,155,160,0)');
-    gr.addColorStop(1, `rgba(150,155,160,${clamp(haze, 0, 0.92)})`);
+  // дымка — вокруг глаз бойца: дальше VIS_BASE × vis противников не различить (playerSees), там же на экране — почти сплошная пелена;
+  // ближе — плотнеет с расстоянием. Туман — светло-серый, дождь — сизый.
+  if ((w.vis < 0.995 || w.fog > 0.01) && !G.noFog) {      // отладка ]: без пелены
+    const z = G.zoom, eye = p && !p.dead ? eyeOf(p) : G.cam;
+    const ex = eye.x * z + offX, ey = eye.y * z + offY, D = VIS_BASE * w.vis * z;
+    const fk = clamp(w.fog, 0, 1), aMax = clamp(0.45 + 0.5 * fk + 0.4 * (1 - w.vis), 0, 0.96);
+    const c = `${Math.round(118 + 52 * fk)},${Math.round(128 + 47 * fk)},${Math.round(142 + 38 * fk)}`;
+    const gr = ctx.createRadialGradient(ex, ey, 0, ex, ey, D);
+    gr.addColorStop(0, `rgba(${c},${0.04 * fk})`);
+    gr.addColorStop(0.35, `rgba(${c},${aMax * 0.12})`);
+    gr.addColorStop(0.75, `rgba(${c},${aMax * 0.55})`);
+    gr.addColorStop(1, `rgba(${c},${aMax})`);
     ctx.fillStyle = gr; ctx.fillRect(0, 0, VW, VH);
   }
   // дождь: струи падают по экрану (положения — от времени, без хранения частиц)

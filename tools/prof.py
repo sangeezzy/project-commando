@@ -68,7 +68,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--n', type=int, default=600)
     ap.add_argument('--size', default='1920x1080')
-    ap.add_argument('--scene', help='fight или dark (по умолчанию обе)')
+    ap.add_argument('--scene', help='fight, dark, surv или assault (по умолчанию все)')
     ap.add_argument('--skip', default='', help='через запятую: отключить функции (например drawFog)')
     ap.add_argument('--gpu', action='store_true', help='не отключать видеокарту (ближе к настоящему браузеру)')
     ap.add_argument('--raf', action='store_true', help='настоящие кадры с выводом на экран (итог — кадров в секунду)')
@@ -79,7 +79,7 @@ def main():
     server = http.server.ThreadingHTTPServer(('127.0.0.1', port), partial(Handler, directory=str(ROOT)))
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
-        for scene in [a.scene] if a.scene else ['fight', 'dark']:
+        for scene in [a.scene] if a.scene else ['fight', 'dark', 'surv', 'assault']:
             r = profile(chrome, port, scene, a.n, size, a.skip, a.gpu, a.raf)
             if not r:
                 print(scene, ': нет результата (Chrome завис или страница не загрузилась)')

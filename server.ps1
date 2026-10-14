@@ -1,6 +1,6 @@
 ﻿# Сервер игры PROJECT COMMANDO для прямого подключения — без Python: PowerShell + встроенный C# (есть в любой Windows 10/11).
 # То же, что server.py: раздаёт файлы игры и пересылает игровые сообщения между хостом и гостями по WebSocket (/ws).
-# /ws — общая комната сервера (прямое подключение), /ws?room=КОД — комната по коду (онлайн-режим).
+# Одна комната на сервер (/ws): гости — по адресу хоста (локальная сеть, Radmin VPN и т. п.).
 #   powershell -NoProfile -ExecutionPolicy Bypass -File server.ps1 [-Port 8000] [-Open] [-Report файл]
 param([int]$Port = 8000, [switch]$Open, [string]$Report = '')
 $ErrorActionPreference = 'Stop'
@@ -20,23 +20,10 @@ using System.Threading;
 public static class PCServer {
     static string Root, Report;
     static readonly object Lk = new object();
-    const int MaxGuests = 7, MaxRooms = 500;
-    class Room { public string Code = ""; public Conn Host; public readonly Dictionary<int, Conn> Guests = new Dictionary<int, Conn>(); public int NextId = 1;
-        public string Label { get { return Code == "" ? "Комната" : "Комната " + Code; } } }
-    static readonly Dictionary<string, Room> Rooms = new Dictionary<string, Room> { { "", new Room() } };
-
-    // Комната по коду (null — неверный код или слишком много комнат); пустые удаляются после выхода
-    static Room RoomFor(string code) {
-        lock (Lk) {
-            Room r;
-            if (Rooms.TryGetValue(code, out r)) return r;
-            if (code.Length < 4 || code.Length > 8 || !code.All(ch => (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9')) || Rooms.Count > MaxRooms) return null;
-            r = new Room { Code = code }; Rooms[code] = r; return r;
-        }
-    }
-    static void DropIfEmpty(Room r) {
-        lock (Lk) { if (r.Code != "" && r.Guests.Count == 0 && (r.Host == null || r.Host.Closed) && Rooms.ContainsKey(r.Code) && Rooms[r.Code] == r) Rooms.Remove(r.Code); }
-    }
+    const int MaxGuests = 7;
+    class Room { public Conn Host; public readonly Dictionary<int, Conn> Guests = new Dictionary<int, Conn>(); public int NextId = 1;
+        public string Label { get { return "Комната"; } } }
+    static readonly Room TheRoom = new Room();
 
     class Conn {
         public TcpClient C; public NetworkStream S; public bool Closed;
@@ -74,7 +61,6 @@ public static class PCServer {
             Console.WriteLine("  Друзьям — один из адресов (свой у каждой сети; 26.x.x.x — Radmin VPN):");
             foreach (var a in addrs) Console.WriteLine("    http://" + a + ":" + port);
         }
-        Console.WriteLine("  Через интернет без общей сети — запустите tunnel.bat и отправьте друзьям выданную ссылку.");
         Console.WriteLine("  Не закрывайте это окно, пока идёт игра.");
         if (open) { try { System.Diagnostics.Process.Start("http://localhost:" + port + "/"); } catch { } }
         while (true) {
@@ -104,9 +90,6 @@ public static class PCServer {
             var rl = lines[0].Split(' ');
             if (rl.Length < 2) { c.Close(); return; }
             string method = rl[0], path = Uri.UnescapeDataString(rl[1].Split('?')[0]);
-            string code = "";
-            int qi = rl[1].IndexOf('?');
-            if (qi >= 0) foreach (var kv in rl[1].Substring(qi + 1).Split('&')) if (kv.StartsWith("room=")) code = Uri.UnescapeDataString(kv.Substring(5)).ToUpperInvariant();
             var hdr = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (var ln in lines.Skip(1)) { int i = ln.IndexOf(':'); if (i > 0) hdr[ln.Substring(0, i).Trim()] = ln.Substring(i + 1).Trim(); }
             string up;
@@ -117,11 +100,8 @@ public static class PCServer {
                 s.Write(resp, 0, resp.Length);
                 var conn = new Conn { C = c, S = s };
                 int port = ((IPEndPoint)c.Client.LocalEndPoint).Port;
-                var room = RoomFor(code);
-                try {
-                    if (room == null) conn.Send("E|bad-room");
-                    else Serve(room, conn, code == "" ? string.Join(",", LocalAddrs().Select(a => a + ":" + port)) : "");
-                } finally { conn.Close(); if (room != null) DropIfEmpty(room); }
+                try { Serve(TheRoom, conn, string.Join(",", LocalAddrs().Select(a => a + ":" + port))); }
+                finally { conn.Close(); }
                 return;
             }
             if (method == "POST" && path == "/report" && !string.IsNullOrEmpty(Report)) {

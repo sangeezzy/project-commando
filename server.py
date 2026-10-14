@@ -9,9 +9,8 @@
 
 Без Python (Windows): server.ps1 — то же самое на PowerShell (его запускает start.bat).
 
-Хост открывает http://localhost:8000, гости — http://<адрес хоста>:8000 (адреса печатаются при запуске).
-Комнаты: /ws — общая комната сервера (прямое подключение), /ws?room=КОД — комната по коду (онлайн-режим:
-сервер-ретранслятор в интернете, например на VPS; то же делает cloud/worker.js на Cloudflare).
+Хост открывает http://localhost:8000, гости — http://<адрес хоста>:8000 (адреса печатаются при запуске):
+локальная сеть, Radmin VPN, ZeroTier, Tailscale, Hamachi. На сервере одна комната (/ws).
 """
 import asyncio
 import base64
@@ -19,12 +18,11 @@ import hashlib
 import mimetypes
 import os
 import random
-import re
 import socket
 import struct
 import sys
 from pathlib import Path
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import unquote, urlparse
 
 ROOT = Path(__file__).resolve().parent
 WS_MAGIC = b'258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
@@ -147,21 +145,15 @@ class WS:
 #   гость → сервер: G (войти), M|… (хосту)
 #   сервер → хосту: O|адреса, J<id> (вошёл), L<id> (вышел), F<id>|… (от гостя), E|ошибка
 #   сервер → гостю: W<id> (вошёл), M|… (от хоста), X (хост ушёл), E|ошибка
-#   ошибки: host-exists (комната с этим кодом уже есть), no-host (комнаты нет), full (комната заполнена)
+#   ошибки: host-exists (хост уже есть), no-host (комнаты нет), full (комната заполнена)
 MAX_GUESTS = 7              # в игре 4 места; лишние получат от хоста «комната заполнена»
-MAX_ROOMS = 500
-ROOM_RE = re.compile(r'^[A-Z0-9]{4,8}$')
 
 
 class Room:
-    def __init__(self, code=''):
-        self.code = code
+    def __init__(self):
         self.host = None
         self.guests = {}
         self.next_id = 1
-
-    def label(self):
-        return f'Комната {self.code}' if self.code else 'Комната'
 
     async def serve(self, ws, addrs):
         hello = await ws.recv()
@@ -171,7 +163,7 @@ class Room:
                 return
             self.host = ws
             await ws.send_text('O|' + ','.join(addrs))
-            print(f'{self.label()}: хост создал комнату')
+            print(f'Комната: хост создал комнату')
             try:
                 while True:
                     m = await ws.recv()
@@ -199,7 +191,7 @@ class Room:
             finally:
                 if self.host is ws:
                     self.host = None
-                    print(f'{self.label()}: хост вышел — комната закрыта')
+                    print(f'Комната: хост вышел — комната закрыта')
                     for g in list(self.guests.values()):
                         await g.send_text('X')
                         g.close()
@@ -216,7 +208,7 @@ class Room:
             self.guests[gid] = ws
             await ws.send_text(f'W{gid}')
             await self.host.send_text(f'J{gid}')
-            print(f'{self.label()}: гость {gid} подключился')
+            print(f'Комната: гость {gid} подключился')
             try:
                 while True:
                     m = await ws.recv()
@@ -227,29 +219,10 @@ class Room:
             finally:
                 if self.guests.pop(gid, None) is not None and self.host:
                     await self.host.send_text(f'L{gid}')
-                print(f'{self.label()}: гость {gid} отключился')
+                print(f'Комната: гость {gid} отключился')
 
 
-ROOMS = {'': Room()}         # '' — общая комната сервера (прямое подключение)
-
-
-def room_for(code):
-    """Комната по коду (None — неверный код или слишком много комнат). Пустые комнаты удаляются после выхода."""
-    if code == '':
-        return ROOMS['']
-    if not ROOM_RE.match(code):
-        return None
-    r = ROOMS.get(code)
-    if r is None:
-        if len(ROOMS) > MAX_ROOMS:
-            return None
-        r = ROOMS[code] = Room(code)
-    return r
-
-
-def drop_if_empty(room):
-    if room.code and not room.guests and (room.host is None or room.host.closed) and ROOMS.get(room.code) is room:
-        del ROOMS[room.code]
+ROOM = Room()
 
 
 def local_addrs():
@@ -316,17 +289,10 @@ async def _handle(reader, writer):
                 pass
         port = writer.get_extra_info('sockname')[1]
         ws = WS(reader, writer)
-        code = (parse_qs(urlparse(target).query).get('room') or [''])[0].upper()
-        room = room_for(code)
         try:
-            if room is None:
-                await ws.send_text('E|bad-room')
-            else:
-                await room.serve(ws, [f'{a}:{port}' for a in local_addrs()] if not code else [])
+            await ROOM.serve(ws, [f'{a}:{port}' for a in local_addrs()])
         finally:
             ws.close()
-            if room is not None:
-                drop_if_empty(room)
         return
 
     if method == 'POST' and path == '/report' and REPORT_FILE:
@@ -395,7 +361,6 @@ async def main(port):
         print('  Друзьям — один из адресов (свой у каждой сети):')
         for a in addrs:
             print(f'    http://{a}:{port}')
-    print('  Через интернет без общей сети — запустите tunnel.bat и отправьте друзьям выданную ссылку.')
     print('  Не закрывайте это окно, пока идёт игра. Остановить — Ctrl+C.')
     if OPEN:
         import webbrowser

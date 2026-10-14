@@ -66,7 +66,10 @@ function updateHub(dt) {
   if (i < 0) { G.hubHold = null; return; }
   if (!G.hubHold || G.hubHold.i !== i) G.hubHold = { i, t: 0 };
   G.hubHold.t += dt;
-  if (G.hubHold.t >= HUB_HOLD) launchMap(HUB_EXITS[i].map, (Math.random() * 4294967296) >>> 0);
+  if (G.hubHold.t >= HUB_HOLD) {
+    const id = HUB_EXITS[i].map, seed = (Math.random() * 4294967296) >>> 0;
+    launchMap(id, id === 'assault' ? assaultSeed(seed, 1) : seed);      // «Штурм» из хаба — всегда с 1-й локации
+  }
 }
 
 // Хост: на карту (из хаба — новый seed, перезапуск — тот же); всем гостям — 'start'
@@ -75,9 +78,34 @@ function launchMap(id, seed) {
   startMap(id, seed, G.lastSquad, G.lastBots);
   if (G.role === 'host') broadcast({ t: 'start' });
 }
-function backToHub() {
+// win — «покинуть боевую зону» у грузовика; Backspace и гибель отряда — поражение (для забега — с итогами)
+function backToHub(win = false) {
   if (G.role === 'guest' || !map || G.mapId === 'hub') return;
+  if (G.run) { endRun(win); return; }
   launchMap('hub', 0);
+}
+
+// ---------- Забег («Выживание», «Штурм»): от входа из хаба до возвращения ----------
+// G.run: cleared — волн отбито / локаций зачищено, kills — убито противников, losses — погибло бойцов отряда (люди и боты).
+// Конец забега — всегда в хаб: «покинуть боевую зону» (победа), Backspace или гибель отряда (поражение, через RUN_DEAD_T с).
+// Итоги — эффект 'result' (видят все), в хабе — G.runResult; счёт следующего забега — с нуля.
+const RUN_DEAD_T = 5;
+const RUN_RESULT_T = 25;         // с: итоги видны в хабе
+function startRun(id) {
+  const stage = id === 'assault' ? assaultStage(G.mapSeed) : 0;
+  if (id === 'surv' || (id === 'assault' && (stage === 1 || !G.run || G.run.mode !== 'assault'))) G.run = { mode: id, cleared: 0, kills: 0, losses: 0 };
+  else if (id !== 'assault') G.run = null;
+  if (id !== 'hub') G.runResult = null;
+}
+function endRun(win) {
+  const r = G.run;
+  G.run = null; G.assaultCarry = null;
+  launchMap('hub', 0);
+  emit(['result', win ? 1 : 0, r.mode === 'assault' ? 1 : 0, r.cleared, r.kills, r.losses]);
+}
+function runCount(o) {
+  if (!G.run) return;
+  if (o.side === 'e') G.run.kills++; else G.run.losses++;
 }
 
 // ---------- Оружейный стол: выбор двух полноразмерных (слот 2 может быть пустым), пистолет — всегда ----------

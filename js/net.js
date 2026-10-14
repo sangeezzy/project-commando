@@ -1,41 +1,19 @@
 'use strict';
-// ---------- Сеть (PeerJS / WebRTC): кооператив до 4 игроков ----------
-// Хост авторитетен: противники, союзные боты, пули, урон, двери, ключи. Звезда: каждый гость связан с хостом.
+// ---------- Сеть: кооператив до 4 игроков, прямое подключение к серверу хоста (server.ps1 / server.py) ----------
+// Хост авторитетен: противники, союзные боты, пули, урон, двери, ключи. Звезда: каждый гость связан с хостом через его сервер.
 // Гость сам двигает своего бойца (позиция, взгляд, стойка, наклон) и шлёт хосту ввод; курок и действия выполняет хост.
 // Основа — сеть прототипа Commando (archive/commando/js/net.js).
 
-const PEER_PREFIX = 'project-commando-real-v1-';
-// Частота обмена (хост → гости снимки, гость → хост ввод), мс: прямое подключение и PeerJS — 60 Гц;
-// онлайн-сервер — 30 Гц (каждое входящее сообщение там — запрос в бесплатном лимите Cloudflare)
-const NET_HZ = { direct: 60, peer: 60, online: 30 };
-function netRate() {
-  return 1000 / (Net.mode === 'ws' ? (Net.online ? NET_HZ.online : NET_HZ.direct) : NET_HZ.peer);
-}
-
-// Серверы для установки прямого соединения (ICE). STUN — узнать свой внешний адрес; TURN — ретранслятор,
-// если прямое соединение не пробивается (строгий NAT, фаервол). По умолчанию — как в PeerJS (Google STUN + TURN PeerJS),
-// плюс запасные STUN. Свой TURN задаётся в меню («Сеть») и хранится в браузере.
-const DEFAULT_ICE = [
-  { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302', 'stun:stun.cloudflare.com:3478'] },
-  { urls: ['turn:eu-0.turn.peerjs.com:3478', 'turn:us-0.turn.peerjs.com:3478'], username: 'peerjs', credential: 'peerjsp' },
-];
-function customTurn() {
-  try { const t = JSON.parse(localStorage.getItem('pcr-turn') || 'null'); return t && t.urls ? t : null; } catch (e) { return null; }
-}
-function iceServers() {
-  const t = customTurn();
-  return t ? [{ urls: t.urls.split(/[\s,]+/).filter(Boolean), username: t.username, credential: t.credential }, ...DEFAULT_ICE] : DEFAULT_ICE;
-}
-const peerOptions = () => ({ debug: 1, config: { iceServers: iceServers() } });
+// Частота обмена (хост → гости снимки, гость → хост ввод)
+const NET_HZ = 60;
+const netRate = () => 1000 / NET_HZ;
 
 const Net = {
-  peer: null, conn: null, conns: new Map(), code: '', sendT: 0, connected: false,
-  mode: null,                                   // 'peer' — через интернет (PeerJS), 'ws' — через сервер (server.py / ретранслятор)
-  online: false,                                // ws по коду комнаты на онлайн-сервере, а не общая комната сервера хоста
+  conn: null, conns: new Map(), code: '', sendT: 0, connected: false,
   ws: null, wsConns: new Map(), addrs: [],
   inp: { fire: false, press: 0, acts: [] },     // гость: накопленный ввод до следующего пакета
   left: {},                                     // хост: кто вышел посреди игры (имя → место) — для переподключения
-  rejoin: null,                                 // гость: куда переподключаться при обрыве ({ kind, tg, code, tries })
+  rejoin: null,                                 // гость: куда переподключаться при обрыве ({ tg, tries })
   ping: {},                                     // пинг каждого гостя (место → мс, туда и обратно): меряет хост, рассылает всем
   pingT: 0, snapN: 0, snapHz: 0, rateT: 0,      // гость: снимков за секунду
 };
@@ -48,56 +26,8 @@ function send(msg) {
   if (Net.conn && Net.conn.open) { try { Net.conn.send(msg); } catch (e) { /* канал закрыт */ } }
 }
 function broadcast(msg) {
-  // через сервер — одно сообщение «всем гостям» (A|) вместо копии каждому: меньше трафика у хоста и запросов у ретранслятора
-  if (Net.mode === 'ws') {
-    if (Net.ws && Net.ws.readyState === 1 && [...Net.conns.values()].some((c) => c.open)) Net.ws.send('A|' + JSON.stringify(msg));
-    return;
-  }
-  for (const c of Net.conns.values()) if (c.open) { try { c.send(msg); } catch (e) { /* ignore */ } }
-}
-
-function randomCode() {
-  const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let s = '';
-  for (let i = 0; i < 5; i++) s += A[Math.floor(Math.random() * A.length)];
-  return s;
-}
-
-function peerAvailable() {
-  if (typeof Peer === 'undefined') { setStatus('Сетевая библиотека не загрузилась — нужен интернет. Доступна игра одному.'); return false; }
-  return true;
-}
-
-// ---------- Хост ----------
-function hostGame() {
-  Net.mode = 'peer';
-  if (!peerAvailable()) return;
-  cleanupNet();
-  setStatus('Создаём комнату…');
-  const code = randomCode();
-  const peer = new Peer(PEER_PREFIX + code, peerOptions());
-  Net.peer = peer;
-  peer.on('open', () => {
-    Net.code = code;
-    G.role = 'host'; G.mySlot = 0;
-    Lobby.slots = emptySlots();
-    Object.assign(Lobby.slots[0], { human: true, name: G.myName });
-    enterLobby();
-  });
-  peer.on('connection', (c) => {
-    c.on('data', (d) => onHostData(c, d));
-    c.on('close', () => onGuestLeft(c));
-    c.on('error', () => onGuestLeft(c));
-  });
-  peer.on('disconnected', () => { try { peer.reconnect(); } catch (e) { /* ignore */ } });
-  peer.on('error', (e) => {
-    if (e.type === 'unavailable-id') { peer.destroy(); hostGame(); return; }
-    const msg = netErrorText(e.type);
-    if (G.role === 'none') setStatus(msg);
-    else toast(msg, 4);
-  });
-  // сервер знакомств недоступен — комнату никто не найдёт
-  setTimeout(() => { if (Net.peer === peer && !Net.code) setStatus(netErrorText('server-timeout')); }, 10000);
+  // через сервер — одно сообщение «всем гостям» (A|) вместо копии каждому: меньше трафика у хоста
+  if (Net.ws && Net.ws.readyState === 1 && [...Net.conns.values()].some((c) => c.open)) Net.ws.send('A|' + JSON.stringify(msg));
 }
 
 function onHostData(c, d) {
@@ -275,44 +205,7 @@ function sendSnapshot() {
 }
 
 // ---------- Гость ----------
-function joinGame(code) {
-  if (!peerAvailable()) return;
-  Net.mode = 'peer';
-  code = code.trim().toUpperCase();
-  if (code.length !== 5) { setStatus('Введите 5-значный код комнаты'); return; }
-  cleanupNet();
-  setStatus('Подключаемся к серверу…');
-  Net.rejoinTo = { kind: 'peer', code };
-  const peer = new Peer(undefined, peerOptions());
-  Net.peer = peer;
-  // сервер знакомств не ответил — дальше не пойдём
-  const srvTimeout = setTimeout(() => { if (Net.peer === peer && !peer.open) { setStatus(netErrorText('server-timeout')); cleanupNet(); } }, 12000);
-  peer.on('open', () => {
-    clearTimeout(srvTimeout);
-    setStatus('Сервер найден, ищем комнату и устанавливаем соединение…');
-    const c = peer.connect(PEER_PREFIX + code, { reliable: true });
-    Net.conn = c;
-    // комната найдена, но прямое соединение не пробилось — скажем почему (по состоянию ICE)
-    const timeout = setTimeout(() => {
-      if (Net.connected) return;
-      const pc = c.peerConnection;
-      const ice = pc ? pc.iceConnectionState : 'none';
-      setStatus(netErrorText(ice === 'none' || ice === 'new' ? 'no-answer' : 'ice-' + ice));
-      cleanupNet();
-    }, 20000);
-    c.on('open', () => c.send({ t: 'hello', name: G.myName, v: GAME_VERSION, op: Voice.opusOk ? 1 : 0 }));
-    c.on('data', (d) => onGuestData(d, timeout, code));
-    c.on('close', () => { if (G.role === 'guest') guestLost('Соединение с хостом потеряно'); });
-  });
-  peer.on('error', (e) => {
-    clearTimeout(srvTimeout);
-    const msg = netErrorText(e.type);
-    if (G.role === 'guest') guestLost(msg);
-    else { setStatus(msg); cleanupNet(); }
-  });
-}
-
-// Сообщение от хоста (одинаково для PeerJS и прямого подключения)
+// Сообщение от хоста
 function onGuestData(d, timeout, code) {
   if (!d || typeof d !== 'object') return;
   if (d.t === 'full' || d.t === 'busy') {
@@ -346,69 +239,35 @@ function onGuestData(d, timeout, code) {
 }
 
 // ---------- Прямое подключение: WebSocket через сервер хоста (server.ps1 / server.py) ----------
-// Хост открывает игру со своего сервера (start.bat), гости — по адресу хоста: в локальной сети / Radmin VPN (http://IP:8000)
-// или через интернет по ссылке туннеля (https://…, tunnel.bat). Сервер только пересылает сообщения; протокол игры тот же.
-// Обмен с сервером: заголовок + JSON игры (серверу не нужно разбирать JSON) — см. описание протокола в server.py.
+// Хост открывает игру со своего сервера (start.bat), гости — по адресу хоста: в локальной сети / Radmin VPN и т. п. (http://IP:8000).
+// Сервер только пересылает сообщения. Обмен с сервером: заголовок + JSON игры (серверу не нужно разбирать JSON) — см. server.py.
 const servedByServer = () => location.protocol === 'http:' || location.protocol === 'https:';
 
-// Адрес → ссылка WebSocket: https/wss → защищённое соединение без порта (туннель); адрес этой страницы → её протокол;
-// адрес без схемы и порта → ws и порт 8000
+// Адрес → ссылка WebSocket: схема (http://) и путь отбрасываются, без порта — порт 8000 (кроме адреса этой страницы)
 function wsTarget(input) {
-  let s = (input || '').trim();
-  if (!s) return null;
-  const m = /^([a-z]+):\/\//i.exec(s);
-  let secure = false;
-  if (m) { secure = /^(https|wss)$/i.test(m[1]); s = s.slice(m[0].length); }
-  s = s.replace(/[/?#].*$/, '');
-  if (!s) return null;
-  if (!m && s === location.host) secure = location.protocol === 'https:';
-  if (!m && !secure && !/:\d+$/.test(s)) s += ':8000';
-  return { url: (secure ? 'wss://' : 'ws://') + s + '/ws', host: s, secure };
-}
-
-// Онлайн: сервер-ретранслятор в интернете (cloud/worker.js на Cloudflare или server.py на VPS) — комнаты по коду.
-// Адрес: свой из меню «Сеть» (localStorage pcr-relay) → RELAY_URL → сервер, с которого открыта игра.
-const RELAY_URL = '';            // после deploy.bat можно вписать сюда https://project-commando.<имя>.workers.dev
-function relayAddr() {
-  let s = '';
-  try { s = (localStorage.getItem('pcr-relay') || '').trim(); } catch (e) { /* ignore */ }
-  if (s && !/^[a-z]+:\/\//i.test(s) && !/:\d+(\/|$)/.test(s)) s = 'https://' + s;   // имя без схемы и порта — https (workers.dev)
-  return s || RELAY_URL || (servedByServer() ? location.host : '');
-}
-const relayIsLocal = () => /^(localhost|127\.0\.0\.1)(:|$)/.test((wsTarget(relayAddr()) || {}).host || '');
-// Ссылка-приглашение: игра с онлайн-сервера, код подставится сам (?room=КОД)
-function inviteLink(code) {
-  const tg = wsTarget(relayAddr());
-  return tg ? (tg.secure ? 'https://' : 'http://') + tg.host + '/?room=' + code : '';
-}
-const NO_RELAY = 'Онлайн-сервер не задан: откройте игру по ссылке онлайн-сервера (deploy.bat) или укажите его адрес в «Сеть».';
-
-function hostOnline(tries = 0) {
-  const tg = wsTarget(relayAddr());
-  if (!tg) { setStatus(NO_RELAY); return; }
-  const code = randomCode();
-  // код занят другой комнатой — взять другой
-  hostWs(tg, code, (err) => err === 'host-exists' && tries < 5 && (hostOnline(tries + 1), true));
+  const s0 = (input || '').trim().replace(/^[a-z]+:\/\//i, '').replace(/[/?#].*$/, '');
+  if (!s0) return null;
+  const s = s0 === location.host || /:\d+$/.test(s0) ? s0 : s0 + ':8000';
+  return { url: (s === location.host && location.protocol === 'https:' ? 'wss://' : 'ws://') + s + '/ws', host: s };
 }
 
 function hostLocal() {
   if (!servedByServer()) {
-    setStatus('Для прямого подключения запустите игру через start.bat — она откроется по адресу http://localhost:8000.');
+    setStatus('Для игры по сети запустите игру через start.bat — она откроется по адресу http://localhost:8000.');
     return;
   }
-  hostWs(wsTarget(location.host), '', null);
+  hostWs(wsTarget(location.host));
 }
 
-// Хост на сервере: общая комната сервера хоста (code = '') или комната по коду на онлайн-сервере
-function hostWs(tg, code, onErr) {
+// Хост: комната на своём сервере
+function hostWs(tg) {
   cleanupNet();
-  const online = !!code;
-  setStatus(online ? `Создаём онлайн-комнату на ${tg.host}…` : 'Создаём комнату на этом компьютере…');
+  setStatus('Создаём комнату на этом компьютере…');
   let ws;
-  try { ws = new WebSocket(tg.url + (online ? '?room=' + code : '')); } catch (e) { setStatus('Неверный адрес сервера: ' + tg.host); return; }
-  Net.ws = ws; Net.mode = 'ws'; Net.online = online;
+  try { ws = new WebSocket(tg.url); } catch (e) { setStatus('Неверный адрес сервера: ' + tg.host); return; }
+  Net.ws = ws;
   const timeout = setTimeout(() => {
-    if (Net.ws === ws && G.role !== 'host') { setStatus(`Сервер ${tg.host} не отвечает. Проверьте интернет и адрес сервера («Сеть»).`); cleanupNet(); }
+    if (Net.ws === ws && G.role !== 'host') { setStatus(`Сервер ${tg.host} не отвечает — окно сервера (start.bat) открыто?`); cleanupNet(); }
   }, 10000);
   ws.onopen = () => ws.send('H');
   ws.onmessage = (ev) => {
@@ -417,13 +276,10 @@ function hostWs(tg, code, onErr) {
       clearTimeout(timeout);
       const err = m.slice(2);
       cleanupNet();
-      if (onErr && onErr(err)) return;
-      setStatus(err !== 'host-exists' ? 'Ошибка сервера: ' + err
-        : online ? 'Не удалось подобрать свободный код комнаты — попробуйте ещё раз.' : 'На этом сервере комната уже создана (игра открыта в другой вкладке?).');
+      setStatus(err !== 'host-exists' ? 'Ошибка сервера: ' + err : 'На этом сервере комната уже создана (игра открыта в другой вкладке?).');
     } else if (k === 'O') {
       clearTimeout(timeout);
       Net.addrs = m.slice(2) ? m.slice(2).split(',') : [];
-      Net.code = code;
       G.role = 'host'; G.mySlot = 0;
       Lobby.slots = emptySlots();
       Object.assign(Lobby.slots[0], { human: true, name: G.myName });
@@ -445,12 +301,12 @@ function hostWs(tg, code, onErr) {
   ws.onclose = (ev) => {
     if (Net.ws !== ws) return;
     clearTimeout(timeout);
-    if (G.role === 'host') leaveToMenu(online ? 'Связь с онлайн-сервером потеряна. Проверьте интернет.' : 'Связь с сервером игры потеряна — окно сервера (start.bat) закрыто?');
-    else { setStatus(online ? `Не удалось подключиться к онлайн-серверу ${tg.host}.` : `Сервер игры не отвечает — запустите start.bat. (код ${ev.code})`); cleanupNet(); }
+    if (G.role === 'host') leaveToMenu('Связь с сервером игры потеряна — окно сервера (start.bat) закрыто?');
+    else { setStatus(`Сервер игры не отвечает — запустите start.bat. (код ${ev.code})`); cleanupNet(); }
   };
 }
 
-// Гость на сервере хоста — для кода хоста выглядит как соединение PeerJS (send, close, open)
+// Гость на сервере хоста — для кода хоста выглядит как отдельное соединение (send, close, open)
 function wsConn(ws, id) {
   return {
     id, open: true,
@@ -461,36 +317,25 @@ function wsConn(ws, id) {
 
 function joinLocal(addr) {
   const tg = wsTarget(addr);
-  if (!tg) { setStatus('Введите адрес хоста: 192.168.1.5:8000, 26.x.x.x:8000 или ссылку https://… от tunnel.bat'); return; }
-  joinWs(tg, '');
+  if (!tg) { setStatus('Введите адрес хоста: 192.168.1.5:8000 или 26.x.x.x:8000'); return; }
+  joinWs(tg);
 }
 
-function joinOnline(code) {
-  code = (code || '').trim().toUpperCase();
-  if (!/^[A-Z0-9]{5}$/.test(code)) { setStatus('Введите 5-значный код комнаты'); return; }
-  const tg = wsTarget(relayAddr());
-  if (!tg) { setStatus(NO_RELAY); return; }
-  joinWs(tg, code);
-}
-
-// Гость на сервере: сервер хоста (code = '') или комната по коду на онлайн-сервере
-function joinWs(tg, code) {
+// Гость: к серверу хоста
+function joinWs(tg) {
   cleanupNet();
-  const online = !!code;
-  setStatus(online ? `Ищем комнату ${code} на ${tg.host}…` : `Подключаемся к ${tg.host}…`);
+  setStatus(`Подключаемся к ${tg.host}…`);
   let ws;
-  try { ws = new WebSocket(tg.url + (online ? '?room=' + code : '')); } catch (e) { setStatus('Неверный адрес: ' + tg.host); return; }
-  Net.ws = ws; Net.mode = 'ws'; Net.online = online;
-  Net.rejoinTo = { kind: 'ws', tg, code };
+  try { ws = new WebSocket(tg.url); } catch (e) { setStatus('Неверный адрес: ' + tg.host); return; }
+  Net.ws = ws;
+  Net.rejoinTo = { tg };
   const conn = {
     open: false,
     send(d) { if (ws.readyState === 1) ws.send('M|' + JSON.stringify(d)); },
     close() { try { ws.close(); } catch (e) { /* ignore */ } },
   };
   Net.conn = conn;
-  const hint = online ? 'Проверьте интернет и адрес онлайн-сервера («Сеть»).'
-    : tg.secure ? 'Ссылка туннеля ещё действует (окно tunnel.bat у хоста открыто)?'
-    : 'Хост запустил start.bat? Адрес открывается в браузере? Фаервол хоста разрешил доступ?';
+  const hint = 'Хост запустил start.bat? Адрес открывается в браузере? Фаервол хоста разрешил доступ?';
   const timeout = setTimeout(() => {
     if (Net.connected || Net.ws !== ws) return;
     setStatus(`Нет ответа от ${tg.host}. ${hint}`);
@@ -502,8 +347,8 @@ function joinWs(tg, code) {
     if (k === 'E') {
       clearTimeout(timeout);
       const err = m.slice(2);
-      setStatus(err === 'no-host' ? (online ? `Комната ${code} не найдена. Проверьте код; хост должен быть в лобби.` : 'Сервер найден, но комнаты ещё нет: хост должен нажать «Создать комнату на этом компьютере».')
-        : err === 'full' ? 'Комната заполнена' : err === 'bad-room' ? 'Неверный код комнаты' : 'Ошибка сервера: ' + err);
+      setStatus(err === 'no-host' ? 'Сервер найден, но комнаты ещё нет: хост должен нажать «Создать комнату на этом компьютере».'
+        : err === 'full' ? 'Комната заполнена' : 'Ошибка сервера: ' + err);
       cleanupNet();
     } else if (k === 'W') {
       conn.open = true;
@@ -514,7 +359,7 @@ function joinWs(tg, code) {
     } else if (k === 'M') {
       let d;
       try { d = JSON.parse(m.slice(2)); } catch (e) { return; }
-      onGuestData(d, timeout, code || tg.host);
+      onGuestData(d, timeout, tg.host);
     }
   };
   ws.onclose = () => {
@@ -542,6 +387,7 @@ function resetGuestWorld(seq, id = 'range', seed = 0) {
   G.seq = seq;
   G.players = []; G.enemies = []; G.bullets = []; G.parts = []; G.decals = []; G.hurt = [];
   G.hitmark = null; G.toast = null; G.muzzle = []; G.expo = null; G.barks = [];
+  if (id !== 'hub') G.runResult = null;
   fieldCache.clear();
   G.stateT = 0;
   hideMenu();
@@ -590,7 +436,8 @@ function applySnapshot(s) {
     }
     if (own) {
       // свой боец: позицию и стойку ведём сами; хост переставляет только на новом запуске
-      if (fresh) { o.x = o.px = x; o.y = o.py = y; o.a = a; G.cam.x = x; G.cam.y = y; }
+      // и после гибели — приехал на грузовике
+      if (fresh || (wasDead && !o.dead)) { o.x = o.px = x; o.y = o.py = y; o.a = a; G.cam.x = x; G.cam.y = y; }
     } else {
       if (fresh) o.hist = null;
       interpPush(o, tm, x, y, a);
@@ -744,73 +591,14 @@ function interpApply(o, t) {
   o.a = A.a + angDiff(B.a, A.a) * k;
 }
 
-// Понятные причины сбоев подключения
-function netErrorText(t) {
-  const M = {
-    'peer-unavailable': 'Комната не найдена. Проверьте код; хост должен быть в лобби (не в игре), и у обоих — одна версия игры.',
-    'server-timeout': 'Нет связи с сервером PeerJS (0.peerjs.com). Проверьте интернет; возможно, его блокирует фаервол, антивирус или сеть.',
-    'server-error': 'Сервер PeerJS не отвечает. Попробуйте позже.',
-    'network': 'Потеряна связь с сервером PeerJS. Проверьте интернет.',
-    'socket-error': 'Ошибка связи с сервером PeerJS. Проверьте интернет и фаервол.',
-    'socket-closed': 'Связь с сервером PeerJS закрыта. Проверьте интернет.',
-    'browser-incompatible': 'Браузер не поддерживает WebRTC. Используйте Chrome, Edge или Firefox.',
-    'webrtc': 'Ошибка WebRTC в браузере.',
-    'no-answer': 'Комната не ответила. Хост должен быть в лобби с этим кодом и не закрывать вкладку.',
-    'ice-checking': 'Комната найдена, но прямое соединение не установилось: сеть одного из игроков его не пропускает (строгий NAT или фаервол). Нужен TURN-сервер — меню «Сеть».',
-    'ice-failed': 'Комната найдена, но прямое соединение не удалось: сеть одного из игроков его не пропускает (строгий NAT или фаервол). Нужен TURN-сервер — меню «Сеть».',
-    'ice-disconnected': 'Соединение с хостом оборвалось. Попробуйте ещё раз.',
-  };
-  return M[t] || 'Ошибка сети: ' + t;
-}
-
-// Проверка сети: сервер знакомств, внешний адрес (STUN), ретранслятор (TURN). Отчёт — объект и строки для меню.
-async function netCheck(report) {
-  const res = { server: false, srflx: false, relay: false, relayTcp: false, host: false, ms: 0 };
-  const line = (s) => report && report(s);
-  if (typeof Peer === 'undefined') { line('✗ Сетевая библиотека не загрузилась — нет интернета или заблокирован jsdelivr.net'); return res; }
-  // 1) сервер знакомств
-  const t0 = performance.now();
-  await new Promise((resolve) => {
-    let done = false;
-    const peer = new Peer(undefined, peerOptions());
-    const fin = (ok) => { if (done) return; done = true; res.server = ok; res.ms = Math.round(performance.now() - t0); try { peer.destroy(); } catch (e) { /* ignore */ } resolve(); };
-    peer.on('open', () => fin(true));
-    peer.on('error', () => fin(false));
-    setTimeout(() => fin(false), 10000);
-  });
-  line(res.server ? `✓ Сервер PeerJS доступен (${res.ms} мс)` : '✗ Сервер PeerJS недоступен — подключиться никто не сможет (интернет, фаервол, антивирус)');
-  // 2) кандидаты ICE
-  try {
-    const pc = new RTCPeerConnection({ iceServers: iceServers() });
-    pc.createDataChannel('probe');
-    const gathered = new Promise((resolve) => {
-      pc.onicecandidate = (ev) => {
-        if (!ev.candidate) { resolve(); return; }
-        const c = ev.candidate.candidate;
-        if (/ typ host/.test(c)) res.host = true;
-        if (/ typ srflx/.test(c)) res.srflx = true;
-        if (/ typ relay/.test(c)) { res.relay = true; if (/ tcp /i.test(c)) res.relayTcp = true; }
-      };
-      setTimeout(resolve, 8000);
-    });
-    await pc.setLocalDescription(await pc.createOffer());
-    await gathered;
-    pc.close();
-  } catch (e) { line('✗ WebRTC недоступен в этом браузере: ' + e); return res; }
-  line(res.srflx ? '✓ Внешний адрес определён (STUN) — прямое соединение возможно' : '✗ Внешний адрес не определён (STUN заблокирован) — прямое соединение вряд ли получится');
-  line(res.relay ? '✓ Ретранслятор (TURN) доступен — соединение пройдёт даже через строгий NAT' : '✗ Ретранслятор (TURN) недоступен — при строгом NAT/фаерволе соединения не будет. Укажите свой TURN в «Сеть».');
-  return res;
-}
-
 function cleanupNet() {
   const ws = Net.ws;
   Net.ws = null;
   try { if (ws) ws.close(); } catch (e) { /* ignore */ }
-  Net.wsConns.clear(); Net.mode = null; Net.online = false;
+  Net.wsConns.clear();
   try { if (Net.conn) Net.conn.close(); } catch (e) { /* ignore */ }
   for (const c of Net.conns.values()) { try { c.close(); } catch (e) { /* ignore */ } }
-  try { if (Net.peer) Net.peer.destroy(); } catch (e) { /* ignore */ }
-  Net.conn = null; Net.peer = null; Net.connected = false; Net.code = ''; Net.conns.clear();
+  Net.conn = null; Net.connected = false; Net.code = ''; Net.conns.clear();
   Net.ping = {}; Net.snapHz = 0; Net.snapN = 0; Net.left = {};
   resetPred();
 }
@@ -828,7 +616,7 @@ function rejoinStep(r, msg) {
   if (G.role === 'guest' || G.state !== 'menu' || r.cancel) return;      // вернулся или игрок сам занялся другим
   if (++r.tries > REJOIN_TRIES) { setStatus(`${msg}. Переподключиться не удалось — хост ещё в игре? Попробуйте войти вручную.`); return; }
   Net.rejoin = r;
-  if (r.kind === 'peer') joinGame(r.code); else joinWs(r.tg, r.code);
+  joinWs(r.tg);
   setStatus(`${msg}. Переподключение: попытка ${r.tries} из ${REJOIN_TRIES}…`);
   setTimeout(() => rejoinStep(r, msg), REJOIN_MS);
 }
