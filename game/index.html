@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Project Commando</title>
+<meta name="theme-color" content="#1b1c1d">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Russo+One&display=swap" rel="stylesheet">
+<style>
+  :root { --fg:#e8e4d8; --dim:#a09c90; --warn:#ffb030; --ok:#9fe870; --line:rgba(232,228,216,.25); --bg:#1b1c1d; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; background:var(--bg); overflow:hidden; color:var(--fg); font-family:'Russo One', Consolas, sans-serif; }
+  canvas { display:block; width:100vw; height:100vh; }
+  canvas.playing { cursor:none; }
+  canvas { touch-action:none; -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; }
+  .tonly { display:none; }
+  .touch .tonly { display:block; }
+  .touch .kbd { display:none; }
+  .apponly { display:none; }
+  .app .apponly { display:block; }
+  .app .noapp { display:none !important; }
+  #touchMenu { position:fixed; inset:0; display:flex; align-items:safe center; justify-content:center; padding:10px; z-index:6;
+    background:rgba(12,13,14,.72); overflow:auto; }
+  #touchMenu .screen { max-width:760px; padding:12px 16px; gap:8px; border:1px solid var(--line); border-radius:6px; background:rgba(22,23,24,.96); }
+  #touchMenu .cols { display:flex; gap:18px; flex-wrap:wrap; justify-content:center; align-items:flex-start; }
+  #touchMenu .col { display:flex; flex-direction:column; gap:7px; align-items:stretch; min-width:280px; }
+  #touchMenu button { min-width:0; padding:8px 12px; }
+  #touchMenu .row { flex-wrap:nowrap; justify-content:space-between; }
+  #touchMenu .row button { min-width:52px; }
+  #touchMenu button.opt { min-width:96px; }
+  #touchMenu button.opt.on { background:rgba(255,176,48,.25); border-color:rgba(255,176,48,.7); }
+  #touchMenu label { font-size:13px; }
+  #touchMenu h2 { font-size:20px; }
+  /* не помещается (телефон) — прокрутка от верха, а не обрезка: центрирует margin:auto у .screen, а не align-items */
+  #menu { position:fixed; inset:0; display:flex; align-items:flex-start; justify-content:center; padding:16px; overflow:auto;
+    background: radial-gradient(ellipse at center, rgba(40,42,38,.92), rgba(18,19,20,.98)); }
+  .hidden { display:none !important; }
+  #menu > .screen { margin:auto 0; }
+  #lobbyAddr { text-align:center; font-family:Consolas, monospace; color:var(--warn); }
+  #lobbyAddr .big { font-size:22px; letter-spacing:.03em; color:var(--fg); }
+  #lobbyAddr .small { font-size:12px; color:var(--dim); }
+  #loadout, #truckMenu { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; padding:16px; z-index:5;
+    background: rgba(12,13,14,.72); }
+  #loadout .screen, #truckMenu .screen { max-width:520px; padding:18px; border:1px solid var(--line); border-radius:6px; background:rgba(22,23,24,.96); }
+  #loadout select { font-family:Consolas, monospace; font-size:13px; color:var(--fg); background:rgba(15,16,17,.9);
+    border:1px solid var(--line); padding:6px; min-width:340px; max-width:100%; }
+  #loErr { min-height:18px; color:var(--warn); font-family:Consolas, monospace; font-size:12px; }
+  .screen { display:flex; flex-direction:column; align-items:center; gap:12px; width:100%; max-width:560px; }
+  h1 { margin:0; font-size:clamp(32px, 7vw, 60px); letter-spacing:.06em; text-align:center; }
+  h2 { margin:0; font-size:26px; letter-spacing:.08em; }
+  .sub { color:var(--dim); font-family:Consolas, monospace; font-size:14px; text-align:center; margin-bottom:6px; }
+  .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; justify-content:center; }
+  button, input[type=text] { font-family:inherit; font-size:15px; color:var(--fg); background:rgba(15,16,17,.8);
+    border:1px solid var(--line); padding:10px 16px; border-radius:3px; letter-spacing:.05em; }
+  button { cursor:pointer; min-width:240px; }
+  button:hover:not(:disabled) { background:rgba(232,228,216,.1); }
+  button:disabled { opacity:.35; cursor:default; }
+  #name { width:220px; text-align:center; }
+  #btnJoinLocal { min-width:110px; }
+  #addr { width:300px; text-align:center; }
+  .block { display:flex; flex-direction:column; align-items:center; gap:8px; width:100%; padding:10px; border:1px solid var(--line); border-radius:4px; }
+  .btitle { color:var(--fg); font-family:Consolas, monospace; font-size:13px; }
+  label { color:var(--dim); font-family:Consolas, monospace; font-size:13px; }
+  #status, #lobbyStatus { min-height:20px; color:var(--warn); font-family:Consolas, monospace; font-size:13px; text-align:center; }
+  .help { color:var(--dim); font-family:Consolas, monospace; font-size:12px; text-align:center; line-height:1.8; }
+  .help b { color:var(--fg); }
+  #slots { display:flex; flex-direction:column; gap:6px; width:100%; }
+  .slot { display:flex; align-items:center; gap:10px; padding:9px 12px; border:1px solid var(--line); border-radius:3px;
+    background:rgba(15,16,17,.7); font-family:Consolas, monospace; font-size:14px; }
+  .slot.mine { border-color:var(--c); }
+  .slot.empty { color:var(--dim); }
+  .slot .dot { width:10px; height:10px; border-radius:50%; background:var(--c); flex:none; }
+  .slot .who { flex:1; }
+  .slot .st { color:var(--dim); }
+  .slot .st.ok { color:var(--ok); }
+  #btnStart { border-color:rgba(159,232,112,.6); }
+  #btnReady.on { background:rgba(159,232,112,.18); border-color:rgba(159,232,112,.6); }
+  #btnLeave { min-width:120px; }
+  /* низкий экран (телефон горизонтально): плотнее */
+  @media (max-height: 520px) {
+    #menu { padding:8px 12px; }
+    .screen { gap:7px; }
+    h1 { font-size:30px; }
+    h2 { font-size:20px; }
+    .sub { margin-bottom:0; font-size:12px; }
+    button, input[type=text] { padding:7px 12px; font-size:14px; }
+    .block { padding:7px; gap:6px; }
+    .help { font-size:11px; line-height:1.5; }
+    .slot { padding:6px 10px; font-size:13px; }
+    #slots { gap:4px; }
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<!-- Оружейный стол (хаб): два полноразмерных ствола, пистолет — всегда -->
+<div id="loadout" class="hidden">
+  <div class="screen">
+    <h2>ОРУЖЕЙНЫЙ СТОЛ</h2>
+    <div class="sub">Пистолет Colt M1911 — всегда с собой (3). Нож — у каждого (X).</div>
+    <div class="row"><label for="lo1">Оружие 1</label><select id="lo1"></select></div>
+    <div class="row"><label for="lo2">Оружие 2</label><select id="lo2"></select></div>
+    <div id="loErr"></div>
+    <div class="row"><button id="loOk">ВЗЯТЬ</button><button id="loCancel">ОТМЕНА</button></div>
+    <div class="help">Взятое оружие — с полным боекомплектом. На карте: 1, 2 — полноразмерные, 3 — пистолет.</div>
+  </div>
+</div>
+
+<!-- «Выживание»: меню у заднего борта грузовика -->
+<div id="truckMenu" class="hidden">
+  <div class="screen">
+    <h2>ГРУЗОВИК</h2>
+    <button id="tmSupply">ПОПОЛНИТЬ БОЕПРИПАСЫ И БРОНЮ</button>
+    <button id="tmEvac">ПОКИНУТЬ БОЕВУЮ ЗОНУ</button>
+    <button id="tmCancel">ОТМЕНА (Esc)</button>
+    <div class="help">Лечение — у медика (F рядом с ним). Пока грузовик стоит, новой волны не будет.</div>
+  </div>
+</div>
+
+<!-- Сенсорное управление: меню (≡) — то, что на ПК делают редкие клавиши -->
+<div id="touchMenu" class="hidden">
+  <div class="screen">
+    <h2>МЕНЮ</h2>
+    <div class="cols">
+      <div class="col">
+        <button id="tmuResume">ПРОДОЛЖИТЬ</button>
+        <button id="tmuAgain">ЗАНОВО</button>
+        <button id="tmuHub">В ХАБ</button>
+        <button id="tmuLayout">НАСТРОИТЬ КНОПКИ</button>
+        <button id="tmuSpecs">ХАРАКТЕРИСТИКИ ОРУЖИЯ</button>
+        <button id="tmuFull">ВО ВЕСЬ ЭКРАН</button>
+        <button id="tmuLeave">ВЫЙТИ В ГЛАВНОЕ МЕНЮ</button>
+      </div>
+      <div class="col">
+        <div class="row"><label>Масштаб</label><button id="tmuOut">−</button><span id="tmuView" class="help"></span><button id="tmuIn">+</button></div>
+        <div class="row"><label>Аим ассист</label><button id="tmuAssist-soft" class="opt">МЯГКИЙ</button><button id="tmuAssist-hard" class="opt">ЖЁСТКИЙ</button></div>
+        <label><input type="checkbox" id="tmuFps"> Ограничение 60 ФПС (меньше греется)</label>
+        <label><input type="checkbox" id="tmuLight"> Упрощённый свет (быстрее)</label>
+        <button id="tmuMic">МИКРОФОН</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="menu">
+  <div class="screen" id="mainMenu">
+    <h1>PROJECT COMMANDO</h1>
+    <div class="sub">тестовый полигон · реалистичный режим · кооператив до 4 игроков</div>
+    <div class="row"><label for="name">Позывной</label><input type="text" id="name" maxlength="16" autocomplete="off" spellcheck="false"></div>
+    <label><input type="checkbox" id="botsChk" checked> Заполнять пустые места союзными ботами</label>
+    <button id="btnSolo">ИГРАТЬ ОДНОМУ</button>
+    <div class="block">
+      <div class="btitle">Кооператив — прямое подключение к хосту</div>
+      <button id="btnHostLocal">СОЗДАТЬ КОМНАТУ НА ЭТОМ КОМПЬЮТЕРЕ</button>
+      <div class="row">
+        <input type="text" id="addr" placeholder="адрес хоста: 192.168.x.x:8000 или 26.x.x.x:8000" autocomplete="off" spellcheck="false">
+        <button id="btnJoinLocal">ВОЙТИ</button>
+      </div>
+      <div class="help noapp">Хост запускает <b>Играть.bat</b> (Python не нужен) — в окне сервера адреса для друзей.<br>
+        В одной сети или через Radmin VPN / ZeroTier / Tailscale / Hamachi — адрес вида http://26.x.x.x:8000.<br>
+        Друзья открывают адрес в браузере и жмут «Войти» (адрес подставится сам).</div>
+      <div class="help apponly">«Создать комнату» — сервер на этом телефоне: друзья в той же сети (общий Wi-Fi или точка доступа
+        этого телефона) входят по адресу из лобби — из приложения или из браузера. Пока вы хост, игру не сворачивайте.<br>
+        Войти к хосту (телефон или компьютер с <b>Играть.bat</b>): адрес вида 192.168.0.14:8000 и «Войти». Версия игры у всех должна совпадать.</div>
+    </div>
+    <div id="status"></div>
+    <div class="help tonly">
+      <b>Левый стик</b> — движение (палец за кольцо — бег) · <b>правый стик</b> — взгляд, у внешнего кольца — огонь<br>
+      Кнопки: прицел, огонь, перезарядка (дважды — быстрая), присед, оружие, нож, выглянуть ◀ ▶, дверь/подъём/стол — по месту<br>
+      <b>≡</b> — меню: заново, в хаб, масштаб, характеристики оружия, микрофон, выход · играть лучше горизонтально
+    </div>
+    <div class="help kbd">
+      <b>WASD</b> — движение · <b>мышь</b> — прицел · <b>ЛКМ</b> — огонь · <b>ПКМ</b> — прицелиться · <b>R</b> — перезарядка · <b>V</b> — режим<br>
+      <b>Q/E</b> — выглянуть · <b>F</b> — дверь · <b>G</b> — выбить · <b>L</b> — фонарь · <b>C</b> — присесть · <b>Shift</b> — бег<br>
+      <b>B</b> (держать) — рация · <b>M</b> — микрофон вкл/выкл (голосовой чат включается в лобби)<br>
+      <b>Колёсико</b> — приблизить/отдалить · <b>Tab</b> — характеристики оружия · <b>H</b> — управление · <b>Enter</b> — заново · <b>Esc</b> — в меню<br>
+      Отладка (только у себя): <b>[</b> — бессмертие · <b>]</b> — без тумана войны (видно всех противников)
+    </div>
+  </div>
+
+  <div class="screen hidden" id="lobby">
+    <h2>ОТРЯД</h2>
+    <div id="lobbyAddr" class="hidden"></div>
+    <div class="sub" id="lobbyCode"></div>
+    <div id="slots"></div>
+    <label><input type="checkbox" id="lobbyBots"> Пустые места занимают союзные боты</label>
+    <div class="row"><label><input type="checkbox" id="voiceChk"> Голосовой чат (микрофон): рядом слышно без рации, <b>B</b> — рация, <b>M</b> — микрофон</label></div>
+    <div id="voiceStatus" class="help"></div>
+    <div class="row">
+      <button id="btnReady">ГОТОВ</button>
+      <button id="btnStart">НАЧАТЬ</button>
+    </div>
+    <button id="btnLeave">ВЫЙТИ</button>
+    <div id="lobbyStatus"></div>
+    <div class="help">Начать можно, когда все игроки нажали «Готов». Адрес выше отправьте друзьям — они вводят его в главном меню.</div>
+  </div>
+</div>
+
+<script src="js/util.js"></script>
+<script src="js/data.js"></script>
+<script src="js/world.js"></script>
+<script src="js/level.js"></script>
+<script src="js/core.js"></script>
+<script src="js/light.js"></script>
+<script src="js/doors.js"></script>
+<script src="js/fx.js"></script>
+<script src="js/weather.js"></script>
+<script src="js/voice.js"></script>
+<script src="js/weapon.js"></script>
+<script src="js/ai.js"></script>
+<script src="js/player.js"></script>
+<script src="js/net.js"></script>
+<script src="js/hub.js"></script>
+<script src="js/survival.js"></script>
+<script src="js/assault.js"></script>
+<script src="js/render.js"></script>
+<script src="js/hud.js"></script>
+<script src="js/touch.js"></script>
+<script src="js/menu.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
