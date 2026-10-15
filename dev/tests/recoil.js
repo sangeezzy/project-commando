@@ -86,8 +86,8 @@ window.__result = (() => {
     check('P больше ничего не переключает', OPTS.recoil === undefined && !p.aimRot);
   });
 
-  run('союзные боты: отдача; противники — по флагу', () => {
-    check('флаги: боты — да, противники — нет', RECOIL.bots === true && RECOIL.enemies === false);
+  run('ИИ: отдача у союзных ботов и противников (флаги)', () => {
+    check('флаги: у ботов и у противников', RECOIL.bots === true && RECOIL.enemies === true);
     Object.assign(bot, { dead: false, down: false, recoilT: 0 }); bot.gun = makeGun('akm'); bot.a = 0;
     fire(bot, 10);
     check('бот: прицел увело', Math.abs(angDiff(bot.a, 0)) > 0.002, bot.a);
@@ -99,13 +99,18 @@ window.__result = (() => {
     const e = G.enemies[0];
     Object.assign(e, { dead: false, recoilT: 0 }); e.gun = makeGun('akm'); e.a = 0;
     fire(e, 10);
-    check('противник: прицел не уводит, доворот обычный', e.a === 0 && aiTurnRate(e) === ENEMY.turn);
+    check('противник: прицел увело, доворачивает медленно', Math.abs(angDiff(e.a, 0)) > 0.002 && aiTurnRate(e) === Math.min(ENEMY.turn, RECOIL.aiPull));
     e.gun.bloom = 0; fire(e, 1);
-    check('противник: разброс растёт по-прежнему (kick)', Math.abs(e.gun.bloom - WEAPONS.akm.kick) < 1e-6, e.gun.bloom);
-    RECOIL.enemies = true; e.a = 0;
+    check('противник: прирост разброса за выстрел меньше (×bloomK)', Math.abs(e.gun.bloom - WEAPONS.akm.kick * RECOIL.bloomK) < 1e-6, e.gun.bloom);
+    // флаги выключают отдачу у своих групп
+    RECOIL.enemies = false; e.a = 0; e.recoilT = 0;
     fire(e, 10);
-    check('флаг enemies — и у противников', Math.abs(angDiff(e.a, 0)) > 0.002);
-    RECOIL.enemies = false;
+    check('enemies = false — у противников без отдачи', e.a === 0 && aiTurnRate(e) === ENEMY.turn);
+    RECOIL.enemies = true;
+    RECOIL.bots = false; bot.a = 0; bot.recoilT = 0;
+    fire(bot, 10);
+    check('bots = false — у союзных ботов без отдачи', bot.a === 0);
+    RECOIL.bots = true;
     let err = null; try { render(1 / 60); } catch (er) { err = String(er); }
     check('кадр без ошибок', !err, err);
     reset(); p.god = false;
