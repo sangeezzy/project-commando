@@ -400,11 +400,13 @@ function syncOptsUI() {
   q('#tmuAim-cross').classList.toggle('on', !OPTS.laser);
   q('#tmuAim-laser').classList.toggle('on', !!OPTS.laser);
 }
-// Закрыть меню; на ПК в камере по взгляду — снова захватить мышь (клик по кнопке — жест пользователя)
-const closeTouchMenu = () => {
+// Закрыть меню; relock — на ПК в камере по взгляду снова захватить мышь (только по щелчку кнопки: захват из обработчика Esc
+// тот же Esc у браузера тут же снимает → меню открывалось снова). Без него мышь захватит первый щелчок по игре (без выстрела).
+const closeTouchMenu = (relock = false) => {
   if (!touchMenuEl || !touchMenuOpen()) return;
   touchMenuEl.classList.add('hidden');
-  if (!TouchUI.on && inGame() && lookCam(me()) && document.pointerLockElement !== canvas) canvas.requestPointerLock?.();
+  G.menuClosedAt = performance.now();
+  if (relock === true && !TouchUI.on && inGame() && lookCam(me()) && document.pointerLockElement !== canvas) canvas.requestPointerLock?.();
 };
 function touchZoom(k) {
   G.viewT = clamp(G.viewT * k, CAM.viewMin, CAM.viewMax);
@@ -442,7 +444,7 @@ function touchReset() {
 {
   touchMenuEl = document.getElementById('touchMenu');
   const on = (id, fn) => touchMenuEl.querySelector(id).addEventListener('click', fn);
-  on('#tmuResume', closeTouchMenu);
+  on('#tmuResume', () => closeTouchMenu(true));
   on('#tmuAgain', () => { closeTouchMenu(); vtap('Enter'); });
   on('#tmuHub', () => { closeTouchMenu(); vtap('Backspace'); });
   on('#tmuOut', () => touchZoom(CAM.wheelStep));
@@ -470,7 +472,9 @@ function touchReset() {
   });
   // ПК, камера по взгляду: Esc снимает захват мыши (сам Esc браузер игре может и не передать) — тогда сразу меню
   document.addEventListener('pointerlockchange', () => {
-    if (!document.pointerLockElement && !TouchUI.on && inGame() && G.state === 'play' && lookCam(me()) && !uiOpen() && !G.lockDrop) {
+    // только что закрыли меню (захват мог сняться тем же нажатием) — не открывать снова
+    const justClosed = performance.now() - (G.menuClosedAt || -1e9) < 500;
+    if (!document.pointerLockElement && !TouchUI.on && inGame() && G.state === 'play' && lookCam(me()) && !uiOpen() && !G.lockDrop && !justClosed) {
       openTouchMenu(); G.lockMenuAt = performance.now();
     }
     G.lockDrop = false;

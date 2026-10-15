@@ -22,7 +22,8 @@ canvas.addEventListener('mousemove', (e) => {
 });
 canvas.addEventListener('mousedown', (e) => {
   initAudio();
-  if (lookCam(me()) && !TouchUI.on && document.pointerLockElement !== canvas) canvas.requestPointerLock?.();
+  // камера по взгляду без захвата мыши (после меню): щелчок только захватывает — не стреляет
+  if (lookCam(me()) && !TouchUI.on && document.pointerLockElement !== canvas) { if (!uiOpen()) canvas.requestPointerLock?.(); return; }
   if (e.button === 0) { mouse.l = true; mouse.lPressed = true; }
   if (e.button === 2) mouse.r = true;
 });

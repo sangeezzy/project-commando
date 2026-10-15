@@ -58,6 +58,32 @@ window.__result = (() => {
     OPTS.turnK = 1; saveOpts();
   });
 
+  run('камера по взгляду: меню закрывается с первого раза', () => {
+    OPTS.cam = 'look';
+    G.state = 'play';
+    // захват мыши снят Esc → меню открыто
+    G.menuClosedAt = -1e9; G.lockDrop = false;
+    document.dispatchEvent(new Event('pointerlockchange'));
+    check('снятие захвата — меню', touchMenuOpen());
+    // тот же Esc сразу после — не закрывает (открыто им же)
+    esc();
+    check('тот же Esc (в пределах 0,4 с) меню не закрывает', touchMenuOpen());
+    G.lockMenuAt = -1e9;
+    esc();
+    check('следующий Esc — закрыто', !touchMenuOpen());
+    // захват, запрошенный при закрытии, тут же снялся — меню не открывается снова
+    document.dispatchEvent(new Event('pointerlockchange'));
+    check('потеря захвата сразу после закрытия — меню не открывается', !touchMenuOpen());
+    // щелчок без захвата — только захват, не выстрел
+    mouse.l = false;
+    canvas.dispatchEvent(new MouseEvent('mousedown', { button: 0 }));
+    check('щелчок без захвата мыши — не выстрел', !mouse.l && !mouse.lPressed);
+    OPTS.cam = 'std';
+    canvas.dispatchEvent(new MouseEvent('mousedown', { button: 0 }));
+    check('обычная камера — щелчок стреляет', mouse.l);
+    dispatchEvent(new MouseEvent('mouseup', { button: 0 })); mouse.lPressed = false;
+  });
+
   run('выход в главное меню', () => {
     esc();
     el('tmuLeave').click();
