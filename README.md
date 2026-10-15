@@ -5,6 +5,13 @@
 «Штурма», автодром. Оружие, броня, машины, свет и погода — с характеристиками, близкими к реальным; противники и боты — с общим ИИ
 (укрытия, обходы, выглядывание из-за углов, подавление огнём).
 
+## Скачать
+- **Android:** [commando.apk](https://github.com/sangeezzy/project-commando/releases/latest/download/commando.apk) — открыть на телефоне,
+  разрешить установку из этого источника.
+- **Windows:** [commando-windows.zip](https://github.com/sangeezzy/project-commando/releases/latest/download/commando-windows.zip) —
+  распаковать, запустить `Играть.bat`.
+- Все версии — на странице [Releases](https://github.com/sangeezzy/project-commando/releases). Для игры по сети версии у всех должны совпадать.
+
 Папки: `game/` — сама игра, `server/` — сервер для игры по сети, `dev/` — тесты и инструменты разработки.
 Прошлые версии (`commando/` — последний прототип с кооперативом, `neon-sabers/` — самая первая проба) — в git под меткой `archive-prototypes`.
 
