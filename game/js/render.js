@@ -38,6 +38,7 @@ function render(dt = 1 / 60) {
   for (const d of G.decals) if (onScreen(d.x, d.y)) drawDecal(d);
   for (const q of G.parts) if (q.shape === 5) drawPart(q);
   for (const d of map.doors) if (onScreen(d.cx, d.cy)) drawDoor(d);
+  drawAssaultGate();                  // «Штурм»: ворота перехода (не дверь — только вид; закрыты — стена)
   for (const k of map.keys) if (!k.taken && onScreen(k.x, k.y)) drawKey(k);
   drawTruck();
   for (const o of allPeople()) if (o.dead && !o.evac && onScreen(o.x, o.y)) drawBody(o);

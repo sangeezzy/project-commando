@@ -149,6 +149,7 @@ function guestWorld(dt) {
   guestVehicles(dt);                          // машины: чужие — к позе из снимка, своя за рулём — у себя
   for (const o of allPeople()) updateAnim(o, dt);
   updateDoors(dt);
+  assaultGateSync();                          // «Штурм»: фаза перехода из снимка — ворота открываются и у гостя
   updateLocalFx(dt);
 }
 

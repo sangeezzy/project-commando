@@ -20,16 +20,18 @@ window.__result = (() => {
       for (const e of G.enemies) if (los(e.x, e.y, st.x, st.y)) bad.push(['видит старт', k]);
       // ключи: каждый запертой двери — есть, и дойти до него можно, не открывая ни одной запертой
       const reach = bfsFrom(st.x, st.y, 1e9, true);
-      for (const d of map.doors.filter((q) => q.locked && !q.gate)) {
+      for (const d of map.doors.filter((q) => q.locked)) {
         const key = map.keys.find((q) => q.id === d.key);
         if (!key) { bad.push(['нет ключа', d.key]); continue; }
         if (reach.f[tileIndex(key.x, key.y)] >= 1e9) bad.push(['ключ недоступен', d.key]);
       }
-      const ex = map.exit, gates = map.doors.filter((q) => q.gate);
-      if (gates.length !== ex.x1 - ex.x0 + 1 || !gates.every((q) => q.locked && !q.open && q.y === ex.y1 + 1)) bad.push(['нет ворот', k, gates.length]);
+      const ex = map.exit, g = map.gate;
+      // ворота — не двери: в map.doors их нет, ряд клеток — стена до зачистки
+      if (!g || g.open || g.y !== ex.y1 + 1 || g.x0 !== ex.x0 || g.x1 !== ex.x1) bad.push(['нет ворот', k]);
+      else for (let x = g.x0; x <= g.x1; x++) if (tileAt(x, g.y) !== T.WALL || map.doorAt.has(g.y * map.w + x)) bad.push(['ворота — не стена / дверь', k, x]);
       if (reach.f[(ex.y0) * map.w + ex.x0 + 1] < 1e9) bad.push(['в переход — мимо ворот', k]);
       if (reach.f[(ex.y1 + 2) * map.w + ex.x0 + 1] >= 1e9) bad.push(['до ворот не дойти', k]);
-      for (const d of gates) { d.locked = false; d.open = true; syncDoorTile(d); }
+      openAssaultGate();
       if (bfsFrom(st.x, st.y, 1e9, true).f[(ex.y0) * map.w + ex.x0 + 1] >= 1e9) bad.push(['переход недоступен', k]);
       startMap('assault', assaultSeed(base, 8), squad, false);
       a8 += floorN();
@@ -44,6 +46,18 @@ window.__result = (() => {
     check('тот же seed — та же локация', map.grid.join('') === g1);
   });
 
+  run('ворота перехода — не двери', () => {
+    startMap('assault', assaultSeed(777, 1), squad, false);
+    const g = map.gate, p = me();
+    p.x = p.px = ((g.x0 + g.x1 + 1) / 2) * TILE; p.y = p.py = (g.y + 1.5) * TILE;
+    check('перед воротами — ни двери (F), ни выбивания', !doorNear(p) && touchUseLabel(p) === null, touchUseLabel(p));
+    check('закрытые: не видно и не пройти', !los(p.x, p.y, p.x, (g.y - 1) * TILE) && solidTile(g.x0 + 2, g.y));
+    // гость: фаза перехода пришла снимком — ворота открываются у него сами
+    G.surv.phase = 'exit';
+    assaultGateSync();
+    check('фаза «переход» (гость) — ворота открыты', g.open && !solidTile(g.x0 + 2, g.y) && los(p.x, p.y, p.x, (g.y - 1) * TILE));
+  });
+
   run('переход на следующую', () => {
     startMap('assault', assaultSeed(4321, 1), squad, true);
     const p = me();
@@ -52,7 +66,10 @@ window.__result = (() => {
     G.enemies.forEach((e) => { e.dead = true; });
     tick(2);
     check('все уничтожены — переход открыт', G.surv.phase === 'exit', G.surv.phase);
-    check('ворота перехода открылись', map.doors.filter((d) => d.gate).every((d) => d.open && !d.locked) && map.doors.some((d) => d.gate));
+    const gt = map.gate;
+    check('ворота перехода открылись (клетки — пол)', gt.open && [...Array(gt.x1 - gt.x0 + 1)].every((_, i) => tileAt(gt.x0 + i, gt.y) === T.FLOOR));
+    let gerr = null; try { render(1 / 60); G.time += GATE_T; render(1 / 60); } catch (e) { gerr = String(e); }
+    check('ворота рисуются (закрываются / открываются) без ошибок', !gerr, gerr);
     const ex = map.exit;
     p.x = p.px = (ex.x0 + 2.5) * TILE; p.y = p.py = (ex.y0 + 0.5) * TILE;
     tick(60 * 2 + 10);

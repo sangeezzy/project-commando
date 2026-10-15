@@ -13,7 +13,7 @@ function initDoors() {
       const T_ = DOOR_TYPES[e.type];
       const i = e.y * map.w + e.x;
       // створка поперёк прохода: стены слева-справа — проход вертикальный, створка горизонтальная
-      const horiz = e.horiz ?? (tileAt(e.x - 1, e.y) === T.WALL && tileAt(e.x + 1, e.y) === T.WALL);   // ряд створок (ворота) — задан явно
+      const horiz = e.horiz ?? (tileAt(e.x - 1, e.y) === T.WALL && tileAt(e.x + 1, e.y) === T.WALL);   // можно задать явно (horiz)
       // открывается внутрь помещения
       const inside = horiz
         ? (map.fl[(e.y + 1) * map.w + e.x] === FM.INDOOR ? 1 : -1)
@@ -21,7 +21,7 @@ function initDoors() {
       const d = {
         id: map.doors.length, x: e.x, y: e.y, i, type: e.type, name: T_.name,
         key: e.key || null, locked: !!e.key, open: !!e.open, broken: false,
-        ang: e.open ? 1 : 0, horiz, swing: inside, cx: (e.x + 0.5) * TILE, cy: (e.y + 0.5) * TILE, gate: !!e.gate,
+        ang: e.open ? 1 : 0, horiz, swing: inside, cx: (e.x + 0.5) * TILE, cy: (e.y + 0.5) * TILE,
       };
       map.doors.push(d);
       map.doorAt.set(i, d);

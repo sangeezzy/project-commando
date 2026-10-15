@@ -76,12 +76,14 @@ function buildAssault(seed) {
   const ex = fx0 + Math.floor(cw / 2) - 2, ey = far[1] === rows - 1 && far === sc ? 2 : fy0 + 1;
   const exit = { x0: ex, y0: ey, x1: ex + 4, y1: ey + 1 };
   mark(exit.x0 - 2, exit.y0 - 1, exit.x1 + 2, exit.y1 + 3);
-  // ворота перехода: «карман» в бетонных стенах (сзади и с боков), спереди — ряд бронированных створок (gate): заперты, ключа нет —
-  // открываются сами, когда локация зачищена (assaultOpenExit); выбить нельзя, пули не пробивают
+  // ворота перехода: «карман» в бетонных стенах (сзади и с боков), спереди — большие ворота. Не двери (нет F, ключа, выбивания):
+  // до зачистки — стена (клетки T.WALL: не пройти, пули, свет и звук не проходят), поверх рисуются створки (drawAssaultGate);
+  // зачистили — клетки становятся полом, створки распахиваются (openAssaultGate)
   b.wall(exit.x0 - 1, exit.y0 - 1, exit.x1 + 1, exit.y0 - 1, WM.CONCRETE);
   b.wall(exit.x0 - 1, exit.y0, exit.x0 - 1, exit.y1 + 1, WM.CONCRETE);
   b.wall(exit.x1 + 1, exit.y0, exit.x1 + 1, exit.y1 + 1, WM.CONCRETE);
-  for (let x = exit.x0; x <= exit.x1; x++) b.door(x, exit.y1 + 1, 'armored', { key: 'gate', gate: true, horiz: true });
+  b.wall(exit.x0, exit.y1 + 1, exit.x1, exit.y1 + 1, WM.CONCRETE);
+  for (let x = exit.x0; x <= exit.x1; x++) b.fl[(exit.y1 + 1) * W + x] = FM.CONCRETE;      // пол под воротами — когда откроются
   // здания: одиночные и Г-образные (две части с проходом между ними); двери: дерево/металл/броня, часть заперта
   const doors = [];
   const nb = Math.round(area / 380);
@@ -146,6 +148,7 @@ function buildAssault(seed) {
   }
   // ключи: туда, куда можно дойти со старта, не открывая запертых (ни одной) — и не в помещении
   const meta = { name: `ШТУРМ · ЛОКАЦИЯ ${stage}`, start: { x: sx + 5, y: sy - 3, a: -Math.PI / 2 }, exit, assault: { stage, shape },
+    gate: { x0: exit.x0, x1: exit.x1, y: exit.y1 + 1, open: false, at: 0 },      // ворота перехода (закрыты до зачистки)
     truck: { cx: sx, park: H - 12, from: H + 9, to: H + 9 } };       // грузовик въезжает снизу, стоит у старта, уезжает задним ходом
   const m = finishMap(b, meta);
   const reach = bfsFrom((sx + 5.5) * TILE, (sy - 2.5) * TILE, 1e9, true);
@@ -254,11 +257,68 @@ function updateAssault(dt) {
   }
 }
 
-// Локация зачищена: ворота перехода отпираются и распахиваются (у гостей — снимком дверей)
+// Локация зачищена (хост): ворота перехода открываются; гость открывает их сам, когда в снимке фаза 'exit' (guestWorld → assaultGateSync)
 function assaultOpenExit() {
-  const gs = (map.doors || []).filter((d) => d.gate);
-  for (const d of gs) { d.locked = false; if (!doorPassable(d)) { d.open = true; syncDoorTile(d); } }
-  if (gs.length) { const m = gs[gs.length >> 1]; emit(['door', m.cx, m.cy, 'open', m.type]); }
+  const g = map.gate;
+  if (!g || g.open) return;
+  openAssaultGate();
+  emit(['door', ((g.x0 + g.x1 + 1) / 2) * TILE, (g.y + 0.5) * TILE, 'open', 'armored']);       // лязг створок
+}
+const GATE_T = 2.5;                    // створки распахиваются, с
+function openAssaultGate() {
+  const g = map.gate;
+  if (!g || g.open) return;
+  g.open = true; g.at = G.time;
+  for (let x = g.x0; x <= g.x1; x++) map.grid[g.y * map.w + x] = T.FLOOR;
+  map.ver++;
+  fieldCache.clear();
+  for (let x = g.x0; x <= g.x1; x += 2) updateLightAt(x, g.y);
+  // куски карты с воротами (и соседние клетки — тени стен) — нарисовать заново, уже с полом
+  for (const [k] of [...map.chunks]) {
+    const cx = k % 4096, cy = Math.floor(k / 4096);
+    const X0 = cx * MAP_CHUNK, Y0 = cy * MAP_CHUNK;
+    if ((g.x1 + 2) * TILE >= X0 && (g.x0 - 1) * TILE < X0 + MAP_CHUNK && (g.y + 2) * TILE >= Y0 && (g.y - 1) * TILE < Y0 + MAP_CHUNK) map.chunks.delete(k);
+  }
+}
+function assaultGateSync() {
+  const s = G.surv;
+  if (s && s.mode === 'assault' && s.phase === 'exit' && map.gate && !map.gate.open) openAssaultGate();
+}
+
+// Ворота (в координатах мира, до света и тумана): две стальные створки на петлях у бетонных столбов; закрыты — сходятся посередине,
+// открываются наружу (от кармана перехода) за GATE_T с
+function drawAssaultGate() {
+  const g = map.gate;
+  if (!g || !onScreen((g.x0 + g.x1 + 1) / 2 * TILE, (g.y + 0.5) * TILE, 200)) return;
+  const X0 = g.x0 * TILE, X1 = (g.x1 + 1) * TILE, Y = g.y * TILE, yc = Y + TILE / 2, L = (X1 - X0) / 2;
+  const t = g.open ? clamp((G.time - g.at) / GATE_T, 0, 1) : 0, k = t * t * (3 - 2 * t), a = k * 1.75;
+  ctx.save();
+  if (!g.open) { ctx.fillStyle = '#2b2d2a'; ctx.fillRect(X0, Y, X1 - X0, TILE); }       // под закрытыми — не стена, а проём с направляющей
+  ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth = 3;                              // направляющая по низу проёма
+  ctx.beginPath(); ctx.moveTo(X0, yc + 7); ctx.lineTo(X1, yc + 7); ctx.stroke();
+  const leaf = (hx, dir, ang) => {
+    ctx.save();
+    ctx.translate(hx, yc);
+    ctx.rotate(dir > 0 ? ang : -ang);
+    ctx.scale(dir, 1);
+    const T2 = 7;                       // полутолщина створки
+    ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fillRect(3, -T2 + 4, L - 2, T2 * 2);            // тень
+    ctx.fillStyle = '#4b5246'; ctx.fillRect(0, -T2, L - 1, T2 * 2);
+    ctx.strokeStyle = '#1e211c'; ctx.lineWidth = 1.5; ctx.strokeRect(0.75, -T2 + 0.75, L - 2.5, T2 * 2 - 1.5);
+    // рёбра жёсткости, раскос, полоса по краю
+    ctx.strokeStyle = 'rgba(20,22,18,0.7)'; ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let i = 1; i < 4; i++) { ctx.moveTo((L * i) / 4, -T2 + 1); ctx.lineTo((L * i) / 4, T2 - 1); }
+    ctx.moveTo(2, T2 - 2); ctx.lineTo(L - 3, -T2 + 2);
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(230,180,40,0.75)'; ctx.fillRect(L - 6, -T2, 5, T2 * 2);             // жёлтая кромка у стыка
+    ctx.fillStyle = '#2a2d27'; ctx.beginPath(); ctx.arc(2, 0, 4, 0, Math.PI * 2); ctx.fill();   // петля
+    ctx.restore();
+  };
+  leaf(X0, 1, a);
+  leaf(X1, -1, a);
+  if (!g.open) { ctx.fillStyle = '#25271f'; ctx.fillRect(X0 + L - 3, yc - 9, 6, 18); }    // засов посередине
+  ctx.restore();
 }
 
 // На следующую локацию: запомнить отряд (оружие, патроны, здоровье, броня; Enter на новой локации — с этим же), новый seed — с номером
