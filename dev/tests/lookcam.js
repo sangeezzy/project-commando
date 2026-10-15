@@ -8,7 +8,8 @@ window.__result = (() => {
   run('камера по взгляду', () => {
     G.enemies.forEach(dummy);
     at(p, 36, 27); p.a = 0;
-    OPTS.cam = 'std';
+    check('по умолчанию в камере по взгляду — лазер', OPTS.laser === true);
+    OPTS.cam = 'std'; OPTS.laser = false;       // ниже — перекрестие (мышь по вертикали)
     press('KeyN');
     check('N — режим «по взгляду»', OPTS.cam === 'look');
     step(2);

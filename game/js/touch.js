@@ -57,7 +57,11 @@ if (TouchUI.on) document.documentElement.classList.add('touch');
 
 // Настройки игрока (OPTS в data.js): на телефоне по умолчанию — 60 к/с; сохранённые — поверх
 if (TouchUI.on) OPTS.fps60 = true;
-try { Object.assign(OPTS, JSON.parse(localStorage.getItem('pcr-opts') || '{}')); } catch (e) { /* ignore */ }
+try {
+  const s = JSON.parse(localStorage.getItem('pcr-opts') || '{}');
+  if (!(s.rev >= 1)) delete s.laser;       // rev 1: лазер стал прицелом по умолчанию — сохранённое раньше «перекрестие» не выбрано, а записано заодно
+  Object.assign(OPTS, s, { rev: OPTS.rev });
+} catch (e) { /* ignore */ }
 if (!TOUCH.assist[OPTS.assist]) OPTS.assist = 'soft';
 const saveOpts = () => { try { localStorage.setItem('pcr-opts', JSON.stringify(OPTS)); } catch (e) { /* ignore */ } };
 
