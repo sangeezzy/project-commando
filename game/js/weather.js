@@ -62,6 +62,8 @@ function updateWeather(dt) {
 
 // У каждого (и у гостя): вспышка и гром по счётчику молний; звук дождя
 let lastBolt = 0, rainSnd = null;
+// Вне игры (главное меню, лобби) — дождь не шумит (раньше петля оставалась с последней громкостью)
+function rainSoundOff() { if (rainSnd) rainSnd.set(0); }
 function weatherFx(dt) {
   const w = G.weather;
   if (!w) { if (rainSnd) { rainSnd.stop(); rainSnd = null; } return; }

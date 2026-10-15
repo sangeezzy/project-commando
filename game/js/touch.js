@@ -78,6 +78,7 @@ function touchUseLabel(p) {
   if (mgNear(p)) return 'ПУЛЕМЁТ';
   if (vehNear(p)) return 'В МАШИНУ';
   if (G.surv && nearRear(p)) return 'ГРУЗОВИК';
+  if (G.surv && nearDriver(p)) return 'ЕХАТЬ';
   if (G.surv && nearMedic(p)) return 'МЕДИК';
   if (tableNear(p)) return 'СТОЛ';
   const d = doorNear(p);
@@ -489,7 +490,7 @@ function touchReset() {
   on('#tmuHub', () => { closeTouchMenu(); vtap('Backspace'); });
   on('#tmuOut', () => touchZoom(CAM.wheelStep));
   on('#tmuIn', () => touchZoom(1 / CAM.wheelStep));
-  on('#tmuSpecs', () => { closeTouchMenu(); keys.Tab = true; });
+  on('#tmuSpecs', () => { closeTouchMenu(); keys.Tab = true; guideShow(); });     // и стрелки на переход / грузовик
   on('#tmuLayout', startLayoutEdit);
   on('#tmuMic', () => { closeTouchMenu(); vtap('KeyM'); });
   on('#tmuFull', () => { closeTouchMenu(); touchFullscreen(); });
@@ -507,7 +508,8 @@ function touchReset() {
   // ПК: Esc в игре — открыть / закрыть меню (окна стола и грузовика закрываются своим Esc раньше)
   addEventListener('keydown', (e) => {
     if (e.code !== 'Escape' || !inGame()) return;
-    if (touchMenuOpen()) { if (performance.now() - (G.lockMenuAt || 0) > 400) closeTouchMenu(); }   // только что открыло снятие захвата — тот же Esc
+    // только что открыло снятие захвата мыши — это тот же Esc, не закрывать (захват не снимался — lockMenuAt нет: закрывать всегда)
+    if (touchMenuOpen()) { if (!(G.lockMenuAt != null && performance.now() - G.lockMenuAt < 400)) closeTouchMenu(); }
     else if (!uiOpen()) openTouchMenu();
   });
   // ПК, камера по взгляду: Esc снимает захват мыши (сам Esc браузер игре может и не передать) — тогда сразу меню

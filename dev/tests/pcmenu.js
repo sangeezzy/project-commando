@@ -23,7 +23,7 @@ window.__result = (() => {
     check('видны: продолжить, выход, масштаб, камера, видимость', ['tmuResume', 'tmuLeave', 'tmuOut', 'tmuCam-std', 'tmuSightDn', 'tmuFull'].every(shown));
     check('скрыты пункты сенсора: кнопки, ТТХ, аим ассист', !shown('tmuLayout') && !shown('tmuSpecs') && !shown('tmuAssist-soft'));
     esc();
-    check('Esc ещё раз — закрыто, игра идёт', !touchMenuOpen() && !touchPaused());
+    check('Esc ещё раз — закрыто, игра идёт', !touchMenuOpen() && !touchPaused(), [touchMenuOpen(), touchPaused(), G.state, G.role, G.lockMenuAt, performance.now() | 0, uiOpen()]);
     esc(); el('tmuResume').click();
     check('«Продолжить» — закрыто', !touchMenuOpen());
     // окно стола открыто — Esc закрывает его, а не открывает меню

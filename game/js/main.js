@@ -28,7 +28,10 @@ function step(now) {
   G.lastDt = dt;
   if (!touchPaused()) G.time += dt;            // одиночка на телефоне: меню ≡ / настройка кнопок — пауза
   if (map && G.state !== 'menu' && G.state !== 'lobby') update(dt);
-  else if (G.state === 'lobby') netStats(dt);           // пинг виден уже в лобби
+  else {
+    if (G.state === 'lobby') netStats(dt);              // пинг виден уже в лобби
+    rainSoundOff(); engineSoundOff();                   // меню и лобби: постоянные звуки игры (дождь, мотор) — тише нуля
+  }
   Voice.update();
 }
 

@@ -65,6 +65,8 @@ UNIT_TESTS = {
     'ff': 'bots=1',
     'pcmenu': '',
     'recoil': 'bots=1',
+    'guides': '',
+    'carspin': '',
     'touch': 'touch=1',
     'app': 'touch=1&app=1',
     'opts': 'touch=1',

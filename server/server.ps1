@@ -59,6 +59,12 @@ public static class PCServer {
     static readonly Room TheRoom = new Room();
     static readonly string ServerId = new Random().Next().ToString("x8");   // один сервер под разными адресами — одна строка списка
     static int HttpPort;
+    // Вкладки игры на этом компьютере (POST /page?e=hi|bye&id=…, только с 127.0.0.1): запущен с -Open (Играть.bat) — закрыли последнюю
+    // и за PageGrace мс не открыли снова (перезагрузка успевает) — сервер завершается
+    static bool AutoQuit;
+    static readonly HashSet<string> Pages = new HashSet<string>();
+    static int PageGen;
+    const int PageGrace = 5000;
 
     class Conn {
         public TcpClient C; public NetworkStream S; public bool Closed;
@@ -86,7 +92,7 @@ public static class PCServer {
     }
 
     public static void Run(string root, int port, string report, bool open, string dev, string warn) {
-        Root = Path.GetFullPath(root).TrimEnd('\\') + "\\"; Report = report;
+        Root = Path.GetFullPath(root).TrimEnd('\\') + "\\"; Report = report; AutoQuit = open;
         DevRoot = string.IsNullOrEmpty(dev) ? null : Path.GetFullPath(dev).TrimEnd('\\') + "\\";
         var l = new TcpListener(IPAddress.Any, port);
         l.Start();
@@ -102,7 +108,7 @@ public static class PCServer {
         Console.WriteLine("  Гость не может войти? Пусть откроет адрес в браузере: не открывается — брандмауэр Windows");
         Console.WriteLine("  (разрешите PowerShell для частных сетей) или устройства в разных сетях.");
         if (!string.IsNullOrEmpty(warn)) Console.WriteLine(warn);
-        Console.WriteLine("  Не закрывайте это окно, пока идёт игра.");
+        Console.WriteLine("  Не закрывайте это окно, пока идёт игра." + (open ? " Закроете вкладку с игрой — сервер остановится сам." : ""));
         if (open) { try { System.Diagnostics.Process.Start("http://localhost:" + port + "/"); } catch { } }
         while (true) {
             var c = l.AcceptTcpClient();
@@ -209,6 +215,12 @@ public static class PCServer {
                     "\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n");
                 s.Write(h, 0, h.Length); s.Write(body, 0, body.Length); c.Close(); return;
             }
+            if (path == "/page" && (method == "POST" || method == "GET")) {
+                string q = rl[1].Contains("?") ? rl[1].Substring(rl[1].IndexOf('?') + 1) : "", ev = "", id = "";
+                foreach (var kv in q.Split('&')) { var p2 = kv.Split('='); if (p2.Length == 2) { if (p2[0] == "e") ev = p2[1]; else if (p2[0] == "id") id = Uri.UnescapeDataString(p2[1]); } }
+                if (IPAddress.IsLoopback(((IPEndPoint)c.Client.RemoteEndPoint).Address) && id != "") PageEvent(ev, id);
+                Reply(s, "200 OK", "text/plain", new byte[0]); c.Close(); return;
+            }
             if (method == "POST" && path == "/report" && !string.IsNullOrEmpty(Report)) {
                 int n = hdr.ContainsKey("Content-Length") ? int.Parse(hdr["Content-Length"]) : 0;
                 var body = new byte[n]; ReadExact(s, body, n);
@@ -231,6 +243,25 @@ public static class PCServer {
             Console.WriteLine("Ошибка запроса: " + ex.GetType().Name + ": " + ex.Message);
             try { c.Close(); } catch { }
         }
+    }
+
+    // Вкладка открылась (hi) / закрылась (bye). Последняя закрылась — через PageGrace мс, если не открылась новая, — выход
+    static void PageEvent(string ev, string id) {
+        int gen;
+        lock (Pages) {
+            if (ev == "hi") { Pages.Add(id); PageGen++; return; }
+            if (ev != "bye") return;
+            Pages.Remove(id);
+            if (!AutoQuit || Pages.Count > 0) return;
+            gen = ++PageGen;
+        }
+        var t = new Thread(() => {
+            Thread.Sleep(PageGrace);
+            lock (Pages) { if (Pages.Count > 0 || PageGen != gen) return; }
+            Console.WriteLine("Вкладка с игрой закрыта — сервер остановлен.");
+            Environment.Exit(0);
+        });
+        t.IsBackground = true; t.Start();
     }
 
     static void Reply(Stream s, string status, string ctype, byte[] body, int len = -1) {

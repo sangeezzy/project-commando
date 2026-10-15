@@ -27,7 +27,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 ROOT = Path(__file__).resolve().parent.parent / 'game'     # файлы игры (server/ и game/ лежат рядом)
 DEV = None                  # --dev: ещё и /dev/… из папки dev (страницы тестов)
@@ -386,6 +386,16 @@ async def _handle(reader, writer):
         writer.close()
         return
 
+    if path == '/page' and method in ('POST', 'GET'):
+        q = parse_qs(urlparse(target).query)
+        peer = (writer.get_extra_info('peername') or ('',))[0]
+        if peer in ('127.0.0.1', '::1', '::ffff:127.0.0.1') and q.get('id'):
+            page_event(q.get('e', [''])[0], q['id'][0])
+        writer.write(b'HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n')
+        await writer.drain()
+        writer.close()
+        return
+
     if method == 'POST' and path == '/report' and REPORT_FILE:
         n = int(hdr.get('content-length', '0') or 0)
         body = await reader.readexactly(n) if n else b''
@@ -423,6 +433,30 @@ async def _handle(reader, writer):
         writer.write(data)
     await writer.drain()
     writer.close()
+
+
+PAGES = set()             # вкладки игры на этом компьютере (/page?e=hi|bye&id=…, только с 127.0.0.1)
+PAGE_GEN = [0]
+PAGE_GRACE = 5.0          # с: закрыли последнюю — столько ждать новую (перезагрузка), потом выход (только с --open: Играть.bat)
+
+
+def page_event(ev, pid):
+    if ev == 'hi':
+        PAGES.add(pid); PAGE_GEN[0] += 1
+        return
+    if ev != 'bye':
+        return
+    PAGES.discard(pid)
+    if not OPEN or PAGES:
+        return
+    PAGE_GEN[0] += 1
+    gen = PAGE_GEN[0]
+
+    def quit_if_still():
+        if not PAGES and PAGE_GEN[0] == gen:
+            print('Вкладка с игрой закрыта — сервер остановлен.')
+            os._exit(0)
+    asyncio.get_running_loop().call_later(PAGE_GRACE, quit_if_still)
 
 
 def run_windows(port):
@@ -479,7 +513,7 @@ async def main(port):
     warn = await asyncio.get_running_loop().run_in_executor(None, net_warning, port)    # PowerShell — секунды: сервер тем временем уже принимает
     if warn:
         print(warn)
-    print('  Не закрывайте это окно, пока идёт игра. Остановить — Ctrl+C.')
+    print('  Не закрывайте это окно, пока идёт игра. Остановить — Ctrl+C.' + (' Закроете вкладку с игрой — сервер остановится сам.' if OPEN else ''))
     if OPEN:
         import webbrowser
         webbrowser.open(f'http://localhost:{port}/')

@@ -135,11 +135,19 @@ function carDyn(c, dt) {
   // вдоль: двигатель (по приводу), тормоза, ручник
   const thr = alive ? ctrl.thr : 0, sg = u > 0.05 ? 1 : u < -0.05 ? -1 : 0;
   let Fd = 0, Bk = 0;
-  if (thr > 0 && u > -0.5) Fd = thr * Math.min(V.Fmax, V.P * 1000 / Math.max(1, Math.abs(u)));
-  else if (thr < 0 && u < 0.5) Fd = thr * Math.min(V.Fmax * 0.7, V.P * 1000 / Math.max(1, Math.abs(u))) * Math.max(0, 1 + u / VEH.vrev);   // задний ход
+  const ek = engineK(c);                                                  // повреждённый двигатель — слабее (и «чихает»)
+  if (thr > 0 && u > -0.5) Fd = ek * thr * Math.min(V.Fmax, V.P * 1000 / Math.max(1, Math.abs(u)));
+  else if (thr < 0 && u < 0.5) Fd = ek * thr * Math.min(V.Fmax * 0.7, V.P * 1000 / Math.max(1, Math.abs(u))) * Math.max(0, 1 + u / VEH.vrev);   // задний ход
   else if (thr) Bk = Math.abs(thr) * VEH.brake * m;                      // газ против движения — тормоз
   const df = V.drive === 'fwd' ? 1 : V.drive === 'rwd' ? 0 : (V.awdFront ?? 0.4);
   let Fxf = Fd * df - sg * Bk * 0.7, Fxr = Fd * (1 - df) - sg * Bk * 0.3;
+  // противобуксовочная система (V.tc — доля сцепления, которую ей можно отдать тяге): тяга не больше, чем оставляет запас вбок под
+  // боковую силу прошлого шага (c.fyF / c.fyR) — мощная машина на полном газу не срывается в занос (без неё задняя ось целиком уходит в тягу)
+  if (V.tc && Fd > 0) {
+    const cap = (muN, fy) => Math.sqrt(Math.max(0, (V.tc * muN) ** 2 - fy * fy));
+    if (Fxf > 0) Fxf = Math.min(Fxf, cap(muF * Nf, c.fyF || 0));
+    if (Fxr > 0) Fxr = Math.min(Fxr, cap(muR * Nr, c.fyR || 0));
+  }
   Fxf = clamp(Fxf, -0.95 * muF * Nf, muF * Nf);                          // пробуксовка; ABS — тормоз до 0,95 сцепления
   Fxr = clamp(Fxr, -0.95 * muR * Nr, muR * Nr);
   // ручник: задние колёса стоят — их сила трения скольжения против движения пятна контакта (вдоль и поперёк), без насыщения шины
@@ -164,11 +172,24 @@ function carDyn(c, dt) {
       Fyr = -Fr * Math.tanh(VEH.cs * VEH.csR * Nr * ar / Math.max(1, Fr));
     }
   }
+  c.fyF = Fyf; c.fyR = Fyr;                                                // для противобуксовочной (V.tc) на следующем шаге
   const Fx = Fxf * cd - Fyf * sd + Fxr;
   // динамика
   let u1 = u + (Fx / m + v * r) * dt;
   let v1 = v + ((Fyf * cd + Fxf * sd + Fyr) / m - u * r) * dt;
   let r1 = r + ((la * (Fyf * cd + Fxf * sd) - lb * Fyr) / Iz) * dt;
+  // система стабилизации (V.esc): закручивает быстрее, чем держат шины (μg/u), или кузов уходит боком — гасит вращение и снос
+  // (как подтормаживание отдельных колёс) и чуть сбрасывает скорость; ручником сорвать — можно (при ручнике выключена)
+  if (V.esc && driver && !hb && u > 4) {
+    const rLim = (mu * g / u) * ESC.margin, beta = Math.atan2(v1, u1);
+    const over = Math.abs(r1) - rLim, slide = Math.abs(beta) - ESC.beta;
+    if (over > 0 || slide > 0) {
+      if (over > 0) r1 -= Math.sign(r1) * Math.min(over, ESC.yaw * V.esc * dt);
+      if (slide > 0) { v1 -= Math.sign(v1) * Math.min(Math.abs(v1), ESC.side * V.esc * dt); if (Math.sign(r1) === Math.sign(beta)) r1 *= 1 - Math.min(1, ESC.yawSlide * dt); }
+      u1 -= ESC.brake * dt;
+      c.escOn = G.time;
+    }
+  }
   // сопротивление — к нулю, не дальше (стоит — стоит)
   const dres = (res / m) * dt;
   if (Math.abs(u1) <= dres && !Fd) u1 = 0; else u1 -= Math.sign(u1) * dres;
@@ -195,6 +216,27 @@ function roadGrip(c) {
   const T = TIRES[tiresOf(c)] || TIRES.road, poor = VEH.poor[fm] ? 1 : VEH.wetPoor * rain;
   return (VEH.surface[fm] ?? 1) * (1 - VEH.wet * rain) * (T.good + (T.poor - T.good) * poor);
 }
+// Система стабилизации (у машин с V.esc): margin — запас по скорости вращения над μg/u; beta — допустимый угол сноса (рад);
+// yaw — как быстро гасит лишнее вращение (рад/с²), side — снос (м/с²), yawSlide — вращение в сторону сноса (1/с), brake — подтормаживание (м/с²)
+const ESC = { margin: 1.15, beta: 0.14, yaw: 6, side: 6, yawSlide: 4, brake: 2 };
+// Повреждённый двигатель работает хуже: мощность × (ENGINE_DMG.min + (1 − min) × доля прочности^pow); ниже ENGINE_DMG.rough — «чихает»:
+// провалы тяги (×misK) на 0,08–0,25 с, тем чаще, чем сильнее повреждён (c.misT — сколько ещё длится провал; у каждого считает сам)
+const ENGINE_DMG = { min: 0.3, pow: 0.7, rough: 0.4, misRate: 3, misK: 0.15 };
+function engineK(c) {
+  const k = clamp(c.hp / VEHICLES[c.model].engineHp, 0, 1);
+  if (k >= 1) return 1;
+  const now = G.time;
+  if (k < ENGINE_DMG.rough && !(c.misEnd > now) && now >= (c.misNext || 0)) {
+    // следующий провал — по пуассоновскому потоку: чаще при меньшей прочности
+    const rate = ENGINE_DMG.misRate * (1 - k / ENGINE_DMG.rough);
+    if (c.misNext) c.misEnd = now + rand(0.08, 0.25);
+    c.misNext = now + (rate > 0 ? -Math.log(1 - Math.random()) / rate : 1e9);
+  }
+  const base = ENGINE_DMG.min + (1 - ENGINE_DMG.min) * Math.pow(k, ENGINE_DMG.pow);
+  return c.misEnd > now ? base * ENGINE_DMG.misK : base;
+}
+const engineMisfire = (c) => c.misEnd > G.time;
+
 // Двигатель теряет прочность (попадание в моторный отсек, удар передом); 0 — заглох
 function engineDamage(c, dmg) {
   if (c.hp <= 0 || !(dmg > 0)) return;
@@ -820,13 +862,16 @@ function engineRpm(c, dt) {
   st.rpm += (target - st.rpm) * Math.min(1, dt * (st.cutT > 0 ? 6 : 12));
   return { rpm: st.rpm, load: st.cutT > 0 ? 0.1 : thr, cut: st.cutT > 0 ? 1 : 0 };
 }
+// Вне игры — мотор молчит
+function engineSoundOff() { if (engineSnd) engineSnd.set({ on: false }); engineSt.car = null; }
 function vehSound(dt = 1 / 60) {
   const p = me(), c = p && !p.dead && p.veh;
   if (!AC) return;
   if (!c) { if (engineSnd) engineSnd.set({ on: false }); engineSt.car = null; return; }
   if (!engineSnd) engineSnd = SFX.engineLoop();
-  const on = c.hp > 0 && !!c.seats[0];
-  engineSnd.set({ ...engineRpm(c, dt), on });
+  const on = c.hp > 0 && !!c.seats[0], e = engineRpm(c, dt);
+  if (engineMisfire(c)) { e.cut = 1; e.load = 0.05; }          // повреждённый «чихает» — провал слышно
+  engineSnd.set({ ...e, on });
 }
 
 // Дым из-под капота: заглох — густой чёрный, сильно повреждён — серые струйки (у каждого на экране, без сети)

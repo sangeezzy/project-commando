@@ -349,7 +349,9 @@ function drawMuzzle(clip) {
 // ---------- Люди сверху ----------
 // ---------- Анимация бойцов: плавные переходы между позами ----------
 // o.an — коэффициенты смешивания 0..1, догоняют целевую позу за доли секунды (время в секундах — постоянные τ).
-const ANIM = { crouch: 0.12, low: 0.09, reload: 0.08, ads: 0.08, death: 0.45 };
+// bob — покачивание оружия в такт шагам: угол (рад) и смещение вбок / назад (px) — на ходу (walk) и бегом (run); step — длина шага, м
+const ANIM = { crouch: 0.12, low: 0.09, reload: 0.08, ads: 0.08, death: 0.45, step: 0.9,
+  bob: { walkA: 0.06, walkY: 1.2, walkX: 0.6, runA: 0.26, runY: 3.6, runX: 2.6 } };
 const approach = (cur, target, dt, tau) => cur + (target - cur) * (1 - Math.exp(-dt / tau));
 const smooth01 = (t) => { t = clamp(t, 0, 1); return t * t * (3 - 2 * t); };
 
@@ -367,6 +369,12 @@ function updateAnim(o, dt) {
   o.an.reload = approach(o.an.reload, t.reload, dt, ANIM.reload);
   // у игрока прицел и так плавный (ADS_TIME), у противника — сглаживаем
   o.an.ads = o.side === 'p' ? t.ads : approach(o.an.ads, t.ads, dt, ANIM.ads);
+  // шаги: фаза (π за шаг ANIM.step м) и доля скорости бега (mv) — для покачивания оружия в такт; в машине, за пулемётом — нет
+  const d = o.anX === undefined ? 0 : Math.hypot(o.x - o.anX, o.y - o.anY);
+  o.anX = o.x; o.anY = o.y;
+  const moving = !o.veh && !o.mg && !o.dead && d < M(2);          // телепорт — не шаг
+  if (moving) o.an.ph = ((o.an.ph || 0) + d / M(ANIM.step) * Math.PI) % (Math.PI * 2);
+  o.an.mv = approach(o.an.mv || 0, moving && dt > 0 ? clamp(d / dt / M(SPEED.sprint), 0, 1) : 0, dt, 0.12);
 }
 
 // Где магазин во время перезарядки: 0 — в оружии, 1 — вынут (плавно выходит и входит)
@@ -500,6 +508,13 @@ function drawPerson(o, alpha) {
     ctx.beginPath(); ctx.arc(9, -3, 3, 0, Math.PI * 2); ctx.fill();
     ctx.beginPath(); ctx.arc(9, 3, 3, 0, Math.PI * 2); ctx.fill();
   } else {
+  // покачивание в такт шагам (оружие с руками): бегом — заметно (ствол ходит вбок и рывками к себе), шагом — слегка; с прицелом — меньше
+  const B = ANIM.bob, walk = clamp((an.mv || 0) * 2.5, 0, 1) * (1 - an.low) * (1 - 0.6 * an.ads), run = an.low * Math.min(1, (an.mv || 0) * 2);
+  const sw = Math.sin(an.ph || 0), up = Math.abs(Math.cos(an.ph || 0));
+  ctx.save();
+  ctx.translate(4 - up * (B.walkX * walk + B.runX * run), sw * (B.walkY * walk + B.runY * run));
+  ctx.rotate(sw * (B.walkA * walk + B.runA * run));
+  ctx.translate(-4, 0);
   // оружие опущено: на бегу сильнее, при перезарядке — к себе
   const lowK = Math.max(an.low, an.reload);
   const rot = an.low * 0.75 + an.reload * 0.5 * (1 - an.low);
@@ -541,6 +556,7 @@ function drawPerson(o, alpha) {
     const bx = lerp(3, 8, reach), by = lerp(7 - ads * 3, 11, reach);
     ctx.beginPath(); ctx.arc(bx, by, 3, 0, Math.PI * 2); ctx.fill();
   }
+  ctx.restore();                             // покачивание
   }
   // нож: рука с клинком выбрасывается вперёд и возвращается
   if (o.melee) {

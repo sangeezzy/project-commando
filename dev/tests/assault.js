@@ -145,6 +145,8 @@ window.__result = (() => {
     p.x = p.px = r.x; p.y = p.py = r.y + M(0.3);
     doAct(p, 'supply'); tick(Math.round(SURV.supplyT * 60) + 3);
     check('пополнился — броня IIIA', p.armor && p.armor.cls === 'IIIA');
+    const dr = truckDriver(); p.x = p.px = dr.x; p.y = p.py = dr.y;
+    doAct(p, 'truckgo');                                         // отпустить у водительской двери
     tick(60 * 30, () => G.surv.phase === 'truck');
     check('уехал — переход открыт', G.surv.phase === 'exit', G.surv.phase);
     // покинуть боевую зону (хост) — в хаб

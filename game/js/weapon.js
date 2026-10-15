@@ -371,8 +371,21 @@ function armorHit(o, W, k = 1) {
   return stop ? 'stop' : 'through';
 }
 
+// Огонь по своим — реплики: попавший под него ИИ возмущается, ИИ-стрелок извиняется (у людей — без реплик; не чаще FF_BARK_CD с на бойца)
+const FF_HIT_LINES = ['Эй, свои!', 'Не стреляй, свои!', 'Смотри, куда палишь!', 'Ты что творишь?!', 'Я свой, свой!', 'Аккуратнее!',
+  'По своим не стрелять!', 'Глаза разуй!', 'Ты в кого стреляешь?!', 'Прекрати огонь, я свой!'];
+const FF_SORRY_LINES = ['Виноват!', 'Прости, задел!', 'Извини, случайно!', 'Чёрт, свой!', 'Прости, брат!', 'Не видел тебя!', 'Мой косяк!', 'Сорян, зацепил!'];
+const FF_BARK_CD = 3;
+function friendlyFireBarks(o, by) {
+  if (!by || by === o || by.side !== o.side) return;
+  const say = (q, list) => { if (q.ai && !q.dead && !q.down && G.time - (q.ffBarkT ?? -99) > FF_BARK_CD) { q.ffBarkT = G.time; bark(q, list[Math.floor(Math.random() * list.length)]); } };
+  say(o, FF_HIT_LINES);
+  say(by, FF_SORRY_LINES);
+}
+
 function damagePerson(o, dmg, sx, sy, ang, by) {
   if (o.dead || o.god) return;          // отладка: бессмертие ([) — урона нет совсем
+  friendlyFireBarks(o, by);
   if (o.down) { emit(['blood', o.x, o.y, ang, 1]); killPerson(o, ang); return; }   // по раненому — добит
   o.hp -= dmg;
   o.hurtT = 0;

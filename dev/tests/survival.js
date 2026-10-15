@@ -90,15 +90,40 @@ window.__result = (() => {
     check('у медика — лечение (медик занят им)', p.act && p.act.kind === 'heal' && md.heal === p.id);
     tick(Math.round(SURV.healT * 60) + 3);
     check('вылечен: здоровье полное', p.hp === HP);
-    // боты отряда — сами: пополнились и вылечились, после этого грузовик уехал
-    tick(60 * 60, () => G.surv.phase === 'truck');
+    // боты отряда — сами: пополнились и вылечились; грузовик сам не уезжает — ждёт, пока отпустят
+    tick(60 * 40);
     const bots = G.players.filter((q) => q.ai);
     check('боты сами пополнились (броня IIIA) и вылечились', bots.every((q) => q.armor && q.armor.cls === 'IIIA' && q.hp === HP), bots.map((q) => [q.armor && q.armor.cls, Math.round(q.hp)]));
-    check('все готовы — грузовик уехал, стоянка снова свободна, перерыв', G.surv.phase === 'break' && walkable(map.surv.cx, map.surv.cy), G.surv.phase);
+    check('все готовы, но не отпустили — грузовик стоит', G.surv.phase === 'truck' && G.surv.truck.state === 'park');
+    // F у водительской двери: «Двигай, шеф» — уезжает, водитель прощается
+    G.barks = [];
+    const dr = truckDriver();
+    p.x = p.px = dr.x; p.y = p.py = dr.y;
+    check('у водительской двери — подсказка «ЕХАТЬ»', nearDriver(p) && touchUseLabel(p) === 'ЕХАТЬ', touchUseLabel(p));
+    pressed.KeyF = true; T_.step(1);
+    check('F — боец говорит фразу из списка', G.surv.truck.go === 'door' && (G.barks || []).some((b) => TRUCK_GO_LINES.includes(b.text)), (G.barks || []).map((b) => b.text));
+    tick(60 * 30, () => G.surv.truck && G.surv.truck.state === 'park');
+    check('водитель на прощание (трогаясь) — фраза из списка', (G.barks || []).some((b) => TRUCK_BYE_LINES.includes(b.text)), (G.barks || []).map((b) => b.text));
+    tick(60 * 30, () => G.surv.phase === 'truck');
+    check('уехал: стоянка снова свободна, перерыв', G.surv.phase === 'break' && walkable(map.surv.cx, map.surv.cy), G.surv.phase);
     // второй приезд — броня III
     G.surv.wave = 5; G.surv.phase = 'break'; G.surv.t = 0; tick(2);
     G.enemies.forEach((e) => { e.dead = true; }); G.surv.toSpawn = 0; tick(2);
     check('второй приезд — броня III', G.surv.trucks === 2 && ARMOR_ORDER[Math.min(G.surv.trucks, 4)] === 'III');
+    // отойти: не подходили — стоит; подошли, потом все люди дальше половины карты — уезжает
+    const c = { x: (map.truck.cx + 0.5) * TILE, y: (map.truck.park + SURV.truckLen / 2) * TILE };      // где встанет
+    const far = () => { const sp = freeSpotNear(c.x, c.y + Math.max(map.w, map.h) * TILE * 0.55 * (c.y < map.h * TILE / 2 ? 1 : -1)); p.x = p.px = sp.x; p.y = p.py = sp.y; };
+    far();
+    tick(60 * (SURV.drive + SURV.medicWalk) + 30);
+    tick(60 * 5);
+    check('не подходили к нему — далеко, но стоит', G.surv.truck && G.surv.truck.state === 'park' && !G.surv.truck.go, [Math.round(Math.hypot(p.x - c.x, p.y - c.y) / PX_M)]);
+    p.x = p.px = c.x + M(3); p.y = p.py = c.y; tick(10);
+    check('подошёл — отмечено', G.surv.truck.visited);
+    far(); tick(10);
+    const away = Math.hypot(p.x - c.x, p.y - c.y) > Math.max(map.w, map.h) * TILE / 2;
+    check('отошёл на полкарты — отпущен', away && G.surv.truck.go === 'away', [away, G.surv.truck.go]);
+    tick(60 * 30, () => G.surv.phase === 'truck');
+    check('и уехал', G.surv.phase === 'break', G.surv.phase);
   });
 
   run('покинуть боевую зону', () => {

@@ -341,13 +341,17 @@ const SFX = {
       stop() { for (const o of [o1, o2, o3, lfo, nz]) { try { o.stop(); } catch (e) { /* ignore */ } } },
     };
   },
-  // шум дождя — постоянный, громкость по силе (set 0..1): k^0,6 × 0,05 — слабый (0,35) почти как раньше (0,027),
-  // сильный (1) вдвое тише прежнего (0,05 вместо 0,09): шум ливня не глушит шаги и выстрелы
+  // шум дождя — постоянный, громкость по силе (set 0..1): k^0,6 × 0,032 — фоном, не «в ухо»: глуше (без верхнего шипения — полоса
+  // ниже, срез над 2,5 кГц) и тише прежнего; ливень не глушит шаги и выстрелы. set(0) — гаснет быстро (меню)
   rainLoop() {
     const s = AC.createBufferSource(); s.buffer = noiseBuf; s.loop = true;
-    const f = AC.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = 3200; f.Q.value = 0.4;
+    const f = AC.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = 1500; f.Q.value = 0.35;
+    const lp = AC.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 2500; lp.Q.value = 0.5;
     const g = AC.createGain(); g.gain.value = 0;
-    s.connect(f); f.connect(g); g.connect(master); s.start();
-    return { set(k) { g.gain.setTargetAtTime(0.05 * Math.pow(Math.max(0, k), 0.6), AC.currentTime, 0.5); }, stop() { try { s.stop(); } catch (e) { /* ignore */ } } };
+    s.connect(f); f.connect(lp); lp.connect(g); g.connect(master); s.start();
+    return {
+      set(k) { const v = 0.032 * Math.pow(Math.max(0, k), 0.6); g.gain.setTargetAtTime(v, AC.currentTime, v ? 0.5 : 0.08); },
+      stop() { try { s.stop(); } catch (e) { /* ignore */ } },
+    };
   },
 };

@@ -4,8 +4,9 @@
 // и сами его не видят), идут к центру; «директор» раз в SURV.dirT с гонит отставших к отряду. Оружие: волны 1–2 — пистолеты,
 // 3–4 — пистолеты и ружья, дальше — как на других картах. После волн 3, 6, 9, 12, дальше — каждой второй: грузовик (въезжает с юга,
 // стоит на площади): у заднего борта (F) — пополнить боеприпасы и броню (класс — по числу приездов: IIIA → III → III+ → IV) или
-// покинуть боевую зону; из пассажирской двери выходит медик — лечит каждого по отдельности. Пока грузовик стоит — пауза: уедет, когда
-// все живые пополнились и вылечились (или через SURV.maxStop с). Боты отряда тоже пополняются и лечатся; покинуть зону не могут.
+// покинуть боевую зону; из пассажирской двери выходит медик — лечит каждого по отдельности. Пока грузовик стоит — пауза: уедет, только
+// если отпустить — F у водительской двери («Двигай, шеф!») или подойти к нему, а потом всем людям отойти дальше половины карты;
+// уезжая, водитель прощается. Боты отряда тоже пополняются и лечатся; покинуть зону не могут.
 
 const SURV = {
   W: 80, H: 60,
@@ -15,7 +16,8 @@ const SURV = {
   group: [2, 4], groupGap: [3, 6],                 // группа: человек; между группами, с
   spawnMin: M(25), dirT: 5,
   firstBreak: 8, breakT: 10, afterTruck: 6,
-  drive: 7, medicWalk: 1.5, maxStop: 150, departDelay: 3,
+  drive: 7, medicWalk: 1.5, departDelay: 3,
+  visitR: M(7),                                    // подошёл к грузовику ближе — «подходили» (дальше — можно отпустить, отойдя на полкарты)
   supplyT: 2.5, healT: 4, reach: M(1.6),
   truckLen: 8, truckW: 3,                          // клетки
 };
@@ -116,6 +118,18 @@ const medicDoor = () => ({ x: (map.truck.cx + 2.2) * TILE, y: (G.surv.truck.fy +
 const medicSpot = () => ({ x: (map.truck.cx + 3.6) * TILE, y: (G.surv.truck.fy + 3.5) * TILE });
 const truckParked = () => !!(G.surv && G.surv.truck && G.surv.truck.state === 'park');
 const nearRear = (o) => truckParked() && Math.hypot(o.x - truckRear().x, o.y - truckRear().y) < SURV.reach;
+// Водительская дверь — левый борт кабины (кабина — спереди, на севере); середина грузовика
+const truckDriver = () => ({ x: (map.truck.cx - 1.5) * TILE, y: (G.surv.truck.fy + 1.2) * TILE });
+const truckCenter = () => ({ x: (map.truck.cx + 0.5) * TILE, y: (G.surv.truck.fy + SURV.truckLen / 2) * TILE });
+const nearDriver = (o) => truckParked() && !G.surv.truck.go && Math.hypot(o.x - truckDriver().x, o.y - truckDriver().y) < SURV.reach;
+// Фразы: боец отправляет водителя (F у двери) и водитель на прощание
+const TRUCK_GO_LINES = ['Двигай, шеф!', 'Поехали, поехали!', 'Всё, гони отсюда!', 'Спасибо, шеф, дальше мы сами.', 'Заводи, шеф, пока не прилетело!',
+  'Свободен, шеф!', 'Давай, давай, уезжай!', 'Всё взяли — трогай!', 'Шеф, жми на газ!', 'Отваливай, мы прикроем!'];
+const TRUCK_BYE_LINES = ['Удачи, мужики!', 'Держитесь там, ещё приеду!', 'Берегите себя!', 'Ни пуха!', 'Живыми останьтесь, ладно?',
+  'Не скучайте, скоро буду!', 'Ну, с богом!', 'Не подставляйтесь зря!', 'До встречи, бойцы!', 'Патроны берегите!'];
+const pickLine = (list) => list[Math.floor(Math.random() * list.length)];
+// Реплика водителя — над кабиной (как реплики бойцов: эффект 'bark', сторона отряда)
+const driverBark = (text) => { const d = truckDriver(); emit(['bark', d.x, d.y, text, 'p', 0]); };
 const nearMedic = (o) => truckParked() && G.surv.medic && G.surv.medic.state === 'stand' && Math.hypot(o.x - G.surv.medic.x, o.y - G.surv.medic.y) < SURV.reach;
 
 // Грузовик на стоянке — препятствие (клетки — «стена» из металла: не пройти, не видно, пули — как сквозь машину)
@@ -293,14 +307,21 @@ function updateTruck(dt) {
   } else if (tr.state === 'park') {
     updateMedic(dt);
     s.waitT += dt;
-    // все живые (люди и боты; не эвакуированные) пополнились и здоровы — или ждали слишком долго
-    const live = G.players.filter((q) => !q.dead && !q.down);
-    const ready = live.every((q) => q.supplied === s.stop && (q.hp >= HP || q.healed === s.stop) && !q.act);
-    if (ready || s.waitT > SURV.maxStop) {
+    // уезжает, только если отпустили: F у водительской двери (tr.go — survAct 'truckgo') или к нему подходили, а потом все живые люди
+    // отошли дальше половины карты
+    const humans = G.players.filter((q) => !q.ai && !q.dead && !q.evac), c = truckCenter();
+    const dist = (q) => Math.hypot(q.x - c.x, q.y - c.y);
+    if (humans.some((q) => dist(q) < SURV.visitR)) tr.visited = true;
+    if (!tr.go && tr.visited && humans.length && humans.every((q) => dist(q) > Math.max(map.w, map.h) * TILE / 2)) tr.go = 'away';
+    if (tr.go) {
       tr.ready = (tr.ready || 0) + dt;
-      if (tr.ready >= SURV.departDelay && md.state === 'stand' && !md.heal) { md.state = 'return'; md.t = 0; }
-    } else tr.ready = 0;
-    if (md.state === 'hidden' && tr.ready) { tr.state = 'out'; tr.t = 0; setTruckTiles(false); emit(['banner', 'ГРУЗОВИК УЕХАЛ', s.mode === 'assault' ? '' : `следующая волна — через ${SURV.afterTruck} с`]); }
+      if (tr.ready >= (tr.go === 'away' ? 0 : SURV.departDelay) && md.state === 'stand' && !md.heal) { md.state = 'return'; md.t = 0; }
+    }
+    if (md.state === 'hidden' && tr.go && tr.ready) {
+      tr.state = 'out'; tr.t = 0; setTruckTiles(false);
+      driverBark(pickLine(TRUCK_BYE_LINES));
+      emit(['banner', 'ГРУЗОВИК УЕХАЛ', s.mode === 'assault' ? '' : `следующая волна — через ${SURV.afterTruck} с`]);
+    }
   } else if (tr.state === 'out') {
     tr.fy = park + (map.truck.to - park) * easeIn(clamp(tr.t / SURV.drive, 0, 1));
     if (tr.t >= SURV.drive) {
@@ -356,6 +377,10 @@ function survAct(p, k) {
   if (k.startsWith('supply') && nearRear(p)) p.act = { kind: 'supply', t: 0, dur: SURV.supplyT, pick: k.length > 7 ? k.slice(7).split(',') : null };
   else if (k === 'heal' && nearMedic(p) && p.hp < HP && !s.medic.heal) { p.act = { kind: 'heal', t: 0, dur: SURV.healT }; s.medic.heal = p.id; }
   else if (k === 'evac' && nearRear(p) && !p.ai && p.slot === 0) backToHub(true);     // покинуть боевую зону — весь отряд в хаб с итогами (решает хост)
+  else if (k === 'truckgo' && nearDriver(p)) {                                         // у водительской двери: отпустить грузовик
+    s.truck.go = 'door'; s.truck.ready = 0;
+    if (p.ai) bark(p, pickLine(TRUCK_GO_LINES)); else emit(['bark', p.x, p.y, pickLine(TRUCK_GO_LINES), p.side, p.id]);
+  }
 }
 // Каждый кадр, пока идёт действие: отошёл — бросил; время вышло — готово
 function survActStep(p, a, dt) {
@@ -477,7 +502,7 @@ const survState = () => {
   if (!s) return 0;
   const tr = s.truck, md = s.medic;
   return [s.wave, SURV_PHASES.indexOf(s.phase), r1(s.t), s.toSpawn, s.trucks, s.stop, MODES.indexOf(s.mode), s.stage || 0,
-    tr ? [TRUCK_STATES.indexOf(tr.state), r2(tr.fy)] : 0,
+    tr ? [TRUCK_STATES.indexOf(tr.state), r2(tr.fy), tr.go ? 1 : 0] : 0,       // go — отпущен (у гостя — без подсказки у двери)
     md ? [MEDIC_STATES.indexOf(md.state), r1(md.x), r1(md.y), r2(md.a), md.heal || 0] : 0,
     G.run ? [G.run.cleared, G.run.kills, G.run.losses] : 0];
 };
@@ -486,7 +511,7 @@ function applySurvState(a) {
   const s = G.surv || (G.surv = { tilesOn: false });
   [s.wave, , s.t, s.toSpawn, s.trucks, s.stop] = a;
   s.phase = SURV_PHASES[a[1]]; s.mode = MODES[a[6]]; s.stage = a[7];
-  s.truck = a[8] ? { state: TRUCK_STATES[a[8][0]], fy: a[8][1] } : null;
+  s.truck = a[8] ? { state: TRUCK_STATES[a[8][0]], fy: a[8][1], go: !!a[8][2] } : null;
   s.medic = a[9] ? { state: MEDIC_STATES[a[9][0]], x: a[9][1], y: a[9][2], a: a[9][3], heal: a[9][4] } : null;
   G.run = a[10] ? { mode: s.mode === 'assault' ? 'assault' : 'surv', cleared: a[10][0], kills: a[10][1], losses: a[10][2] } : null;
   setTruckTiles(!!(s.truck && s.truck.state === 'park'));

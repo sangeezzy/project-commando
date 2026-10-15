@@ -146,6 +146,20 @@ else { try { addrEl.value = localStorage.getItem('pcr-addr') || ''; } catch (e) 
 const rememberAddr = () => { try { if (addrEl.value.trim()) localStorage.setItem('pcr-addr', addrEl.value.trim()); } catch (e) { /* ignore */ } };
 // приложение для телефона (dev/android: index.html?app=1) — комнату создать нельзя (нет сервера), только войти к хосту
 const IS_APP = new URLSearchParams(location.search).has('app');
+// Сервер этого компьютера (Играть.bat): вкладка игры отмечается у него (hi) и при закрытии прощается (bye, sendBeacon — доходит и при
+// закрытии вкладки); закрыли последнюю и не открыли снова за 5 с — сервер останавливается (только запущенный с -Open / --open)
+if (servedByServer() && !IS_APP && /^(localhost|127\.0\.0\.1)(:|$)/.test(location.host)) {
+  const pid = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  const pagePing = (e) => {
+    try {
+      if (e === 'bye' && navigator.sendBeacon) navigator.sendBeacon(`/page?e=bye&id=${pid}`);
+      else fetch(`/page?e=${e}&id=${pid}`, { method: 'POST', keepalive: true }).catch(() => {});
+    } catch (err) { /* ignore */ }
+  };
+  pagePing('hi');
+  addEventListener('pagehide', () => pagePing('bye'));
+  addEventListener('pageshow', (ev) => { if (ev.persisted) pagePing('hi'); });   // вернулись на страницу из кэша браузера
+}
 if (IS_APP) {
   document.documentElement.classList.add('app');
   document.getElementById('btnHostLocal').textContent = 'СОЗДАТЬ КОМНАТУ НА ЭТОМ ТЕЛЕФОНЕ';

@@ -38,6 +38,7 @@ function drawHUD() {
     if (v && v !== p) mono(`наблюдение: ${v.name}`, VW / 2, 82, HUD_DIM, 'center', 13);
   }
   drawOffscreen(viewer());
+  drawGuides(viewer());              // стрелки на переход и грузовик
   drawTeam();
   drawVoice(p);
   // задача
@@ -186,6 +187,10 @@ function drawSurvHud(p) {
   if (p.dead || uiOpen()) return;
   if (nearRear(p)) txt('F — грузовик: пополнить или покинуть боевую зону', VW / 2, VH - 120, 15, HUD_WARN, 'center');
   else if (nearMedic(p)) txt(p.hp < HP ? (s.medic.heal && s.medic.heal !== p.id ? 'медик занят — подождите' : 'F — лечиться у медика') : 'здоровье полное', VW / 2, VH - 120, 15, HUD_WARN, 'center');
+  else if (nearDriver(p)) txt('F — отпустить грузовик', VW / 2, VH - 120, 15, HUD_WARN, 'center');
+  // у грузовика: как его отпустить (стоит, пока не отпустят)
+  if (truckParked() && !s.truck.go && Math.hypot(p.x - truckCenter().x, p.y - truckCenter().y) < SURV.visitR * 1.5)
+    mono('грузовик ждёт: отпустить — F у двери водителя или уйти подальше (на полкарты)', VW / 2, VH - 146, HUD_DIM, 'center', 12);
   if (p.act && (p.act.kind === 'supply' || p.act.kind === 'heal')) {
     const k = clamp(p.act.t / p.act.dur, 0, 1), x = VW / 2 - 120, y = VH - 100;
     ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.fillRect(x, y, 240, 6);
@@ -295,6 +300,59 @@ function drawOffscreen(v) {
     ctx.restore();
     ctx.fillStyle = 'rgba(255,120,100,0.85)';
     ctx.fillText(`${Math.round(q.d)} м`, q.x - Math.cos(q.a) * 17, q.y - Math.sin(q.a) * 15);
+  }
+  ctx.restore();
+}
+
+// Указатели: зелёная стрелка — на переход «Штурма», синяя — на грузовик с боеприпасами. Горят GUIDE.t с после события (локация началась,
+// ворота открылись; грузовик встал) или Tab (вместе с ТТХ оружия; на телефоне — «Характеристики» в меню), потом гаснут.
+// Цель на экране — стрелки нет. Всё — у себя (события видны по состоянию карты и снимку: у гостя тоже).
+const GUIDE = { t: 10, fade: 1.5, size: 11 };
+function guideShow() {
+  const g = G.guide || (G.guide = {});
+  g.exitT = g.truckT = G.time + GUIDE.t;
+}
+function guideTargets() {
+  const g = G.guide || (G.guide = {}), out = [];
+  if (g.map !== map) { g.map = map; g.gate = false; g.park = false; g.exitT = G.surv && G.surv.mode === 'assault' && map.exit ? G.time + GUIDE.t : 0; }
+  if (map.gate && map.gate.open && !g.gate) { g.gate = true; g.exitT = G.time + GUIDE.t; }
+  const park = typeof truckParked === 'function' && truckParked();
+  if (park && !g.park) g.truckT = G.time + GUIDE.t;
+  g.park = park;
+  if (map.exit && G.surv && G.surv.mode === 'assault' && G.time < (g.exitT || 0)) {
+    const e = map.exit;
+    out.push({ x0: e.x0 * TILE, y0: e.y0 * TILE, x1: (e.x1 + 1) * TILE, y1: (e.y1 + 1) * TILE, left: g.exitT - G.time, col: [110, 230, 110], label: 'ПЕРЕХОД' });
+  }
+  if (park && G.time < (g.truckT || 0)) {
+    const X = (map.truck.cx - 1) * TILE, Y = G.surv.truck.fy * TILE;
+    out.push({ x0: X, y0: Y, x1: X + SURV.truckW * TILE, y1: Y + SURV.truckLen * TILE, left: g.truckT - G.time, col: [90, 160, 255], label: 'ГРУЗОВИК' });
+  }
+  return out;
+}
+function drawGuides(v) {
+  if (!map || !v) return;
+  const list = guideTargets();
+  if (!list.length) return;
+  const m = CAMM || camMatrix(), S = GUIDE.size, M0 = OFFSCREEN.pad + 6, cx = VW / 2, cy = VH / 2;
+  ctx.save();
+  ctx.font = '11px Consolas, monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  for (const q of list) {
+    const cs = [[q.x0, q.y0], [q.x1, q.y0], [q.x0, q.y1], [q.x1, q.y1]].map(([x, y]) => worldToScreen(x, y, m));
+    if (cs.some((s) => s.x > 0 && s.x < VW && s.y > 0 && s.y < VH)) continue;      // зона на экране — стрелка не нужна
+    const s = worldToScreen((q.x0 + q.x1) / 2, (q.y0 + q.y1) / 2, m), dx = s.x - cx, dy = s.y - cy;
+    const k = Math.min(dx ? (VW / 2 - M0) / Math.abs(dx) : 1e9, dy ? (VH / 2 - M0) / Math.abs(dy) : 1e9);
+    const x = cx + dx * k, y = cy + dy * k, a = Math.atan2(dy, dx);
+    const al = clamp(q.left / GUIDE.fade, 0, 1) * (0.75 + 0.25 * Math.sin(G.time * 6));     // светится (пульс), в конце гаснет
+    const [r, gg, b] = q.col, d = Math.hypot((q.x0 + q.x1) / 2 - v.x, (q.y0 + q.y1) / 2 - v.y) / PX_M;
+    ctx.save();
+    ctx.translate(x, y); ctx.rotate(a);
+    ctx.shadowColor = `rgba(${r},${gg},${b},${al})`; ctx.shadowBlur = 10;
+    ctx.fillStyle = `rgba(${r},${gg},${b},${0.95 * al})`; ctx.strokeStyle = `rgba(0,0,0,${0.6 * al})`; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(S, 0); ctx.lineTo(-S * 0.7, -S * 0.8); ctx.lineTo(-S * 0.3, 0); ctx.lineTo(-S * 0.7, S * 0.8); ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    ctx.restore();
+    ctx.fillStyle = `rgba(${r},${gg},${b},${0.95 * al})`;
+    ctx.fillText(`${q.label} ${Math.round(d)} м`, x - Math.cos(a) * 30, y - Math.sin(a) * 20);
   }
   ctx.restore();
 }

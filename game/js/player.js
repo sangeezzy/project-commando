@@ -16,9 +16,18 @@ addEventListener('keydown', (e) => {
 });
 addEventListener('keyup', (e) => { keys[e.code] = false; });
 addEventListener('blur', () => { for (const k in keys) keys[k] = false; mouse.l = mouse.r = false; });
+// Мышь. Камера по взгляду: поворот — только от захваченной мыши (без захвата курсор просто ходит по окну — раньше это крутило камеру),
+// одиночные скачки movementX (бывают у Chrome в Windows при захвате) отбрасываются. Мышь захвачена, а камера обычная (в машине) —
+// курсор двигается по смещениям (clientX у захваченной мыши стоит на месте — прицел и камера «замирали»)
+const MOUSE_JUMP = 400;              // px за одно событие — скачок, а не движение
 canvas.addEventListener('mousemove', (e) => {
-  mouse.dx = (mouse.dx || 0) + e.movementX; mouse.dy = (mouse.dy || 0) + e.movementY;
-  if (!lookCam(me())) { mouse.x = e.clientX; mouse.y = e.clientY; }    // камера по взгляду: курсор — свой (lookAim)
+  const locked = document.pointerLockElement === canvas || (window.__manualTick && lookCam(me()));   // тесты: захват мыши в headless недоступен
+  const jump = Math.abs(e.movementX) > MOUSE_JUMP || Math.abs(e.movementY) > MOUSE_JUMP;
+  if (lookCam(me())) {
+    if (locked && !jump) { mouse.dx = (mouse.dx || 0) + e.movementX; mouse.dy = (mouse.dy || 0) + e.movementY; }
+  } else if (locked) {
+    if (!jump) { mouse.x = clamp(mouse.x + e.movementX, 0, VW); mouse.y = clamp(mouse.y + e.movementY, 0, VH); }
+  } else { mouse.x = e.clientX; mouse.y = e.clientY; }
 });
 canvas.addEventListener('mousedown', (e) => {
   initAudio();
@@ -85,6 +94,7 @@ function controlLocal(p, dt) {
     toast(OPTS.laser ? 'ПРИЦЕЛ: ЛАЗЕР (Shift+N)' + (OPTS.cam === 'look' ? '' : ' — в камере по взгляду (N)') : 'ПРИЦЕЛ: ПЕРЕКРЕСТИЕ (Shift+N)', 1.6);
   } else if (pressed.KeyN) setCamMode(OPTS.cam === 'look' ? 'std' : 'look');      // N — камера: обычная / по взгляду (тест)
   if (pressed.KeyK) stepSight(keys.ShiftLeft || keys.ShiftRight ? 1 : -1);   // K / Shift+K — видимость (хост)
+  if (pressed.Tab) guideShow();                                             // Tab — ТТХ оружия и стрелки на переход / грузовик
   if (p.dead) { clearPressed(); return; }
   if (p.down) { crawl(p, dt); clearPressed(); return; }
   const g = p.gun;
@@ -95,6 +105,7 @@ function controlLocal(p, dt) {
   if (pressed.KeyF && p.veh) doAct(p, 'veh');                            // в машине — выйти (не быстрее VEH.exitSpeed)
   else if (pressed.KeyF && G.surv && nearRear(p)) openTruckMenu();     // «Выживание»: задний борт грузовика — меню
   else if (pressed.KeyF && G.surv && nearMedic(p)) doAct(p, 'heal');    // …медик — лечиться
+  else if (pressed.KeyF && G.surv && nearDriver(p)) doAct(p, 'truckgo'); // …водительская дверь — отпустить грузовик
   else if (pressed.KeyF && tableNear(p)) openLoadout();                  // хаб: оружейный стол — выбор снаряжения (у себя на экране)
   else if (pressed.KeyF && (p.mg || mgNear(p)) && !downNear) doAct(p, 'mg');     // стационарный пулемёт: занять / оставить
   else if (pressed.KeyF && vehNear(p) && !downNear) doAct(p, 'veh');             // машина рядом — сесть
@@ -190,7 +201,7 @@ function applyAct(p, k) {
   else if (k === 'w0' || k === 'w1' || k === 'w2') switchTo(p, +k[1]);
   else if (k === 'knife') startMelee(p);
   else if (k.startsWith('kit:')) applyKitAct(p, k);
-  else if (k === 'supply' || k.startsWith('supply:') || k === 'heal' || k === 'evac') survAct(p, k);
+  else if (k === 'supply' || k.startsWith('supply:') || k === 'heal' || k === 'evac' || k === 'truckgo') survAct(p, k);
   else if (k === 'god') {
     p.god = !p.god;
     if (p.god) { if (p.down) reviveUp(p); p.hp = HP; }        // включил раненым — сразу на ногах и с полным здоровьем
