@@ -144,6 +144,9 @@ function veilBuf(w, h) {
   return veilX;
 }
 
+// Пелена видимости: edge — ширина перехода у границы, м (edgePx — не уже, px экрана); capped — плотность за границей, когда
+// видимость ограничена настройкой (K / меню)
+const VEIL = { edge: 2, edgePx: 20, capped: 0.88 };
 function drawWeather(m = CAMM, p = null) {
   const w = G.weather, vis = w ? w.vis : 1, fog = w ? w.fog : 0, sk = sightK();
   if (!w && sk > 0.995) return;
@@ -154,15 +157,19 @@ function drawWeather(m = CAMM, p = null) {
   if ((vis < 0.995 || fog > 0.01 || sk < 0.995) && !G.noFog) {      // отладка ]: без пелены; видимость меньше 70 м — пелена и без погоды
     const z = G.zoom, eye = p && !p.dead ? eyeOf(p) : G.cam;
     const es = worldToScreen(eye.x, eye.y, CAMM), ex = es.x, ey = es.y, D = VIS_BASE * sk * vis * z;
-    const fk = clamp(fog, 0, 1), aMax = clamp(0.45 + 0.5 * fk + 0.4 * (1 - vis) + 0.5 * (1 - sk), 0, 0.96);
+    // за границей — плотная пелена (видимость ограничена настройкой — не прозрачнее VEIL.capped: граница читается)
+    const fk = clamp(fog, 0, 1), aMax = clamp(Math.max(0.45 + 0.5 * fk + 0.4 * (1 - vis) + 0.5 * (1 - sk), sk < 0.995 ? VEIL.capped : 0), 0, 0.96);
     const c = `${Math.round(118 + 52 * fk)},${Math.round(128 + 47 * fk)},${Math.round(142 + 38 * fk)}`;
     // градиент — в буфер в 4 раза меньше (упрощённый свет — в 8), на экран — растянуть: плавный, размытия не видно, а растеризация
     // градиента на весь экран — одна из самых дорогих операций кадра
     const q = OPTS.simpleLight ? 8 : 4, tg = veilBuf(Math.ceil(VW / q), Math.ceil(VH / q));
+    // чёткая граница: до неё пелена плотнеет слабо, у самой границы — узкая полоса (VEIL.edge м, не уже VEIL.edgePx px) до полной.
+    // Граница — ровно там, дальше чего противников не различить (playerSees)
+    const band = clamp(Math.max(M(VEIL.edge) * z, VEIL.edgePx) / Math.max(1, D), 0.02, 0.3);
     const gr = tg.createRadialGradient(ex / q, ey / q, 0, ex / q, ey / q, D / q);
     gr.addColorStop(0, `rgba(${c},${0.04 * fk})`);
-    gr.addColorStop(0.35, `rgba(${c},${aMax * 0.12})`);
-    gr.addColorStop(0.75, `rgba(${c},${aMax * 0.55})`);
+    gr.addColorStop(0.4, `rgba(${c},${aMax * 0.1})`);
+    gr.addColorStop(1 - band, `rgba(${c},${aMax * 0.3})`);
     gr.addColorStop(1, `rgba(${c},${aMax})`);
     tg.fillStyle = gr; tg.fillRect(0, 0, VW / q + 1, VH / q + 1);
     ctx.imageSmoothingEnabled = true; ctx.drawImage(veilC, 0, 0, veilC.width, veilC.height, 0, 0, veilC.width * q, veilC.height * q);

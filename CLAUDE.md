@@ -97,7 +97,9 @@
 - `weather.js` — погода (`G.weather`; «Выживание» и «Штурм»): `WEATHER` (ясно 40, дождь 25, ливень 13, гроза 12, туман 10 — веса), `rollWeather(rnd)`,
   `updateWeather` (vis/hear/rain/fog плавно к целевым за ~8 с; гроза — `bolt` раз в 12–30 с), `weatherFx` (вспышка, гром с задержкой, звук дождя), `drawWeather`.
   Видимость `visK()`: ИИ — `ENEMY.sight × vis`, замечает дольше (×(1 + 1,5·(1 − vis))); игрок — противников дальше `VIS_BASE` (70 м) × vis не видит.
-  На экране (`drawWeather(offX, offY, p)`): пелена вокруг глаз бойца радиусом `VIS_BASE × vis` — к этой границе почти сплошная (туман — светлая, дождь — сизая); `]` её убирает.
+  На экране (`drawWeather(offX, offY, p)`): пелена вокруг глаз бойца радиусом `VIS_BASE × sightK × vis` — до границы слабая, у границы — чёткий
+  переход шириной `VEIL.edge` 2 м (не уже `VEIL.edgePx` 20 px), за ней плотная (видимость ограничена настройкой — не прозрачнее `VEIL.capped` 0,88;
+  туман — светлая, дождь — сизая); `]` её убирает.
   Дождь — `drawRain`: число струй по площади холста; сильный (rain > 0,5) — гуще, ближний слой длинных струй, брызги (сдвигаются с картой), сумрак.
   Звук дождя (`SFX.rainLoop`): громкость 0,05 × rain^0,6 — ливень вдвое тише прежнего, слабый почти как был.
   Слышимость `hearK()`: радиус `makeNoise` и громкость `vol(d)`. Снимок: `wx` (`weatherState`/`applyWeatherState`).
@@ -501,8 +503,8 @@ python dev/run_tests.py --only m4,cover
   профиль `dev/prof.py`, скриншоты `dev/shot.sh`.
 
 ## Текущее состояние
-- Ветка `main`, удалённый репозиторий — `origin` = https://github.com/sangeezzy/project-commando (приватный, с 2026-10-15; метка `archive-prototypes` тоже там). Версия `GAME_VERSION` = `2026-10-21.rot`;
-  .apk этой версии собран (`dist/commando-2026-10-21.rot.apk`, 2026-10-15, без полос тумана при повороте камеры). **Правило пользователя:** после любых
+- Ветка `main`, удалённый репозиторий — `origin` = https://github.com/sangeezzy/project-commando (приватный, с 2026-10-15; метка `archive-prototypes` тоже там). Версия `GAME_VERSION` = `2026-10-21.veil`;
+  .apk этой версии собран (`dist/commando-2026-10-21.veil.apk`, 2026-10-15, чёткая граница видимости). **Правило пользователя:** после любых
   изменений игры (`game/`) — поднять `GAME_VERSION` и пересобрать .apk (`dev/android/build_apk.py`).
 - Релизы GitHub (репозиторий публичный с 2026-10-15): метка `v<GAME_VERSION>`, файлы всегда с одними именами — `commando.apk` и
   `commando-windows.zip` (`commando/` → `game/` из `dist/` после `dev/build.py`, `server/`, `Играть.bat`, README): README ссылается на
