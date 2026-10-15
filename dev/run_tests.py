@@ -64,6 +64,7 @@ UNIT_TESTS = {
     'barks': '',
     'ff': 'bots=1',
     'pcmenu': '',
+    'recoil': '',
     'touch': 'touch=1',
     'app': 'touch=1&app=1',
     'opts': 'touch=1',

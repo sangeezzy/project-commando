@@ -224,7 +224,7 @@ function drawCrosshair(p) {
   const d = Math.max(M(2), Math.hypot(w.x - p.x, w.y - p.y));
   const canFire = canShoot(p);
   const gap = clamp(2 * playerSpread(p) * MRAD * d * G.zoom, 3, 200);
-  const x = mouse.x, y = mouse.y;
+  const { x, y } = aimScreenPoint(p);          // куда смотрит ствол (с уводом отдачей)
   ctx.strokeStyle = canFire ? 'rgba(240,240,230,0.9)' : 'rgba(240,240,230,0.35)';
   ctx.lineWidth = 1.5;
   ctx.beginPath();

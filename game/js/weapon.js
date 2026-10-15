@@ -34,11 +34,13 @@ function fireRound(o, spread) {
   const g = o.gun, W = WEAPONS[g.t];
   g.chamber = 0;
   if (g.mag > 0) { g.mag--; g.chamber = 1; }      // автоматика дослала следующий; на последнем затвор встаёт на задержку
-  const aim = o.a + gauss() * spread * MRAD;
+  // ствол: взгляд + увод отдачей (вариант 'barrel'; у гостя — из его ввода, у ИИ — 0)
+  const ba = o.a + (o.recoilYaw || 0);
+  const aim = ba + gauss() * spread * MRAD;
   // пуля стартует из плеча стрелка (при выглядывании — смещённого вбок, но не за стену), рисуется от дула
   const ox = o.leanPx ? o.lx : o.x, oy = o.leanPx ? o.ly : o.y;
   const reach = M(0.25 + W.len / 40);                // дуло: дальше у длинного ствола
-  const mx = ox + Math.cos(o.a) * reach, my = oy + Math.sin(o.a) * reach;
+  const mx = ox + Math.cos(ba) * reach, my = oy + Math.sin(ba) * reach;
   const v = W.v0 * PX_M;
   // ружьё — осыпь дробин вокруг точки прицела
   for (let i = 0; i < (W.pellets || 1); i++) {
@@ -49,11 +51,73 @@ function fireRound(o, spread) {
       tile: -1, near: [], t: W, pellet: !!W.pellets,
     });
   }
-  g.bloom = Math.min(W.maxBloom, g.bloom + (!o.ai ? W.kick + (W.kickHip - W.kick) * (1 - o.ads) : W.kick));
+  g.bloom = Math.min(W.maxBloom, g.bloom + (!o.ai ? (W.kick + (W.kickHip - W.kick) * (1 - o.ads)) * RECOIL.bloomK : W.kick));
   g.lastShot = G.time;
   o.flashT = 0.06;
-  emit(['shot', mx, my, o.a, o.side, o.id, g.t]);
+  emit(['shot', mx, my, ba, o.side, o.id, g.t]);
   makeNoise(o.x, o.y, M(NOISE.shot), 'shot', o);
+  if (o === me() && !o.ai) recoilKick(o);         // отдача — пока только у своего игрока (гость — в predictFire)
+}
+
+// ---------- Отдача (RECOIL, RECOIL_W, WEAPON_MODS в data.js) ----------
+// Модификации с флагом recoil — множители увода, постоянной части и возврата
+function recoilMods(g) {
+  const k = { yaw: 1, side: 1, ret: 1 };
+  for (const id of (g && g.mods) || []) {
+    const m = WEAPON_MODS[id];
+    if (!m || !m.recoil) continue;
+    k.yaw *= m.yaw ?? 1; k.side *= m.side ?? 1; k.ret *= m.ret ?? 1;
+  }
+  return k;
+}
+// Сила отдачи — √ энергии свободного отката, √Дж: импульс пули и газов (за вычетом гасимого дульным устройством), масса оружия
+function recoilPower(t) {
+  const W = WEAPONS[t], R = RECOIL_W[t];
+  if (!R) return 0;
+  const I = (R.mb * W.v0 + R.mp * RECOIL.gasV * W.v0 * (1 - R.brake)) / 1000;     // Н·с
+  return I / Math.sqrt(2 * R.mass);
+}
+// Множитель стойки: прицел и присед уменьшают, вместе — перемножаются
+function recoilStance(o) {
+  const R = RECOIL_W[o.gun.t] || {};
+  return (1 - RECOIL.ads * clamp(o.ads || 0, 0, 1)) * (o.crouch ? R.crouch ?? RECOIL.crouch : 1);
+}
+// Увод за выстрел, мрад (масштаб: постоянная часть — side, случайная — rand)
+function recoilShot(o) {
+  const R = RECOIL_W[o.gun.t];
+  if (!R) return 0;
+  return RECOIL.yawK * recoilPower(o.gun.t) * Math.pow(RECOIL.lenRef / R.bl, RECOIL.lenExp) * (R.mount ?? 1) * recoilStance(o) * recoilMods(o.gun).yaw;
+}
+// Выстрел: увести. 'aim' — взгляд (камера по взгляду) или поправка прицела к курсору (aimRot, обычная камера), обратно не возвращается;
+// 'barrel' — только ствол (recoilYaw), взгляд на месте
+function recoilKick(o) {
+  const R = RECOIL_W[o.gun.t];
+  if (!R || !RECOIL.on) return;
+  const d = recoilShot(o) * ((R.side || 0) * recoilMods(o.gun).side + RECOIL.rand * gauss()) * MRAD;
+  if (OPTS.recoil === 'aim') {
+    if (lookCam(o)) o.a = angDiff(o.a + d, 0); else o.aimRot = (o.aimRot || 0) + d;
+  } else o.recoilYaw = (o.recoilYaw || 0) + d;
+}
+// Каждый кадр (свой боец): в варианте 'barrel' стрелок сам возвращает ствол к взгляду
+function recoilReturn(o, dt) {
+  if (!o.recoilYaw) return;
+  const R = RECOIL_W[o.gun.t] || {}, ret = (R.ret ?? WEAPONS[o.gun.t].recover) * recoilMods(o.gun).ret;
+  o.recoilYaw *= Math.exp(-ret * dt);
+  if (Math.abs(o.recoilYaw) < 1e-5) o.recoilYaw = 0;
+}
+// P — переключить вариант (отладка); увод обоих вариантов сбрасывается
+function toggleRecoilMode(o) {
+  OPTS.recoil = OPTS.recoil === 'aim' ? 'barrel' : 'aim';
+  saveOpts();
+  if (o) { o.recoilYaw = 0; o.aimRot = 0; }
+  toast(OPTS.recoil === 'aim' ? 'ОТДАЧА: УВОД ПРИЦЕЛА — тянуть мышью обратно (P)' : 'ОТДАЧА: УВОД СТВОЛА — стрелок возвращает сам (P)', 2);
+}
+// Куда на экране смотрит ствол (перекрестие): курсор, повёрнутый вокруг бойца на поправку прицела и увод ствола
+function aimScreenPoint(p) {
+  const r = (p.aimRot || 0) + (p.recoilYaw || 0);
+  if (!r) return { x: mouse.x, y: mouse.y };
+  const s = worldToScreen(p.x, p.y), dx = mouse.x - s.x, dy = mouse.y - s.y, c = Math.cos(r), sn = Math.sin(r);
+  return { x: s.x + dx * c - dy * sn, y: s.y + dx * sn + dy * c };
 }
 
 function updateGun(o, dt) {

@@ -42,6 +42,7 @@ function makeGun(type, mags) {
     pouch: W.cls === 'shotgun' ? [mags ?? W.shells] : Array((mags ?? W.mags) - 1).fill(W.mag),
     cd: 0, reloadT: 0, reloadDur: 0, reloadEmpty: false,
     bloom: 0, lastShot: -9,
+    mods: [],                            // модификации (WEAPON_MODS; с флагом recoil — меняют отдачу)
   };
 }
 

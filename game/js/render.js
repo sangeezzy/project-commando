@@ -81,7 +81,8 @@ function render(dt = 1 / 60) {
 // ---------- Лазер (Shift+N, камера по взгляду): от дула по взгляду до стены / закрытой двери или человека, не дальше видимости ----------
 // Над низкими укрытиями проходит (ствол выше). Видно только своему бойцу (рисуется у себя). G.laserDot — точка на экране (метка попадания)
 function laserEnd(p) {
-  const ca = Math.cos(p.a), sa = Math.sin(p.a), W = WEAPONS[p.gun.t];
+  const ba = p.a + (p.recoilYaw || 0);               // по стволу: с уводом отдачей
+  const ca = Math.cos(ba), sa = Math.sin(ba), W = WEAPONS[p.gun.t];
   const ex = p.leanPx ? p.lx : p.x, ey = p.leanPx ? p.ly : p.y;
   const ox = ex + ca * M(0.25 + W.len / 40), oy = ey + sa * M(0.25 + W.len / 40);
   let R = opaqueTile(Math.floor(ox / TILE), Math.floor(oy / TILE)) || !los(ex, ey, ox, oy) ? 0
@@ -518,7 +519,7 @@ function drawPerson(o, alpha) {
   ctx.save();
   if (pistol) ctx.translate(7 - ads, 2.5 - ads * 2);         // пистолет — двумя руками перед грудью
   else ctx.translate(2 - ads * 1, 5 - ads * 4);              // полноразмерное — у правого плеча
-  ctx.rotate(rot + swK * 0.9);
+  ctx.rotate(rot + swK * 0.9 + (o.recoilYaw || 0));        // увод ствола отдачей (вариант 'barrel')
   drawGunShape(g.t, mo);
   ctx.restore();
   // полноразмерное в левой руке (выхвачен пистолет): висит стволом вниз вдоль левого бока — тоже вертикально, в ракурсе

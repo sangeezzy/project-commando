@@ -4,7 +4,8 @@ window.__result = (() => {
   const W = WEAPONS.m4a1;
   const p = me();
   G.enemies = [];
-  const sim = (n, dt, fn) => { for (let i = 0; i < n; i++) { fn && fn(i); updateGun(p, dt); G.time += dt; } };
+  RECOIL.on = false;                    // чистая баллистика: увод ствола отдачей — в тесте recoil
+  const sim =(n, dt, fn) => { for (let i = 0; i < n; i++) { fn && fn(i); updateGun(p, dt); G.time += dt; } };
   run('темп и режимы', () => {
     p.gun = makeGun('m4a1', W.mags);
     const g = p.gun;
@@ -78,7 +79,8 @@ window.__result = (() => {
     p.speed = 0; p.gun.bloom = 0;
     for (let i = 0; i < 10; i++) { p.gun.chamber = 1; fireRound(p, 0); }
     G.bullets = [];
-    check('очередь 10 выстрелов раскачивает оружие (отдача ≥ 30 мрад)', p.gun.bloom >= 30, p.gun.bloom.toFixed(1));
+    check('очередь 10 выстрелов раскачивает оружие (разброс ≥ 20 мрад; у игрока прирост ×RECOIL.bloomK)', p.gun.bloom >= 20 &&
+      Math.abs(p.gun.bloom - Math.min(W.maxBloom, 10 * W.kick * RECOIL.bloomK)) < 1e-6, p.gun.bloom.toFixed(1));
     updateGun(p, 0.5);
     check('за 0,5 с отдача почти гаснет', p.gun.bloom < 2, p.gun.bloom.toFixed(2));
   });

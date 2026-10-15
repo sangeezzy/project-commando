@@ -6,6 +6,7 @@ window.__result = (() => {
   G.enemies = [t];
   const vital = WEAPONS.m4a1.vital;
   WEAPONS.m4a1.vital = 0;                         // считаем урон без случайных смертельных
+  RECOIL.on = false;                              // прицельные выстрелы: без увода ствола отдачей
   // n прицельных выстрелов без разброса стрелка; цель бессмертна, ИИ не думает
   function volley(shooter, target, n, spread = 0) {
     let hits = 0, dmg = 0;

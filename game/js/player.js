@@ -56,7 +56,9 @@ function camMove(mx, my) {
 function lookAim(p) {
   const dx = mouse.dx || 0, dy = mouse.dy || 0;
   mouse.dx = mouse.dy = 0;
-  if (!lookCam(p)) { const w = screenToWorld(mouse.x, mouse.y); p.a = Math.atan2(w.y - p.y, w.x - p.x); return; }
+  // обычная камера: на курсор (+ поправка прицела отдачей, вариант 'aim': игрок тянет мышью обратно)
+  if (!lookCam(p)) { const w = screenToWorld(mouse.x, mouse.y); p.a = angDiff(Math.atan2(w.y - p.y, w.x - p.x) + (p.aimRot || 0), 0); return; }
+  p.aimRot = 0;
   p.a = angDiff(p.a + dx * CAM.turn * (TouchUI.on ? 1 : OPTS.turnK), 0);     // мышь — с чувствительностью из меню (сенсор — в touchFrame)
   mouse.x = VW / 2;
   mouse.y = laserOn(p) ? VH * 0.4 : clamp((mouse.y || 0) + dy, 30, VH * (1 - CAM.bottom) - 40);     // с лазером — вертикаль не нужна
@@ -83,6 +85,8 @@ function controlLocal(p, dt) {
     toast(OPTS.laser ? 'ПРИЦЕЛ: ЛАЗЕР (Shift+N)' + (OPTS.cam === 'look' ? '' : ' — в камере по взгляду (N)') : 'ПРИЦЕЛ: ПЕРЕКРЕСТИЕ (Shift+N)', 1.6);
   } else if (pressed.KeyN) setCamMode(OPTS.cam === 'look' ? 'std' : 'look');      // N — камера: обычная / по взгляду (тест)
   if (pressed.KeyK) stepSight(keys.ShiftLeft || keys.ShiftRight ? 1 : -1);   // K / Shift+K — видимость (хост)
+  if (pressed.KeyP) toggleRecoilMode(p);                                    // P — вариант отдачи (отладка): увод ствола / прицела
+  recoilReturn(p, dt);                                                      // 'barrel': стрелок возвращает ствол
   if (p.dead) { clearPressed(); return; }
   if (p.down) { crawl(p, dt); clearPressed(); return; }
   const g = p.gun;
