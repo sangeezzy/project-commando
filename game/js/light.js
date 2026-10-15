@@ -324,7 +324,7 @@ function drawLampDaylight(clip) {
   ctx.save();
   if (clip) ctx.clip(clip);
   ctx.globalCompositeOperation = 'lighter';
-  for (const o of [...G.players, ...G.enemies]) {
+  for (const o of allPeople()) {
     if (!lampOn(o) || !onScreen(o.x, o.y, LIGHT.lampRange)) continue;
     const k = LIGHT.lampDay * clamp(ambientAt(o.x, o.y), 0, 1);
     if (k > 0.005) drawLamp(ctx, o, k);
@@ -352,7 +352,7 @@ function drawLighting(cm, view, lampClip = view) {
   g.globalCompositeOperation = 'lighter';
   g.save();
   if (lampClip) g.clip(lampClip);
-  for (const o of [...G.players, ...G.enemies]) if (lampOn(o) && onScreen(o.x, o.y, LIGHT.lampRange)) drawLamp(g, o);
+  for (const o of allPeople()) if (lampOn(o) && onScreen(o.x, o.y, LIGHT.lampRange)) drawLamp(g, o);
   if (G.muzzle) for (const m of G.muzzle) if (onScreen(m.x, m.y, LIGHT.flashR)) drawFlashLight(g, m);
   g.restore();
   const gain = G.expo ? G.expo.gain : 1;
@@ -381,15 +381,39 @@ function drawLighting(cm, view, lampClip = view) {
   ctx.imageSmoothingEnabled = true;
   ctx.globalCompositeOperation = 'multiply';
   ctx.drawImage(lit, r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0, r.x0 * q, r.y0 * q, (r.x1 - r.x0) * q, (r.y1 - r.y0) * q);
-  if (gain > 1 + 1e-3 && !simple) {
+  // засветка — только там, где g·L может быть больше 1 (brightScreenRect): полноэкранное сложение — самое дорогое в тёмной сцене
+  const ro = gain > 1 + 1e-3 && !simple && LIGHT.overexpose > 0 ? brightScreenRect(cm, q, w, h, gain) : null;
+  if (ro) {
     // засветка (g·L − 1) / R: brightness(k) + contrast(c) дают c·k·L + 0,5 − 0,5c, откуда c = 1 + 2/R, k = g / (R·c)
     const R = LIGHT.overRange, c = 1 + 2 / R;
     const over = lightPass(1, w, h, `brightness(${gain / (R * c)}) contrast(${c})`);
     ctx.globalCompositeOperation = 'lighter';
     ctx.globalAlpha = LIGHT.overexpose;
-    ctx.drawImage(over, 0, 0, w, h, 0, 0, w * q, h * q);
+    ctx.drawImage(over, ro.x0, ro.y0, ro.x1 - ro.x0, ro.y1 - ro.y0, ro.x0 * q, ro.y0 * q, (ro.x1 - ro.x0) * q, (ro.y1 - ro.y0) * q);
   }
   ctx.restore();
+}
+
+// Прямоугольник буфера света (в его пикселях), где возможна засветка (g·L > 1, L > 1/g): клетки с освещённостью выше порога
+// (с запасом на растекание и размытие), фонари (до LIGHT.lampRange) и вспышки выстрелов (LIGHT.flashR); null — засветки нет нигде.
+// Вне прямоугольника засветка и так нулевая (картинка та же — тест renderopt), а сложение на весь экран без видеокарты стоит ~7 мс.
+function brightScreenRect(cm, q, w, h, gain) {
+  const th = 0.98 / gain;                                    // с запасом: размытый буфер чуть ярче клеток у границ
+  const sp = screenPolyWorld(0).pts;
+  const wx0 = Math.min(...sp.map((p) => p.x)), wy0 = Math.min(...sp.map((p) => p.y)), wx1 = Math.max(...sp.map((p) => p.x)), wy1 = Math.max(...sp.map((p) => p.y));
+  let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+  const add = (ax, ay, bx, by) => { if (ax < x0) x0 = ax; if (ay < y0) y0 = ay; if (bx > x1) x1 = bx; if (by > y1) y1 = by; };
+  const tx0 = Math.max(0, Math.floor(wx0 / TILE) - 1), ty0 = Math.max(0, Math.floor(wy0 / TILE) - 1);
+  const tx1 = Math.min(map.w - 1, Math.floor(wx1 / TILE) + 1), ty1 = Math.min(map.h - 1, Math.floor(wy1 / TILE) + 1);
+  for (let y = ty0; y <= ty1; y++) for (let x = tx0; x <= tx1; x++) if (map.light[y * map.w + x] >= th) add(x * TILE, y * TILE, (x + 1) * TILE, (y + 1) * TILE);
+  const R = LIGHT.lampRange;
+  for (const o of allPeople()) if (lampOn(o) && onScreen(o.x, o.y, R)) add(o.x - R, o.y - R, o.x + R, o.y + R);
+  if (G.muzzle) for (const m of G.muzzle) add(m.x - LIGHT.flashR, m.y - LIGHT.flashR, m.x + LIGHT.flashR, m.y + LIGHT.flashR);
+  if (x1 < x0) return null;
+  const mg = 4 * TILE, cs = [[x0 - mg, y0 - mg], [x1 + mg, y0 - mg], [x0 - mg, y1 + mg], [x1 + mg, y1 + mg]].map(([x, y]) => worldToScreen(x, y, cm));
+  const r = { x0: Math.max(0, Math.floor(Math.min(...cs.map((p) => p.x)) / q)), y0: Math.max(0, Math.floor(Math.min(...cs.map((p) => p.y)) / q)),
+    x1: Math.min(w, Math.ceil(Math.max(...cs.map((p) => p.x)) / q)), y1: Math.min(h, Math.ceil(Math.max(...cs.map((p) => p.y)) / q)) };
+  return r.x1 > r.x0 && r.y1 > r.y0 ? r : null;
 }
 
 // Прямоугольник буфера света (в его пикселях), где на экране не полный свет: клетки с освещённостью < 1 (с запасом на растекание

@@ -26,7 +26,17 @@ const G = {
 let nextId = 1;
 const me = () => G.players.find((q) => q.slot === G.mySlot);
 const isAuth = () => G.role !== 'guest';             // хост или одиночная игра: мир считается здесь
-const allPeople = () => [...G.players, ...G.enemies];
+// Все бойцы (отряд + противники): один массив на кадр, пока списки те же (зовут десятки раз за кадр — ИИ, свет, пули, машины;
+// новый массив на каждый вызов — лишний мусор). Списки меняются только заменой (=) или push — видно по ссылке и длине.
+// Результат не менять (только читать).
+let peopleA = null, peopleB = null, peopleNA = -1, peopleNB = -1, peopleAll = [];
+const allPeople = () => {
+  const a = G.players, b = G.enemies;
+  if (a !== peopleA || b !== peopleB || a.length !== peopleNA || b.length !== peopleNB) {
+    peopleAll = a.concat(b); peopleA = a; peopleB = b; peopleNA = a.length; peopleNB = b.length;
+  }
+  return peopleAll;
+};
 const teamOf = (side) => (side === 'e' ? G.enemies : G.players);
 const foesOf = (o) => (o.side === 'e' ? G.players : G.enemies);
 const aiList = () => [...G.enemies, ...G.players.filter((q) => q.ai)];

@@ -863,7 +863,8 @@ function hunt(e, dt) {
     // место цели сместилось (разведданные, новый шум) — путь к старому месту больше не годится
     if (e.goal && Math.hypot(e.goal.x - e.lastX, e.goal.y - e.lastY) > M(3)) e.goal = null;
     // бот отряда — и через запертые двери, которые можно выбить (выбьет: противник за ней)
-    e.goal = e.goal || bfsFrom(e.lastX, e.lastY, 1e9, e.side === 'p' ? 'breach' : true);
+    // противники — общий кэш (fieldTo: несколько ищут одно место — один обход карты на всех; двери сбрасывают кэш)
+    e.goal = e.goal || (e.side === 'p' ? bfsFrom(e.lastX, e.lastY, 1e9, 'breach') : fieldTo(e.lastX, e.lastY));
     const step = fieldStep(e, e.goal);
     if (step !== null && Math.hypot(e.lastX - e.x, e.lastY - e.y) > M(1.5)) {
       const lead = stackLead(e, step);
@@ -908,7 +909,7 @@ function idle(e, dt) {
     if (e.investigate) {
       // идём проверить, что там было
       if (e.notice > 0.4) { e.want = e.look; return; }   // ещё присматривается
-      e.goal = e.goal || bfsFrom(e.lastX, e.lastY, 1e9, true);
+      e.goal = e.goal || fieldTo(e.lastX, e.lastY);              // общий кэш обходов (как в hunt)
       const step = fieldStep(e, e.goal);
       if (step !== null && Math.hypot(e.lastX - e.x, e.lastY - e.y) > M(1.5)) {
         if (tryCornerPeek(e, step)) return;

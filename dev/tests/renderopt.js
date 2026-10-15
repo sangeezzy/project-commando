@@ -24,6 +24,24 @@ window.__result = (() => {
     }
   });
 
+  run('засветка: только где возможна (brightScreenRect) — кадр тот же', () => {
+    startRange();
+    G.noFog = true; G.shake = 0; G.weather = null;
+    const p = me(), bright = brightScreenRect;
+    for (const [tx, ty, gain, lamp, name] of [[20, 14, 3, false, 'полумрак, глаз привык (×3)'], [20, 14, 6, true, 'темно, свой фонарь (×6)'], [36, 46, 2, false, 'улица, ×2']]) {
+      at(p, tx, ty); G.cam.x = p.x; G.cam.y = p.y; p.lamp = lamp;
+      for (let i = 0; i < 30; i++) { G.expo = { gain }; render(1 / 60); }
+      const rnd = () => { G.time = 100; G.expo = { gain }; Math.random = (() => { let s = 1; return () => (s = (s * 16807) % 2147483647) / 2147483647; })(); };
+      rnd(); const a = shot();
+      window.brightScreenRect = (cm, q, w, h) => ({ x0: 0, y0: 0, x1: w, y1: h });     // как раньше: на весь экран
+      rnd(); const b = shot();
+      window.brightScreenRect = bright;
+      const d = diff(a, b);
+      check(`${name}: совпадает с засветкой на весь экран`, d.max <= 2, d);
+    }
+    p.lamp = false;
+  });
+
   run('карта кусками', () => {
     startMap('race', 0, [{ slot: 0, human: true, name: 'Т' }], false);
     G.noFog = true; render(1 / 60);

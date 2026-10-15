@@ -439,13 +439,16 @@ function castRay(ox, oy, dx, dy, maxR, opq = opaqueTile) {
 // BFS по клеткам: расстояние «по пути». По нему идёт звук шагов и ходят ИИ.
 // doors — закрытые незапертые двери проходимы (ИИ откроет); 'breach' — и запертые, которые можно выбить (бот в бою);
 // без него закрытая дверь — стена (так идёт звук шагов)
+// Очередь обхода — общая (не возвращается наружу): не выделять на каждый вызов массив на всю карту
+let bfsQ = new Int32Array(0);
 function bfsFrom(x, y, maxD = 1e9, doors = false) {
-  const { w, h } = map;
-  const ok = (i) => map.grid[i] === T.FLOOR || (doors && map.grid[i] === T.DOOR && walkable(i % w, (i / w) | 0, doors));
+  const { w, h } = map, g = map.grid, FLOOR = T.FLOOR, DOOR = T.DOOR;
+  const ok = (i) => g[i] === FLOOR || (doors && g[i] === DOOR && walkable(i % w, (i / w) | 0, doors));
   const f = new Int32Array(w * h).fill(1e9);
   const sx = Math.floor(x / TILE), sy = Math.floor(y / TILE);
   if (sx < 0 || sy < 0 || sx >= w || sy >= h) return { f, x, y, doors };
-  const q = new Int32Array(w * h);
+  if (bfsQ.length < w * h) bfsQ = new Int32Array(w * h);
+  const q = bfsQ;
   let qh = 0, qt = 0;
   f[sy * w + sx] = 0; q[qt++] = sy * w + sx;
   while (qh < qt) {
@@ -467,28 +470,34 @@ function soundField(x, y, maxD) {
   const f = new Int32Array(w * h).fill(1e9), door = new Int16Array(w * h).fill(-1);
   const sx = Math.floor(x / TILE), sy = Math.floor(y / TILE);
   if (sx < 0 || sy < 0 || sx >= w || sy >= h) return { f, door };
-  const buckets = Array.from({ length: maxD + 1 }, () => []);
-  f[sy * w + sx] = 0; buckets[0].push(sy * w + sx);
+  // корзины по расстоянию — по требованию; соседи — без массива на каждую клетку (звук шагов считается часто)
+  const buckets = [];
+  const g = map.grid, DOOR = T.DOOR, FLOOR = T.FLOOR, LOW = T.LOW;
+  const relax = (i, j, dd) => {
+    const t = g[j];
+    let c = 1, via = door[i];
+    if (t === DOOR) {
+      const d = map.doorAt.get(j), s = DOOR_TYPES[d.type].sound;
+      if (s < 0) return;
+      c += s; via = d.id;
+    } else if (t !== FLOOR && t !== LOW) return;
+    const nd = dd + c;
+    if (nd > maxD || nd >= f[j]) return;
+    f[j] = nd; door[j] = via;
+    (buckets[nd] || (buckets[nd] = [])).push(j);
+  };
+  f[sy * w + sx] = 0; buckets[0] = [sy * w + sx];
   for (let dd = 0; dd <= maxD; dd++) {
     const b = buckets[dd];
+    if (!b) continue;
     for (let k = 0; k < b.length; k++) {
       const i = b[k];
       if (f[i] !== dd) continue;
       const x0 = i % w;
-      for (const j of [x0 + 1 < w ? i + 1 : -1, x0 > 0 ? i - 1 : -1, i + w < w * h ? i + w : -1, i - w >= 0 ? i - w : -1]) {
-        if (j < 0) continue;
-        const t = map.grid[j];
-        let c = 1, via = door[i];
-        if (t === T.DOOR) {
-          const d = map.doorAt.get(j), s = DOOR_TYPES[d.type].sound;
-          if (s < 0) continue;
-          c += s; via = d.id;
-        } else if (t !== T.FLOOR && t !== T.LOW) continue;
-        const nd = dd + c;
-        if (nd > maxD || nd >= f[j]) continue;
-        f[j] = nd; door[j] = via;
-        buckets[nd].push(j);
-      }
+      if (x0 + 1 < w) relax(i, i + 1, dd);
+      if (x0 > 0) relax(i, i - 1, dd);
+      if (i + w < w * h) relax(i, i + w, dd);
+      if (i - w >= 0) relax(i, i - w, dd);
     }
   }
   return { f, door };

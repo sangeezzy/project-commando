@@ -34,6 +34,8 @@ f.onload = async () => {
       'drawVehPrompt', 'touchButtons', 'drawTouch', 'drawBarksOver', 'applyCarState', 'guestVehicles'];
     // ?skip=имя,имя — отключить функции (проверить, куда уходит время)
     for (const nm of (q.get('skip') || '').split(',').filter(Boolean)) w[nm] = () => {};
+    // ?js=код — выполнить перед замером (настройки для сравнения, например LIGHT.overexpose = 0)
+    if (q.get('js')) w.eval(q.get('js'));              // в окне игры (фрейм)
     for (const nm of names) {
       const fn = w[nm];
       if (typeof fn !== 'function') continue;

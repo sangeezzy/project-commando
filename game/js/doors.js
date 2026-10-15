@@ -45,7 +45,7 @@ function syncDoorTile(d) {
 
 // Кто-то стоит в проёме — закрыть нельзя
 function doorBlocked(d) {
-  for (const o of [...G.players, ...G.enemies]) {
+  for (const o of allPeople()) {
     if (o.dead) continue;
     const cx = clamp(o.x, d.x * TILE, d.x * TILE + TILE), cy = clamp(o.y, d.y * TILE, d.y * TILE + TILE);
     if (Math.hypot(o.x - cx, o.y - cy) < PR) return true;

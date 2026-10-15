@@ -89,11 +89,14 @@ function weatherFx(dt) {
 // Дождь (положения — от времени, без хранения частиц). Число струй — по площади экрана (на телефоне холст другой).
 // Слабый — тонкие короткие струи. Сильный (rain > 0,5, heavy 0…1): гуще, второй слой — ближние длинные яркие струи,
 // брызги на земле (привязаны к миру: при движении камеры не «едут»), сумрак. Упрощённый свет (OPTS.simpleLight) — вдвое реже.
-function drawRain(rain, cm = CAMM) {
+// Сумрак ливня (поверх пелены): цвет — rainDim(rain) или пусто
+const rainDim = (rain) => { const heavy = clamp((rain - 0.5) / 0.5, 0, 1); return heavy > 0 ? `rgba(14,20,30,${0.16 * heavy})` : null; };
+function drawRain(rain, cm = CAMM, dimDone = false) {
   const t = G.time, heavy = clamp((rain - 0.5) / 0.5, 0, 1);
   const area = (VW * VH) / (1280 * 720), lite = OPTS.simpleLight ? 0.5 : 1;
   const px = Math.max(1, VH / 720);                          // толщина и длина — по размеру холста
-  if (heavy > 0) { ctx.fillStyle = `rgba(14,20,30,${0.16 * heavy})`; ctx.fillRect(0, 0, VW, VH); }
+  // сумрак: уже в буфере пелены (dimDone — один полноэкранный проход вместо двух) или здесь
+  if (heavy > 0 && !dimDone) { ctx.fillStyle = rainDim(rain); ctx.fillRect(0, 0, VW, VH); }
   // дальний слой
   const n = Math.round((260 * rain + 380 * heavy) * area * lite);
   ctx.strokeStyle = `rgba(190,200,215,${0.18 + 0.2 * rain})`; ctx.lineWidth = px;
@@ -152,6 +155,7 @@ const VEIL = { edge: 2, edgePx: 20, capped: 0.88 };
 function drawWeather(m = CAMM, p = null) {
   const w = G.weather, vis = w ? w.vis : 1, fog = w ? w.fog : 0, sk = sightK();
   if (!w && sk > 0.995) return;
+  let dimDone = false;
   ctx.save();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   // дымка — вокруг глаз бойца: дальше VIS_BASE × vis противников не различить (playerSees), там же на экране — почти сплошная пелена;
@@ -174,9 +178,12 @@ function drawWeather(m = CAMM, p = null) {
     gr.addColorStop(1 - band, `rgba(${c},${aMax * 0.3})`);
     gr.addColorStop(1, `rgba(${c},${aMax})`);
     tg.fillStyle = gr; tg.fillRect(0, 0, VW / q + 1, VH / q + 1);
+    // сумрак ливня — в тот же буфер поверх пелены (как раньше, отдельным слоем сверху): на экран — один проход вместо двух
+    const dim = w && w.rain > 0.02 ? rainDim(w.rain) : null;
+    if (dim) { tg.fillStyle = dim; tg.fillRect(0, 0, VW / q + 1, VH / q + 1); dimDone = true; }
     ctx.imageSmoothingEnabled = true; ctx.drawImage(veilC, 0, 0, veilC.width, veilC.height, 0, 0, veilC.width * q, veilC.height * q);
   }
-  if (w && w.rain > 0.02) drawRain(w.rain, m);
+  if (w && w.rain > 0.02) drawRain(w.rain, m, dimDone);
   if (w && w.flash > 0.01) { ctx.fillStyle = `rgba(235,240,255,${w.flash * 0.55})`; ctx.fillRect(0, 0, VW, VH); }
   ctx.restore();
 }

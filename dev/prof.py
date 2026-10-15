@@ -20,6 +20,7 @@ import threading
 import time
 from functools import partial
 from pathlib import Path
+from urllib.parse import quote
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from run_tests import find_chrome, free_port  # noqa: E402
@@ -45,9 +46,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
 
 
-def profile(chrome, port, scene, n, size, skip='', gpu=False, raf=False):
+def profile(chrome, port, scene, n, size, skip='', gpu=False, raf=False, js=''):
     w, h = size
-    url = f'http://127.0.0.1:{port}/dev/prof.html?scene={scene}&n={n}&skip={skip}' + ('&raf=1' if raf else '')
+    url = f'http://127.0.0.1:{port}/dev/prof.html?scene={scene}&n={n}&skip={skip}' + ('&raf=1' if raf else '') + ('&js=' + quote(js) if js else '')
     prof = tempfile.mkdtemp()
     Handler.report = None
     cmd = [chrome, '--headless=new', *([] if gpu else ['--disable-gpu']), f'--user-data-dir={prof}', '--no-proxy-server',
@@ -72,6 +73,7 @@ def main():
     ap.add_argument('--skip', default='', help='через запятую: отключить функции (например drawFog)')
     ap.add_argument('--gpu', action='store_true', help='не отключать видеокарту (ближе к настоящему браузеру)')
     ap.add_argument('--raf', action='store_true', help='настоящие кадры с выводом на экран (итог — кадров в секунду)')
+    ap.add_argument('--js', default='', help='код перед замером (сравнить настройки, например \"LIGHT.overexpose = 0\")')
     a = ap.parse_args()
     size = tuple(int(v) for v in a.size.split('x'))
     chrome = find_chrome()
@@ -80,7 +82,7 @@ def main():
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
         for scene in [a.scene] if a.scene else ['fight', 'dark', 'surv', 'assault', 'race']:
-            r = profile(chrome, port, scene, a.n, size, a.skip, a.gpu, a.raf)
+            r = profile(chrome, port, scene, a.n, size, a.skip, a.gpu, a.raf, a.js)
             if not r:
                 print(scene, ': нет результата (Chrome завис или страница не загрузилась)')
                 continue

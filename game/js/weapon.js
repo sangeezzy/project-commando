@@ -271,7 +271,7 @@ const ammoTotal = (g) => g.mag + g.chamber + g.pouch.reduce((s, n) => s + n, 0);
 // ---------- Пули ----------
 // Скорость ~29 000 px/с: за кадр пуля пролетает экран, поэтому идём мелкими шагами.
 function updateBullets(dt) {
-  const people = [...G.players, ...G.enemies].filter((o) => !o.dead);
+  const people = allPeople().filter((o) => !o.dead);
   for (let i = G.bullets.length - 1; i >= 0; i--) {
     const b = G.bullets[i];
     const sp = Math.hypot(b.vx, b.vy);
@@ -352,7 +352,7 @@ function hitPerson(o, b) {
   const ar = armorHit(o, W, k);
   if (ar === 'stop') { dmg *= ARMOR_HIT.blunt; vital = false; }
   else if (ar === 'through') { dmg *= ARMOR_HIT.through; vital = vital && Math.random() < 0.5; }
-  const shooter = [...G.players, ...G.enemies].find((q) => q.id === b.owner);
+  const shooter = allPeople().find((q) => q.id === b.owner);
   damagePerson(o, vital ? 999 : dmg, b.sx, b.sy, Math.atan2(b.vy, b.vx), shooter);
   if (shooter && !shooter.ai) emit(['hm', shooter.id, o.dead ? 1 : 0, ar === 'stop' ? 1 : 0]);
 }
