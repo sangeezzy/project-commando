@@ -510,7 +510,7 @@ const VEH_RANDOM = ['hatch', 'sedan', 'suv', 'van'];             // машины
 // rearGrip — запас сцепления задней оси (жёстче передняя подвеска: машина слегка недостаточно поворачиваема, как настоящие);
 // steerLim — на скорости угол колёс — до steerLim × предела сцепления (руль «водителя»)
 const VEH = { grip: 0.9, cs: 16, csF: 0.85, csR: 1.15, loadSens: 0.2, rearGrip: 1.08, steerLim: 1.2, crr: 0.013, brake: 9, engineBrake: 0.6, park: 4, vrev: 6, steerRate: 2.4,
-  exitSpeed: 2, enterR: 1.4, hitSpeed: 2.5, hitDmg: 14, crashSpeed: 6, crashDmg: 6, restitution: 0.15, engineZone: 0.27,
+  exitSpeed: 2, enterR: 1.4, hitSpeed: 2.5, hitDmg: 14, hitGap: 0.5,crashSpeed: 6, crashDmg: 6, restitution: 0.15, engineZone: 0.27,
   // колёса: пуля в колесо (зона wheelR вокруг ступицы) спускает его, если покрышки не пулестойкие; спущенное — сцепление оси ×flatGrip
   // (два — меньше), сопротивление качению +flatRes (на колесо), машину тянет в сторону спущенного (flatPull, рад руля)
   wheelR: 0.34, wheelW: 0.24, flatGrip: 0.62, flatRes: 0.05, flatPull: 0.035,

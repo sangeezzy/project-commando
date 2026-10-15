@@ -281,7 +281,9 @@ function carsCollide(a, b) {
   }
 }
 
-// Люди и машина: человека выталкивает из-под кузова; на скорости — наезд (урон по относительной скорости)
+// Люди и машина: человека выталкивает из-под кузова; на скорости — наезд (урон по скорости машины на человека).
+// Тот же человек — не чаще VEH.hitGap с (по времени, а не по кадрам касания). Центр уже внутри кузова (на скорости проскочил кромку) —
+// удар по всей скорости точки кузова, отбрасывает в сторону движения.
 function carPeople(c, dt) {
   const { hl, hw } = vSize(c);
   const drv = personById(c.seats[0]);
@@ -291,7 +293,8 @@ function carPeople(c, dt) {
     const cx = clamp(L.x, -hl, hl), cy = clamp(L.y, -hw, hw);
     let dx = L.x - cx, dy = L.y - cy, d = Math.hypot(dx, dy);
     if (d >= PR) continue;
-    if (d < 0.01) {                                            // центр внутри кузова — к ближайшей стороне
+    const inside = d < 0.01;
+    if (inside) {                                              // центр внутри кузова — к ближайшей стороне
       const ox = hl - Math.abs(L.x), oy = hw - Math.abs(L.y);
       if (ox < oy) { dx = Math.sign(L.x) || 1; dy = 0; d = -ox; } else { dx = 0; dy = Math.sign(L.y) || 1; d = -oy; }
     } else { dx /= d; dy /= d; }
@@ -299,13 +302,18 @@ function carPeople(c, dt) {
     const push = PR - d;
     if (q.net && !isAuth()) continue;
     moveCircle(q, n.x * push, n.y * push, PR);
-    const rel = -(c.vx * n.x + c.vy * n.y) / PX_M;            // скорость машины на человека
-    q.carHitT = Math.max(0, (q.carHitT || 0) - dt);
-    if (isAuth() && -rel > VEH.hitSpeed && !q.carHitT) {
-      q.carHitT = 0.5;
-      const dmg = (-rel - VEH.hitSpeed) * VEH.hitDmg;
-      damagePerson(q, dmg, c.x, c.y, Math.atan2(n.y, n.x), drv);
-      if (!q.dead) moveCircle(q, n.x * M(0.6), n.y * M(0.6), PR);
+    if (!isAuth() || (drv && ffBlocked(drv.side, q))) continue;      // огонь по своим выключен — свой водитель не ранит
+    // скорость точки кузова у человека (с вращением машины)
+    const rx = q.x - c.x, ry = q.y - c.y, w = c.w || 0;
+    const pvx = c.vx - w * ry, pvy = c.vy + w * rx, ps = Math.hypot(pvx, pvy) / PX_M;
+    const hitV = inside ? ps : Math.max(0, (pvx * n.x + pvy * n.y) / PX_M);
+    if (hitV > VEH.hitSpeed && G.time - (q.carHitAt ?? -9) > VEH.hitGap) {
+      q.carHitAt = G.time;
+      const dmg = (hitV - VEH.hitSpeed) * VEH.hitDmg;
+      // отбросить: вдоль нормали, а если внутри кузова — по ходу точки кузова
+      const kx = inside && ps > 0 ? pvx / PX_M / ps : n.x, ky = inside && ps > 0 ? pvy / PX_M / ps : n.y;
+      damagePerson(q, dmg, c.x, c.y, Math.atan2(ky, kx), drv);
+      if (!q.dead) moveCircle(q, kx * M(0.6), ky * M(0.6), PR);
     }
   }
 }

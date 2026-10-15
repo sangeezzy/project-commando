@@ -188,10 +188,10 @@ function updateMelee(o, dt) {
   k.t += dt;
   if (!k.hit && k.t >= KNIFE.hitAt) {
     k.hit = true;
-    // ближайший в секторе перед собой (свои тоже — нож не разбирает)
+    // ближайший в секторе перед собой (свои тоже — нож не разбирает; огонь по своим выключен — своих пропускает)
     let best = null, bd = KNIFE.range + PR;
     for (const t of allPeople()) {
-      if (t === o || t.dead) continue;
+      if (t === o || t.dead || ffBlocked(o.side, t)) continue;
       const d = Math.hypot(t.x - o.x, t.y - o.y);
       if (d > bd || Math.abs(angDiff(Math.atan2(t.y - o.y, t.x - o.x), o.a)) > KNIFE.arc || !los(o.x, o.y, t.x, t.y)) continue;
       bd = d; best = t;
@@ -241,10 +241,10 @@ function updateBullets(dt) {
       if (map.cars && map.cars.length && vehBullet(b, ux, uy, people)) { dead = true; break; }   // кузов, стёкла, двигатель, сидящие
       for (const o of people) {
         if (o.id === b.owner) continue;
-        const d = Math.hypot(o.x - b.x, o.y - b.y);
-        if (d < PR + 1 && !o.veh) { hitPerson(o, b); dead = true; break; }   // в машине — только через неё (vehBullet)
+        const d = Math.hypot(o.x - b.x, o.y - b.y), ff = ffBlocked(b.side, o);     // огонь по своим выключен — пуля проходит сквозь своих
+        if (!ff && d < PR + 1 && !o.veh) { hitPerson(o, b); dead = true; break; }   // в машине — только через неё (vehBullet)
         // высунувшиеся голова и плечо
-        if (Math.abs(o.lean || 0) > 0.25 && Math.hypot(o.lx - b.x, o.ly - b.y) < LEAN.headR) { hitPerson(o, b); dead = true; break; }
+        if (!ff && Math.abs(o.lean || 0) > 0.25 && Math.hypot(o.lx - b.x, o.ly - b.y) < LEAN.headR) { hitPerson(o, b); dead = true; break; }
         // свист и щелчок пролетевшей рядом пули (сверхзвук) — подавление
         if (d < M(2) && !b.near.includes(o.id)) {
           b.near.push(o.id);
@@ -279,7 +279,11 @@ function bulletHitsTile(b, tx, ty, t, people) {
   return false;
 }
 
+// Огонь по своим выключен в лобби (Lobby.ff, решает хост): бойца отряда не ранят свои — пули (проходят сквозь), нож, машина
+const ffBlocked = (side, o) => !Lobby.ff && side === 'p' && o.side === 'p';
+
 function hitPerson(o, b) {
+  if (ffBlocked(b.side, o)) return;      // сидящий в машине (vehBullet) — тоже
   const W = b.t;
   const m = b.dist / PX_M;
   const k = b.e * Math.max(0.3, 1 - W.dropPerM * m);

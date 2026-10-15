@@ -62,6 +62,7 @@ UNIT_TESTS = {
     'assault': 'bots=1',
     'execute': 'bots=1',
     'barks': '',
+    'ff': 'bots=1',
     'touch': 'touch=1',
     'app': 'touch=1&app=1',
     'opts': 'touch=1',

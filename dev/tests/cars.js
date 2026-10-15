@@ -188,6 +188,18 @@ window.__result = (() => {
     put(e, c.x + vSize(c).hl + PR - 2, c.y);
     for (let i = 0; i < 3; i++) { c.x += c.vx / 60; carPeople(c, 1 / 60); }
     check('наезд на 36 км/ч — человек ранен / убит, отброшен', e.hp < 100 || e.dead, e.hp);
+    // второй таран того же человека (прошло больше VEH.hitGap) — снова урон
+    const e2 = makeEnemy(0, 0, 0, null); e2.hp = 1000; G.enemies = [e2];
+    const ram = () => { put(e2, c.x + vSize(c).hl + PR - 2, c.y); for (let i = 0; i < 3; i++) { c.x += c.vx / 60; carPeople(c, 1 / 60); } };
+    ram(); const h1 = e2.hp;
+    G.time += VEH.hitGap + 0.1; ram();
+    check('второй таран того же человека — снова урон', h1 < 1000 && e2.hp < h1, [h1, e2.hp]);
+    // на скорости центр уже внутри кузова (проскочил кромку) — урон всё равно
+    const e3 = makeEnemy(0, 0, 0, null); e3.hp = 1000; G.enemies = [e3];
+    Object.assign(c, { vx: M(15), vy: 0, w: 0 });
+    put(e3, c.x + vSize(c).hl - 4, c.y + 3);
+    carPeople(c, 1 / 60);
+    check('человек внутри кузова на 54 км/ч — урон', e3.hp < 1000, e3.hp);
   });
 
   run('пули: кузов, сидящие, двигатель, свои', () => {
@@ -379,6 +391,9 @@ window.__result = (() => {
     check('вперёд по машине — вверх по экрану', f.y < o.y - 50 && Math.abs(f.x - o.x) < 10, [f.x - o.x, f.y - o.y]);
     let err = null; try { render(1 / 60); } catch (e2) { err = String(e2); }
     check('кадр с повёрнутой камерой — без ошибок', !err, err);
+    keys.KeyW = true; keys.KeyD = true; step(1);
+    check('камера за машиной: W — газ, D — руль вправо (не смешиваются поворотом камеры)', c.ctrl.thr === 1 && c.ctrl.steer === 1, [c.ctrl.thr, c.ctrl.steer]);
+    keys.KeyW = false; keys.KeyD = false; step(1);
     pressed.KeyC = true; step(1);
     check('C в машине — камера обычная', OPTS.carCam === 'std');
     for (let i = 0; i < 120; i++) step(1);

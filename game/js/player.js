@@ -101,8 +101,8 @@ function controlLocal(p, dt) {
     toast(OPTS.carCam === 'car' ? 'КАМЕРА: ЗА МАШИНОЙ (C)' : 'КАМЕРА: ОБЫЧНАЯ (C)', 1.4);
   } else if (pressed.KeyC) p.crouchToggle = !p.crouchToggle;
   let [mx, my, mk] = moveInput();
-  [mx, my] = camMove(mx, my);
-  if (p.veh) { vehControl(p, mx, my); mx = my = 0; }      // в машине: водитель — газ и руль, пассажир — сидит
+  if (p.veh) { vehControl(p, mx, my); mx = my = 0; }      // в машине: водитель — газ и руль (как нажато, без поворота камеры), пассажир — сидит
+  else [mx, my] = camMove(mx, my);
   if (busy || p.mg) mx = my = 0;      // отпирает, бьёт ногой или за пулемётом — стоит на месте
   const ml = Math.hypot(mx, my);
   if (ml) { mx /= ml; my /= ml; }

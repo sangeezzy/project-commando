@@ -20,7 +20,7 @@ const Net = {
 
 // Лобби: size мест (2–8, выбирает хост / одиночка в главном меню); human — занято человеком; ready — нажал «Готов»
 const SQUAD_MIN = 2, SQUAD_MAX = 8;
-const Lobby = { slots: [], bots: true, size: 4 };
+const Lobby = { slots: [], bots: true, size: 4, ff: true };     // ff — огонь по своим (решает хост в лобби; ffBlocked в weapon.js)
 const emptySlots = (n = Lobby.size) => Array.from({ length: clamp(n | 0, SQUAD_MIN, SQUAD_MAX) }, (_, slot) => ({ slot, human: false, name: '', ready: false }));
 
 function send(msg) {
@@ -156,7 +156,7 @@ function lobbyChanged() {
   if (G.role === 'host') {
     // голос — Opus, если его умеют все в комнате (иначе μ-law)
     Voice.useOpus = Voice.opusOk && [...Net.conns.values()].every((k) => k.op);
-    broadcast({ t: 'lobby', slots: Lobby.slots, bots: Lobby.bots, code: Net.code, addrs: Net.addrs, vop: Voice.useOpus ? 1 : 0 });
+    broadcast({ t: 'lobby', slots: Lobby.slots, bots: Lobby.bots, ff: Lobby.ff ? 1 : 0, code: Net.code, addrs: Net.addrs, vop: Voice.useOpus ? 1 : 0 });
   }
   if (G.state === 'lobby') renderLobby();
 }
@@ -246,7 +246,7 @@ function onGuestData(d, timeout, code) {
   }
   if (G.role !== 'guest') return;
   if (d.t === 'lobby') {
-    Lobby.slots = d.slots; Lobby.bots = d.bots; Net.addrs = d.addrs || Net.addrs; Voice.useOpus = !!d.vop && Voice.opusOk;
+    Lobby.slots = d.slots; Lobby.bots = d.bots; Lobby.ff = d.ff !== 0; Net.addrs = d.addrs || Net.addrs; Voice.useOpus = !!d.vop && Voice.opusOk;
     if (G.state === 'lobby') renderLobby();
   }
   else if (d.t === 'start') { hideMenu(); if (G.state === 'lobby') G.state = 'play'; }

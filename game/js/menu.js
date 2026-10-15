@@ -10,6 +10,7 @@ const slotsEl = document.getElementById('slots');
 const nameEl = document.getElementById('name');
 const botsChk = document.getElementById('botsChk');
 const lobbyBotsChk = document.getElementById('lobbyBots');
+const lobbyFFChk = document.getElementById('lobbyFF');
 
 function setStatus(t) { statusEl.textContent = t; }
 function hideMenu() { menuEl.classList.add('hidden'); canvas.classList.add('playing'); setStatus(''); }
@@ -69,6 +70,8 @@ function renderLobby() {
   voiceChk.checked = !!Voice.stream;
   voiceChk.disabled = G.role === 'solo';
   lobbyBotsChk.disabled = !isHost;
+  lobbyFFChk.checked = Lobby.ff;
+  lobbyFFChk.disabled = !isHost;
   const waiting = Lobby.slots.filter((s) => s.human && !s.ready).map((s) => s.name);
   lobbyStatusEl.textContent = !mine || !mine.ready ? 'Нажмите «Готов»'
     : waiting.length ? `Ждём готовности: ${waiting.join(', ')}`
@@ -94,10 +97,19 @@ lobbyBotsChk.addEventListener('change', () => {
   lobbyChanged();
 });
 
-// Позывной и галочка ботов сохраняются между запусками
+// огонь по своим: решает хост (одиночка) в лобби, запоминается; гостям — в сообщении лобби
+lobbyFFChk.addEventListener('change', () => {
+  if (G.role === 'guest') return;
+  Lobby.ff = lobbyFFChk.checked;
+  try { localStorage.setItem('pcr-ff', Lobby.ff ? '1' : '0'); } catch (e) { /* ignore */ }
+  lobbyChanged();
+});
+
+// Позывной, галочка ботов и огонь по своим сохраняются между запусками
 try {
   nameEl.value = localStorage.getItem('pcr-name') || '';
   botsChk.checked = localStorage.getItem('pcr-bots') !== '0';
+  Lobby.ff = localStorage.getItem('pcr-ff') !== '0';
 } catch (e) { /* ignore */ }
 function saveBots() { try { localStorage.setItem('pcr-bots', botsChk.checked ? '1' : '0'); } catch (e) { /* ignore */ } }
 botsChk.addEventListener('change', saveBots);
