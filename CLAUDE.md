@@ -488,6 +488,10 @@ python dev/run_tests.py --only m4,cover
 - Ветка `main`, удалённый репозиторий — `origin` = https://github.com/sangeezzy/project-commando (приватный, с 2026-10-15; метка `archive-prototypes` тоже там). Версия `GAME_VERSION` = `2026-10-21.ff`;
   .apk этой версии собран (`dist/commando-2026-10-21.ff.apk`, 2026-10-15, с огнём по своим и тараном). **Правило пользователя:** после любых
   изменений игры (`game/`) — поднять `GAME_VERSION` и пересобрать .apk (`dev/android/build_apk.py`).
+- Релизы GitHub (репозиторий публичный с 2026-10-15): метка `v<GAME_VERSION>`, файлы всегда с одними именами — `commando.apk` и
+  `commando-windows.zip` (`commando/` → `game/` из `dist/` после `dev/build.py`, `server/`, `Играть.bat`, README): README ссылается на
+  `releases/latest/download/<имя>`. `gh release create v… commando.apk commando-windows.zip --title "Commando …" --notes-file …`.
+  Первый — `v2026-10-21.ff`.
 - Список локальных серверов проверен только на одном ПК (серверы на разных портах, поддельный хост, headless Chrome) и тестами
   `netlocal`/`netjava` (протокол не сломан); с другими компьютерами, телефоном и через Radmin VPN — не проверялся. У пользователя
   `Разрешить подключения.bat` применён до появления UDP-правила (поиск по UDP к его ПК может не дойти — запустить ещё раз);
