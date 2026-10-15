@@ -35,6 +35,40 @@ window.__result = (() => {
     check('поворот камеры вернулся к нулю', Math.abs(G.camRot) < 0.01, G.camRot);
   });
 
+  run('лазер вместо перекрестия (Shift+N)', () => {
+    G.enemies.forEach(dummy);
+    OPTS.cam = 'look'; OPTS.laser = false; at(p, 36, 27); p.a = 0;
+    step(2);
+    keys.ShiftLeft = true; press('KeyN'); keys.ShiftLeft = false;
+    check('Shift+N — лазер, камера осталась по взгляду', OPTS.laser === true && OPTS.cam === 'look', [OPTS.laser, OPTS.cam]);
+    const y0 = mouse.y;
+    move(0, -80); step(1);
+    check('мышь по вертикали прицел не двигает', mouse.y === y0, [y0, mouse.y]);
+    const a0 = p.a;
+    move(100, 0); step(1);
+    check('мышь по горизонтали — по-прежнему поворот', Math.abs(angDiff(p.a, a0) - 100 * CAM.turn) < 1e-6);
+    let err = null; try { render(1 / 60); } catch (e) { err = String(e); }
+    check('кадр с лазером — без ошибок, точка лазера на экране', !err && G.laserDot && G.laserDot.y < VH * (1 - CAM.bottom), [err, G.laserDot]);
+    // упирается в стену: перед бойцом стена в 3 м — точка не дальше неё
+    let wx = -1;
+    for (let tx = 2; tx < map.w - 2 && wx < 0; tx++) for (let ty = 2; ty < map.h - 2; ty++)
+      if (tileAt(tx, ty) === T.WALL && [1, 2, 3, 4].every((d) => tileAt(tx - d, ty) === T.FLOOR)) { at(p, tx - 4, ty); wx = tx; break; }
+    p.a = 0; p.leanPx = 0;
+    const L = laserEnd(p);
+    check('лазер упирается в стену', wx > 0 && Math.abs(L.x - wx * TILE) < 2 && Math.abs(L.y - p.y) < 1, [wx * TILE, L.x]);
+    // упирается в человека на линии
+    at(p, 36, 27); p.a = 0;
+    const e = G.enemies[0]; e.dead = false; at(e, 42, 27);
+    const L2 = laserEnd(p);
+    check('лазер останавливается на человеке', walkable(42, 27) && Math.abs(L2.x - (e.x - PR)) < 1.5, [L2.x, e.x - PR]);
+    e.dead = true;
+    keys.ShiftLeft = true; press('KeyN'); keys.ShiftLeft = false;
+    check('Shift+N ещё раз — перекрестие', OPTS.laser === false);
+    render(1 / 60);
+    check('без лазера точки нет', !G.laserDot);
+    OPTS.cam = 'std';
+  });
+
   run('с прицелом камера по взгляду отдаляется', () => {
     OPTS.cam = 'look'; at(p, 36, 27);
     const vm = () => VH / G.zoom / PX_M;

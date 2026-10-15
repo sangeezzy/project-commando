@@ -37,6 +37,8 @@ function camMatrix(shX = 0, shY = 0) {
 let CAMM = [1, 0, 0, 1, 0, 0];
 // Камера по взгляду (OPTS.cam 'look'; не на сенсоре, не в машине): поворот — взгляд вверх, боец — внизу посередине
 const lookCam = (v) => OPTS.cam === 'look' && !!v && !v.veh;
+// Лазер вместо перекрестия (Shift+N, только в камере по взгляду): мышь по вертикали прицел не двигает
+const laserOn = (v) => OPTS.laser && lookCam(v);
 function setCamMode(m) {
   OPTS.cam = m;
   saveOpts();
@@ -56,7 +58,7 @@ function lookAim(p) {
   if (!lookCam(p)) { const w = screenToWorld(mouse.x, mouse.y); p.a = Math.atan2(w.y - p.y, w.x - p.x); return; }
   p.a = angDiff(p.a + dx * CAM.turn, 0);
   mouse.x = VW / 2;
-  mouse.y = clamp((mouse.y || 0) + dy, 30, VH * (1 - CAM.bottom) - 40);
+  mouse.y = laserOn(p) ? VH * 0.4 : clamp((mouse.y || 0) + dy, 30, VH * (1 - CAM.bottom) - 40);     // с лазером — вертикаль не нужна
 }
 const worldToScreen = (x, y, m = camMatrix()) => ({ x: m[0] * x + m[2] * y + m[4], y: m[1] * x + m[3] * y + m[5] });
 function screenToWorld(sx, sy) {
@@ -75,7 +77,10 @@ function controlLocal(p, dt) {
   // отладка (действует только на нажавшего): [ — бессмертие своего бойца (в сети — у хоста), ] — без тумана войны на своём экране
   if (pressed.BracketLeft) doAct(p, 'god');
   if (pressed.BracketRight) { G.noFog = !G.noFog; toast(G.noFog ? 'ОТЛАДКА: ТУМАН ВОЙНЫ ВЫКЛЮЧЕН (])' : 'ТУМАН ВОЙНЫ ВКЛЮЧЁН (])', 2); }
-  if (pressed.KeyN) setCamMode(OPTS.cam === 'look' ? 'std' : 'look');      // N — камера: обычная / по взгляду (тест)
+  if (pressed.KeyN && (keys.ShiftLeft || keys.ShiftRight)) {                // Shift+N — прицел в камере по взгляду: перекрестие / лазер
+    OPTS.laser = !OPTS.laser; saveOpts();
+    toast(OPTS.laser ? 'ПРИЦЕЛ: ЛАЗЕР (Shift+N)' + (OPTS.cam === 'look' ? '' : ' — в камере по взгляду (N)') : 'ПРИЦЕЛ: ПЕРЕКРЕСТИЕ (Shift+N)', 1.6);
+  } else if (pressed.KeyN) setCamMode(OPTS.cam === 'look' ? 'std' : 'look');      // N — камера: обычная / по взгляду (тест)
   if (pressed.KeyK) stepSight(keys.ShiftLeft || keys.ShiftRight ? 1 : -1);   // K / Shift+K — видимость (хост)
   if (p.dead) { clearPressed(); return; }
   if (p.down) { crawl(p, dt); clearPressed(); return; }

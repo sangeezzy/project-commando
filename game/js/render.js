@@ -66,6 +66,7 @@ function render(dt = 1 / 60) {
   if (view && !G.noFog) drawFog(p, view);
   if (G.noFog) drawAllEnemies();
   drawWeather(CAMM, p);
+  drawLaser(me());
   drawHubWorld();
   drawAssaultExit();
   drawTeamTags();
@@ -74,6 +75,39 @@ function render(dt = 1 / 60) {
   drawBarksOver();
   drawHUD();
   drawTouch();
+}
+
+// ---------- Лазер (Shift+N, камера по взгляду): от дула по взгляду до стены / закрытой двери или человека, не дальше видимости ----------
+// Над низкими укрытиями проходит (ствол выше). Видно только своему бойцу (рисуется у себя). G.laserDot — точка на экране (метка попадания)
+function laserEnd(p) {
+  const ca = Math.cos(p.a), sa = Math.sin(p.a), W = WEAPONS[p.gun.t];
+  const ex = p.leanPx ? p.lx : p.x, ey = p.leanPx ? p.ly : p.y;
+  const ox = ex + ca * M(0.25 + W.len / 40), oy = ey + sa * M(0.25 + W.len / 40);
+  let R = opaqueTile(Math.floor(ox / TILE), Math.floor(oy / TILE)) || !los(ex, ey, ox, oy) ? 0
+    : castRay(ox, oy, ca, sa, VIS_BASE * sightK() * visK());
+  for (const o of allPeople()) {
+    if (o === p || o.dead || o.veh) continue;
+    const rx = o.x - ox, ry = o.y - oy, t = rx * ca + ry * sa;
+    if (t < 0 || t > R) continue;
+    const d2 = rx * rx + ry * ry - t * t;
+    if (d2 < PR * PR) R = Math.max(0, t - Math.sqrt(PR * PR - d2));
+  }
+  return { ox, oy, x: ox + ca * R, y: oy + sa * R };
+}
+function drawLaser(p) {
+  G.laserDot = null;
+  if (!p || p.dead || p.down || !laserOn(p) || p.sprint || p.sw || p.melee || G.state !== 'play') return;   // бегом, при смене, с ножом — ствол опущен
+  const L = laserEnd(p), z = G.zoom, k = canShoot(p) ? 1 : 0.45;
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = `rgba(255,40,30,${0.32 * k})`; ctx.lineWidth = 1.6 / z;
+  ctx.beginPath(); ctx.moveTo(L.ox, L.oy); ctx.lineTo(L.x, L.y); ctx.stroke();
+  ctx.fillStyle = `rgba(255,60,40,${0.35 * k})`;
+  ctx.beginPath(); ctx.arc(L.x, L.y, 5 / z, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = `rgba(255,120,100,${0.95 * k})`;
+  ctx.beginPath(); ctx.arc(L.x, L.y, 2 / z, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+  G.laserDot = worldToScreen(L.x, L.y, CAMM);
 }
 
 // ---------- Двери и ключи ----------

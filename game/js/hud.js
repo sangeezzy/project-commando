@@ -209,6 +209,17 @@ function drawSlots(p, x, y) {
 
 // Перекрестие: зазор = реальный разброс (2σ) на дистанции до курсора
 function drawCrosshair(p) {
+  if (laserOn(p)) {                     // лазер (Shift+N) вместо перекрестия: метка попадания — у точки лазера
+    const q = G.laserDot;
+    if (G.hitmark && q) {
+      ctx.strokeStyle = G.hitmark.kill ? HUD_RED : G.hitmark.armor ? '#8fb4d8' : '#fff';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (const [sx, sy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) { ctx.moveTo(q.x + sx * 5, q.y + sy * 5); ctx.lineTo(q.x + sx * 11, q.y + sy * 11); }
+      ctx.stroke();
+    }
+    return;
+  }
   const w = screenToWorld(mouse.x, mouse.y);
   const d = Math.max(M(2), Math.hypot(w.x - p.x, w.y - p.y));
   const canFire = canShoot(p);
