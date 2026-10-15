@@ -3,7 +3,8 @@
 // Запуск: python dev/sim.py D:8 A:8 D:3   (вариант:число противников, по 12 раундов на каждый, параллельно)
 // Доп. параметры (sim.py: вариант:число:параметры, например D:4:arm=III,kit=rand,runs=24): arm — броня ботов (IIIA, III, III+, IV),
 // earm — броня противников, kit=rand — у всех случайные стволы и пистолеты (как на картах), runs — раундов,
-// recoil=0 — без отдачи у ИИ, recoil=bots — только у союзных ботов (RECOIL.bots / RECOIL.enemies; по умолчанию — у всех).
+// recoil=0 — без отдачи у ИИ, recoil=bots — только у союзных ботов (RECOIL.bots / RECOIL.enemies; по умолчанию — у всех),
+// bstart=1 — боты стартуют рядом с «игроком» в центре.
 window.__result = (() => {
   const qs = new URLSearchParams(location.search), cfgName = qs.get('cfg') || 'C', nEnemies = +(qs.get('n') || 8);
   if (qs.get('recoil') === '0') { RECOIL.bots = false; RECOIL.enemies = false; }
@@ -30,6 +31,8 @@ window.__result = (() => {
     const p = me(); p.hp = 1e12; T_.at(p, 32, 24); p.crouch = true; p.gun.chamber = 1; fireRound(p, 0);
     const bots = G.players.filter((q) => q.ai);
     for (const b of bots) { if (randKit) randomKit(b, rnd); giveArmor(b, arm); }
+    // bstart=1 — боты сразу рядом с «игроком» в центре (иначе — у старта на южном краю: идут к нему через карту)
+    if (qs.get('bstart') === '1') bots.forEach((b, i) => { const s = freeSpotNear((32 + [-2, 2, 0][i % 3]) * TILE, (24 + [1, 1, 2][i % 3]) * TILE); b.x = b.px = s.x; b.y = b.py = s.y; });
     for (const e of G.enemies) { if (randKit) randomKit(e, rnd); giveArmor(e, earm); }
     const wasDown = new Set();
     for (let i = 0; i < 120 * 60; i++) {
