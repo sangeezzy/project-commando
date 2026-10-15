@@ -70,6 +70,27 @@ window.__result = (() => {
     OPTS.cam = 'std';
   });
 
+  run('повёрнутая камера: у краёв экрана нет полос тумана', () => {
+    G.enemies.forEach(dummy);
+    OPTS.cam = 'look'; at(p, 36, 27);
+    const bad = [];
+    for (const a of [0, 0.4, 0.8, Math.PI / 2, 2.2, -1]) {
+      p.a = a; step(2);
+      const view = viewPolygon(p), eye = eyeOf(p);
+      ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0);
+      // точки у краёв экрана (отступ 12 px), которые глаз видит напрямую (без стен), — внутри многоугольника видимости
+      for (let i = 0; i <= 20; i++) for (const [sx, sy] of [[12 + (VW - 24) * i / 20, 12], [12 + (VW - 24) * i / 20, VH - 12], [12, 12 + (VH - 24) * i / 20], [VW - 12, 12 + (VH - 24) * i / 20]]) {
+        const w = screenToWorld(sx, sy);
+        // видно с запасом: и соседние точки (±1 клетка) — не у кромки стены (там лучи многоугольника идут с шагом по углу)
+        if (![[0, 0], [TILE, 0], [-TILE, 0], [0, TILE], [0, -TILE]].every(([ox, oy]) => los(eye.x, eye.y, w.x + ox, w.y + oy))) continue;
+        if (!ctx.isPointInPath(view, w.x, w.y)) bad.push([a.toFixed(2), Math.round(sx), Math.round(sy)]);
+      }
+      ctx.restore();
+    }
+    check('видимые точки у краёв повёрнутого экрана — в многоугольнике видимости', !bad.length, bad.slice(0, 6));
+    OPTS.cam = 'std'; step(60);
+  });
+
   run('с прицелом камера по взгляду отдаляется', () => {
     OPTS.cam = 'look'; at(p, 36, 27);
     const vm = () => VH / G.zoom / PX_M;

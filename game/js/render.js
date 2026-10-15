@@ -655,7 +655,9 @@ function viewPolygon(body) {
   const maxR = Math.hypot(VW, VH) / G.zoom;
   // многоугольник нужен только для экрана (туман, свет): луч идёт до края экрана в своём направлении (с запасом на тряску),
   // а не на диагональ — на открытой карте вдвое меньше клеток; глаза вне экрана — как раньше, на всю диагональ
-  const pad = 48, hx = VW / 2 / G.zoom + pad, hy = VH / 2 / G.zoom + pad;
+  // повёрнутая камера (по взгляду, за машиной): прямоугольник — описывающий повёрнутый экран (иначе у краёв экрана — полосы тумана)
+  const r = G.camRot || 0, ac = Math.abs(Math.cos(r)), as = Math.abs(Math.sin(r));
+  const pad = 48, hx = (ac * VW + as * VH) / 2 / G.zoom + pad, hy = (as * VW + ac * VH) / 2 / G.zoom + pad;
   const rx0 = G.cam.x - hx, rx1 = G.cam.x + hx, ry0 = G.cam.y - hy, ry1 = G.cam.y + hy;
   const inside = p.x > rx0 && p.x < rx1 && p.y > ry0 && p.y < ry1;
   const poly = new Path2D();
