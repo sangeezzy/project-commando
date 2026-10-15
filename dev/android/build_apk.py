@@ -87,7 +87,12 @@ def main():
     run([BT / 'apksigner.bat', 'sign', '--ks', KEYSTORE, '--ks-key-alias', 'commando', '--ks-pass', f'pass:{KS_PASS}',
          '--key-pass', f'pass:{KS_PASS}', '--out', out, work / 'aligned.apk'], env=env)
     run([BT / 'apksigner.bat', 'verify', out], env=env)
-    print(f'готово: {out.relative_to(ROOT)} ({out.stat().st_size // 1024} КБ), версия {version} ({code})')
+    # в dist/ — только актуальный .apk: прошлые версии удалить (новый уже собран и проверен)
+    old = [p for p in web_build.DIST.glob('commando-*.apk') if p != out]
+    for p in old:
+        p.unlink()
+    print(f'готово: {out.relative_to(ROOT)} ({out.stat().st_size // 1024} КБ), версия {version} ({code})'
+          + (f'; удалены прошлые: {len(old)}' if old else ''))
 
 
 if __name__ == '__main__':

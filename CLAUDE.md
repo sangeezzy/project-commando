@@ -17,7 +17,7 @@
   комментариев, в git не хранится; `--check` — тест smoke на сборке: `dev/unit.html?root=dist`).
 - `dev/android/` — приложение для Android (.apk) без Gradle, Android Studio и Node.js: `setup.py --accept-licenses` (один раз: JDK 17 Temurin
   и Android SDK — platforms;android-34, build-tools;34.0.0 — в `%LOCALAPPDATA%\commando-android`, вне проекта; лицензия SDK принята пользователем
-  2026-10-14), `build_apk.py` → `dist/commando-<GAME_VERSION>.apk` (dev/build.py → assets/game, aapt2, javac + core-lambda-stubs, d8, zipalign,
+  2026-10-14), `build_apk.py` → `dist/commando-<GAME_VERSION>.apk` (прошлые .apk из `dist/` удаляет сам — там только актуальный) (dev/build.py → assets/game, aapt2, javac + core-lambda-stubs, d8, zipalign,
   apksigner; ключ `commando.keystore` — в папке инструментов: потерять — обновить поверх нельзя), `icon.py` (иконка без библиотек: прицел на тёмном,
   game/icons/ и mipmap-*, адаптивная — слои fg/bg). `app/`: AndroidManifest (горизонтально, cleartext — ws:// к хосту, микрофон), тема, иконки,
   `MainActivity.java` — WebView на весь экран, `file:///android_asset/game/index.html?app=1` (защищённый контекст: голос работает; ws:// без
