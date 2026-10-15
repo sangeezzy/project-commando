@@ -51,10 +51,7 @@ function drawHUD() {
   else mono(`противников осталось: ${left} из ${G.enemies.length}` + (isAuth() && G.mapId !== 'range' ? ' · Backspace — в хаб' : ''), 26, 56, left ? HUD_DIM : '#9fe870');
   if (G.mapId === 'hub' && tableNear(p) && !p.dead && !loadoutOpen()) txt('F — оружейный стол', VW / 2, VH - 120, 15, HUD_WARN, 'center');
   if (!TouchUI.on) mono('TAB — характеристики оружия · 1, 2, 3 — оружие · X — нож · H — управление', 14, 84, 'rgba(232,228,216,0.45)', 'left', 11);
-  if (p.keys && p.keys.size) {
-    const names = [...p.keys].map((id) => keyName(id));
-    mono('Ключи: ' + names.join(', '), 14, 102, '#d8c890', 'left', 12);
-  }
+  if (p.keys && p.keys.size) drawKeysHud(p);
   if (!p.dead && G.state === 'play') drawDoorPrompt(p);
   if (!p.dead && !p.down && G.state === 'play') drawVehPrompt(p);
   if (!p.dead && !p.down && G.state === 'play') {
@@ -302,6 +299,21 @@ function drawOffscreen(v) {
     ctx.fillText(`${Math.round(q.d)} м`, q.x - Math.cos(q.a) * 17, q.y - Math.sin(q.a) * 15);
   }
   ctx.restore();
+}
+
+// Ключи у бойца — картинками (бирка — цвет замка), ниже строк задачи, подсказки и погоды (не накладываются);
+// на сенсоре — под здоровьем вверху посередине (слева — отряд и кнопки выглядывания)
+function drawKeysHud(p) {
+  const ids = [...p.keys], S = 1.8, step = 40, w = 12 + ids.length * step;
+  const x0 = TouchUI.on ? Math.round(VW / 2 - w / 2) : 14, y0 = TouchUI.on ? 86 : 116;
+  box(x0, y0, w, 30, 0.45);
+  ids.forEach((id, i) => {
+    const k = map.keys.find((q) => q.id === id);
+    ctx.save();
+    ctx.translate(x0 + 26 + i * step, y0 + 15); ctx.scale(S, S);
+    keyShape(k ? k.color : KEY_COLORS[id] || '#d0b030');
+    ctx.restore();
+  });
 }
 
 // Указатели: зелёная стрелка — на переход «Штурма», синяя — на грузовик с боеприпасами. Горят GUIDE.t с после события (локация началась,

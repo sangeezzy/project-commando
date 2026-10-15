@@ -153,8 +153,10 @@ function buildAssault(seed) {
   const m = finishMap(b, meta);
   const reach = bfsFrom((sx + 5.5) * TILE, (sy - 2.5) * TILE, 1e9, true);
   const spots = [];
+  // ключ — не у старта (не ближе 10 м: иначе отряд подбирает его в первый же миг — будто принёс с прошлой локации)
+  const stx = sx + 5.5, sty = sy - 2.5;
   for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
-    if (walkable(x, y) && reach.f[y * W + x] < 1e9 && m.fl[y * W + x] !== FM.INDOOR) spots.push([x, y]);
+    if (walkable(x, y) && reach.f[y * W + x] < 1e9 && m.fl[y * W + x] !== FM.INDOOR && Math.hypot(x + 0.5 - stx, y + 0.5 - sty) >= 10) spots.push([x, y]);
   }
   for (const k of locked) {
     const [x, y] = spots[Math.floor(rnd() * spots.length)];
@@ -217,6 +219,7 @@ function assaultInit(rnd) {
   // погода: с первой локации — сразу, дальше — плавный переход от прошлой (как между волнами «Выживания»)
   const wk = rollWeather(rnd);
   if (carry && carry.weather) { G.weather = { ...carry.weather, thunder: [] }; setWeather(wk); } else initWeather(wk);
+  for (const q of G.players) q.keys = new Set();       // ключи — только этой локации (с прошлой не переходят)
   if (carry) for (const q of G.players) {
     const c = carry.squad[q.slot];
     if (!c) continue;

@@ -151,7 +151,9 @@ function startReload(o, quick = false) {
   g.reloadEmpty = !g.chamber;
   g.quick = quick;
   g.reloadDur = g.reloadT = (g.reloadEmpty ? W.reloadEmpty : W.reloadTac) * (quick ? RELOAD_QUICK.k : 1);
-  emit(['reload', o.x, o.y, o.side, g.reloadEmpty ? 1 : 0, o.id]);
+  // магазин падает на землю, только если он пустой или перезарядка быстрая (бросается целиком); неполный — в подсумок
+  g.dropped = g.mag === 0 || quick;
+  emit(['reload', o.x, o.y, o.side, g.reloadEmpty ? 1 : 0, o.id, g.dropped ? 1 : 0]);
   makeNoise(o.x, o.y, M(NOISE.reload), 'step', o);
   return true;
 }
@@ -190,6 +192,7 @@ function quickReload(o) {
     if (g.quick) return false;
     const done = g.reloadDur - g.reloadT, dur = g.reloadDur * RELOAD_QUICK.k;
     g.quick = true; g.reloadDur = dur; g.reloadT = Math.max(0.05, dur - done);
+    if (!g.dropped) { g.dropped = true; emit(['magdrop', o.x, o.y, o.id]); }   // неполный магазин теперь бросается — падает сейчас
     return true;
   }
   return startReload(o, true);

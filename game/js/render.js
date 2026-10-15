@@ -163,12 +163,16 @@ function drawKey(k) {
   ctx.fillStyle = `rgba(255,240,180,${0.12 + 0.08 * Math.sin(t)})`;
   ctx.beginPath(); ctx.arc(0, 0, 9, 0, Math.PI * 2); ctx.fill();
   ctx.rotate(0.6);
+  keyShape(k.color);
+  ctx.restore();
+}
+// Ключ (в текущих координатах, ~18 × 7 px): кольцо, стержень с бородкой, бирка цвета замка. И на карте, и в интерфейсе (крупнее)
+function keyShape(color) {
   ctx.strokeStyle = '#c9a646'; ctx.lineWidth = 2;
   ctx.beginPath(); ctx.arc(-4, 0, 3, 0, Math.PI * 2); ctx.stroke();
   ctx.beginPath(); ctx.moveTo(-1, 0); ctx.lineTo(7, 0); ctx.moveTo(5, 0); ctx.lineTo(5, 2.5); ctx.moveTo(7, 0); ctx.lineTo(7, 2.5); ctx.stroke();
-  ctx.fillStyle = k.color;
+  ctx.fillStyle = color;
   ctx.fillRect(-9, -2, 3, 4);                          // бирка
-  ctx.restore();
 }
 
 // Противники, замеченные отрядом (ботами или товарищами), которых сам сейчас не видишь: красная метка, гаснет за ~6 с

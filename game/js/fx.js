@@ -25,6 +25,11 @@ function emit(ev) {
   if (G.role === 'host') G.fxOut.push(ev);
 }
 
+// Выпавший на землю магазин (лежит 20 с)
+function dropMagPart(x, y) {
+  G.parts.push({ x: x + rand(-4, 4), y: y + rand(-4, 4), vx: 0, vy: 0, life: 20, max: 20, color: '#2b2b2b', size: 3, drag: 0, shape: 5, rot: rand(0, 6.28), spin: 0 });
+}
+
 function playFx(ev) {
   const [k] = ev;
   const p = me();
@@ -73,12 +78,13 @@ function playFx(ev) {
     const [, x, y, a] = ev;
     addDecal({ x: x + Math.cos(a) * 8, y: y + Math.sin(a) * 8, r: 14, c: 'rgba(90,8,8,0.55)', grow: 1 });
   } else if (k === 'reload') {
-    const [, x, y, side, empty, id] = ev;
+    const [, x, y, side, empty, id, drop] = ev;
     const who = allPeople().find((q) => q.id === id), wt = who && who.gun ? who.gun.t : 'm4a1';
     if (p) SFX.reload(id === p.id ? 1 : vol(Math.hypot(x - p.x, y - p.y)) * 0.5, empty, wt);
-    if (empty === 2) return;                       // ружьё: патрон в магазин, магазин не выпадает
-    // выпавший магазин
-    G.parts.push({ x: x + rand(-4, 4), y: y + rand(-4, 4), vx: 0, vy: 0, life: 20, max: 20, color: '#2b2b2b', size: 3, drag: 0, shape: 5, rot: rand(0, 6.28), spin: 0 });
+    if (empty === 2 || !drop) return;              // ружьё — по патрону; неполный магазин — в подсумок: на землю не падает
+    dropMagPart(x, y);
+  } else if (k === 'magdrop') {                    // быстрая перезарядка поверх обычной: неполный магазин бросили
+    dropMagPart(ev[1], ev[2]);
   } else if (k === 'wsw') {
     const [, x, y, side, id] = ev;
     if (p) SFX.wsw(id === p.id ? 1 : vol(Math.hypot(x - p.x, y - p.y)) * 0.4);

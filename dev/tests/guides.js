@@ -101,6 +101,52 @@ window.__result = (() => {
     check('повреждённый разгоняется заметно хуже', vHurt < vFull * 0.8, [vFull.toFixed(1), vHurt.toFixed(1)]);
   });
 
+  run('магазин на землю: только пустой или при быстрой перезарядке', () => {
+    startRange();
+    const p = me(); p.gun = makeGun('m4a1'); p.kit[0] = p.gun; p.cur = 0; G.parts = [];
+    const mags = () => G.parts.filter((q) => q.shape === 5).length;
+    p.gun.mag = 12; p.gun.chamber = 1;
+    startReload(p);
+    check('тактическая (неполный магазин — в подсумок): на землю не падает', mags() === 0, mags());
+    p.gun.reloadT = 0.001; updateGun(p, 0.01);
+    check('и он в подсумке', p.gun.pouch.includes(12), p.gun.pouch);
+    p.gun.mag = 0; p.gun.chamber = 1;
+    startReload(p);
+    check('пустой магазин — падает', mags() === 1, mags());
+    p.gun.reloadT = 0.001; updateGun(p, 0.01);
+    p.gun.mag = 10; G.parts = [];
+    startReload(p, true);
+    check('быстрая — неполный бросается, падает', mags() === 1, mags());
+    p.gun.reloadT = 0.001; updateGun(p, 0.01);
+    p.gun.mag = 10; G.parts = [];
+    startReload(p);
+    check('обычная начата — пока не падает', mags() === 0);
+    quickReload(p);
+    check('R ещё раз (быстрая поверх обычной) — падает сейчас, один раз', mags() === 1 && (quickReload(p), mags() === 1), mags());
+  });
+
+  run('ключи «Штурма»: не у старта, на новую локацию не переходят, в интерфейсе — картинками', () => {
+    let near = 0;
+    for (let k = 0; k < 12; k++) {
+      G.assaultCarry = null;
+      startMap('assault', assaultSeed(900 + k * 13, 1), squad, false);
+      const st = me();
+      for (const key of map.keys) if (Math.hypot(key.x - st.x, key.y - st.y) < M(8)) near++;
+    }
+    check('ключей у старта (ближе 8 м) нет', near === 0, near);
+    G.assaultCarry = null;
+    startMap('assault', assaultSeed(4321, 1), squad, false);
+    const p = me(); p.god = true;
+    const key = map.keys[0];
+    p.x = p.px = key.x; p.y = p.py = key.y; tick(2);
+    check('ключ подобран', p.keys.has(key.id));
+    let err = null; try { render(1 / 60); } catch (e) { err = String(e); }
+    check('ключи в интерфейсе рисуются (картинками) без ошибок', !err, err);
+    G.enemies.forEach((e) => { e.dead = true; }); tick(2);
+    nextStage();
+    check('на следующей локации ключей нет', me().keys.size === 0, [...me().keys]);
+  });
+
   run('звуки игры в меню молчат; мышь', () => {
     initAudio();
     startRange();
