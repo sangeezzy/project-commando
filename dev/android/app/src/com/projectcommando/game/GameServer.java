@@ -11,6 +11,9 @@ import java.io.OutputStream;
 import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.DatagramPacket;
+import java.net.DatagramSocket;
+import java.net.SocketTimeoutException;
 import java.net.NetworkInterface;
 import java.net.ServerSocket;
 import java.net.Socket;
@@ -23,11 +26,16 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Random;
+import java.util.Set;
+import java.util.TreeSet;
 
 // Сервер игры — то же, что server/server.ps1 и server.py: файлы игры по HTTP и одна комната по WebSocket /ws.
 // Без Android: в приложении файлы — из assets (MainActivity), на ПК — из папки (main: тесты dev/run_tests.py, сервер «java»).
 // Протокол (заголовок перед JSON игры, сервер его не разбирает):
-//   хост → сервер: H (создать комнату), T<id>|… (гостю), A|… (всем гостям), K<id> (отключить гостя)
+//   хост → сервер: H (создать комнату), T<id>|… (гостю), A|… (всем гостям), K<id> (отключить гостя),
+//                  I|json (о комнате для списка серверов — отдаётся в GET /info как есть)
+// Поиск серверов: UDP «PCR?» на порт игры → «PCR!<порт>»; GET /info, GET /lan (lanScan) — как у server.py.
 //   гость → сервер: G (войти), M|… (хосту)
 //   сервер → хосту: O|адреса, J<id> (вошёл), L<id> (вышел), F<id>|… (от гостя), E|ошибка
 //   сервер → гостю: W<id> (вошёл), M|… (от хоста), X (хост ушёл), E|ошибка (host-exists, no-host, full)
@@ -44,6 +52,9 @@ public class GameServer {
     private ServerSocket ss;
     private volatile boolean running;
     private WS host;                               // комната
+    private String info;                           // I|json от хоста
+    private DatagramSocket udp;                    // ответ на поиск серверов
+    private final String id = String.format("%08x", new Random().nextInt());
     private final Map<Integer, WS> guests = new HashMap<>();
     private int nextId = 1;
 
@@ -62,6 +73,14 @@ public class GameServer {
         Thread t = new Thread(this::acceptLoop, "commando-accept");
         t.setDaemon(true);
         t.start();
+        try {                                       // порт UDP занят — без ответа на поиск (найдут перебором адресов)
+            udp = new DatagramSocket(null);
+            udp.setReuseAddress(true);
+            udp.bind(new InetSocketAddress(s.getLocalPort()));
+            Thread u = new Thread(this::lanAnswer, "commando-lan");
+            u.setDaemon(true);
+            u.start();
+        } catch (IOException e) { udp = null; }
         return s.getLocalPort();
     }
 
@@ -71,6 +90,7 @@ public class GameServer {
     public void stop() {
         running = false;
         try { if (ss != null) ss.close(); } catch (IOException e) { /* уже закрыт */ }
+        if (udp != null) udp.close();
         List<WS> all = new ArrayList<>();
         synchronized (this) {
             if (host != null) all.add(host);
@@ -92,6 +112,65 @@ public class GameServer {
                 if (!running) break;        // остановлен; иначе (клиент оборвал соединение) — принимаем дальше
             }
         }
+    }
+
+    private void lanAnswer() {
+        DatagramSocket u = udp;
+        byte[] buf = new byte[64];
+        byte[] ans = ("PCR!" + ss.getLocalPort()).getBytes(StandardCharsets.US_ASCII);
+        while (running && u != null && !u.isClosed()) {
+            try {
+                DatagramPacket d = new DatagramPacket(buf, buf.length);
+                u.receive(d);
+                if ("PCR?".equals(new String(d.getData(), 0, d.getLength(), StandardCharsets.US_ASCII)))
+                    u.send(new DatagramPacket(ans, ans.length, d.getSocketAddress()));
+            } catch (IOException e) { /* закрыт или сбой одного пакета */ }
+        }
+    }
+
+    // Спросить серверы во всех сетях устройства (широковещательно) → {"addrs":[свои],"found":["ip:порт",…]}
+    public static String lanScan(int ms) {
+        List<String> addrs = localAddrs();
+        Set<String> targets = new TreeSet<>();
+        targets.add("255.255.255.255");
+        for (String a : addrs) {
+            String[] q = a.split("\\.");
+            targets.add(q[0] + "." + q[1] + "." + q[2] + ".255");
+            if (q[0].equals("10") || q[0].equals("26")) targets.add(q[0] + ".255.255.255");
+        }
+        Set<String> found = new TreeSet<>();
+        try (DatagramSocket u = new DatagramSocket()) {
+            u.setBroadcast(true);
+            byte[] ask = "PCR?".getBytes(StandardCharsets.US_ASCII);
+            for (String t : targets) for (int p = 8000; p < 8004; p++) {
+                try { u.send(new DatagramPacket(ask, ask.length, InetAddress.getByName(t), p)); } catch (IOException e) { /* сеть не пускает */ }
+            }
+            long end = System.currentTimeMillis() + ms;
+            byte[] buf = new byte[64];
+            while (true) {
+                long left = end - System.currentTimeMillis();
+                if (left <= 0) break;
+                u.setSoTimeout((int) left);
+                DatagramPacket d = new DatagramPacket(buf, buf.length);
+                try { u.receive(d); } catch (SocketTimeoutException e) { break; } catch (IOException e) { continue; }
+                String m = new String(d.getData(), 0, d.getLength(), StandardCharsets.US_ASCII);
+                if (m.startsWith("PCR!") && m.substring(4).matches("\\d{1,5}") && !d.getAddress().isLoopbackAddress())
+                    found.add(d.getAddress().getHostAddress() + ":" + m.substring(4));
+            }
+        } catch (IOException e) { /* нет сети */ }
+        return "{\"addrs\":" + jsonList(addrs) + ",\"found\":" + jsonList(new ArrayList<>(found)) + "}";
+    }
+
+    private static String jsonList(List<String> l) {
+        StringBuilder b = new StringBuilder("[");
+        for (int i = 0; i < l.size(); i++) b.append(i > 0 ? "," : "").append('"').append(l.get(i)).append('"');
+        return b.append(']').toString();
+    }
+
+    private synchronized String infoJson() {
+        boolean room = host != null && !host.closed;
+        return "{\"commando\":1,\"id\":\"" + id + "\",\"room\":" + room + ",\"guests\":" + guests.size() +
+            ",\"info\":" + (room && info != null && !info.isEmpty() ? info : "null") + "}";
     }
 
     // Адреса этого устройства, по которым к нему могут подключиться (Wi-Fi, точка доступа, ZeroTier, Tailscale…)
@@ -143,6 +222,23 @@ public class GameServer {
                 List<String> addrs = new ArrayList<>();
                 for (String a : localAddrs()) addrs.add(a + ":" + c.getLocalPort());
                 try { serve(ws, addrs); } finally { ws.close(); }
+                return;
+            }
+            // список серверов в меню: страница может быть с другого адреса (или файлом) — разрешить чтение отовсюду
+            String cors = "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Private-Network: true\r\n";
+            if (method.equals("OPTIONS") && (path.equals("/info") || path.equals("/lan"))) {
+                out.write(("HTTP/1.1 204 No Content\r\n" + cors + "Access-Control-Allow-Methods: GET\r\nAccess-Control-Allow-Headers: *\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").getBytes(StandardCharsets.ISO_8859_1));
+                out.flush();
+                c.close();
+                return;
+            }
+            if (method.equals("GET") && (path.equals("/info") || path.equals("/lan"))) {
+                byte[] body = (path.equals("/info") ? infoJson() : lanScan(700)).getBytes(StandardCharsets.UTF_8);
+                out.write(("HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\n" + cors + "Content-Length: " + body.length +
+                    "\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n").getBytes(StandardCharsets.ISO_8859_1));
+                out.write(body);
+                out.flush();
+                c.close();
                 return;
             }
             if (method.equals("POST") && path.equals("/report") && report != null) {
@@ -253,7 +349,9 @@ public class GameServer {
             say("Комната: хост создал комнату");
             try {
                 for (String m; (m = ws.recv()) != null; ) {
-                    if (m.startsWith("A|")) {
+                    if (m.startsWith("I|")) {
+                        synchronized (this) { info = m.substring(2); }
+                    } else if (m.startsWith("A|")) {
                         String body = "M|" + m.substring(2);
                         List<WS> gs;
                         synchronized (this) { gs = new ArrayList<>(guests.values()); }
@@ -272,7 +370,7 @@ public class GameServer {
             } finally {
                 List<WS> gs = null;
                 synchronized (this) {
-                    if (host == ws) { host = null; gs = new ArrayList<>(guests.values()); guests.clear(); }
+                    if (host == ws) { host = null; info = null; gs = new ArrayList<>(guests.values()); guests.clear(); }
                 }
                 if (gs != null) {
                     say("Комната: хост вышел — комната закрыта");

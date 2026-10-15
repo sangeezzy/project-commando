@@ -63,6 +63,10 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public boolean serverRunning() { return server != null && server.isRunning(); }
+
+        // Список серверов: спросить серверы игры в сетях телефона (UDP, ~0,6 с) → {"addrs":[свои адреса],"found":["ip:порт",…]}
+        @JavascriptInterface
+        public String lanScan() { return GameServer.lanScan(600); }
     }
 
     private static String json(String s) {

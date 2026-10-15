@@ -17,6 +17,7 @@
 import asyncio
 import base64
 import hashlib
+import json
 import mimetypes
 import os
 import random
@@ -24,6 +25,7 @@ import socket
 import struct
 import subprocess
 import sys
+import time
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
@@ -34,6 +36,9 @@ REPORT_FILE = None          # для автотестов: POST /report пише
 OPEN = False                # --open: открыть игру в браузере, когда сервер запущен
 LAG_MS = 0.0                # для тестов: --lag мс — задержка каждого сообщения от сервера (пинг ≈ 2 × lag)
 JITTER_MS = 0.0             # --jitter мс — разброс задержки (порядок сообщений сохраняется)
+SERVER_ID = '%08x' % random.getrandbits(32)   # /info: один сервер, найденный по разным адресам (сеть, Radmin VPN), — одна строка списка
+LAN_ASK, LAN_ANS = b'PCR?', b'PCR!'           # поиск серверов в локальной сети: UDP на порт игры, ответ — PCR!<порт>
+LAN_PORTS = range(8000, 8004)                 # куда спрашивать (телефон-хост берёт первый свободный с 8000)
 
 try:
     sys.stdout.reconfigure(encoding='utf-8')
@@ -145,7 +150,8 @@ class WS:
 
 # ---------- Комната: хост и гости, пересылка ----------
 # Протокол (заголовок перед JSON игры, серверу не нужно его разбирать):
-#   хост → сервер: H (создать комнату), T<id>|… (гостю), A|… (всем гостям), K<id> (отключить гостя)
+#   хост → сервер: H (создать комнату), T<id>|… (гостю), A|… (всем гостям), K<id> (отключить гостя),
+#                  I|json (о комнате для списка серверов: имя хоста, игроки, места, версия, карта — отдаётся в /info как есть)
 #   гость → сервер: G (войти), M|… (хосту)
 #   сервер → хосту: O|адреса, J<id> (вошёл), L<id> (вышел), F<id>|… (от гостя), E|ошибка
 #   сервер → гостю: W<id> (вошёл), M|… (от хоста), X (хост ушёл), E|ошибка
@@ -157,6 +163,7 @@ class Room:
     def __init__(self):
         self.host = None
         self.guests = {}
+        self.info = None
         self.next_id = 1
 
     async def serve(self, ws, addrs):
@@ -173,7 +180,9 @@ class Room:
                     m = await ws.recv()
                     if m is None:
                         break
-                    if m.startswith('A|'):
+                    if m.startswith('I|'):
+                        self.info = m[2:]
+                    elif m.startswith('A|'):
                         body = 'M|' + m[2:]
                         for g in list(self.guests.values()):
                             await g.send_text(body)
@@ -195,6 +204,7 @@ class Room:
             finally:
                 if self.host is ws:
                     self.host = None
+                    self.info = None
                     print(f'Комната: хост вышел — комната закрыта')
                     for g in list(self.guests.values()):
                         await g.send_text('X')
@@ -227,6 +237,66 @@ class Room:
 
 
 ROOM = Room()
+
+
+def info_json():
+    """GET /info — для списка серверов в меню: есть ли комната, сколько гостей, что о ней сообщил хост (I|json)."""
+    room = bool(ROOM.host and not ROOM.host.closed)
+    info = ROOM.info if room and ROOM.info else 'null'
+    return ('{"commando":1,"id":"%s","room":%s,"guests":%d,"info":%s}'
+            % (SERVER_ID, 'true' if room else 'false', len(ROOM.guests), info))
+
+
+class LanAnswer(asyncio.DatagramProtocol):
+    """Отвечает на поиск серверов (UDP PCR? на порт игры) — PCR!<порт>."""
+    def __init__(self, port):
+        self.port = port
+
+    def connection_made(self, transport):
+        self.t = transport
+
+    def datagram_received(self, data, addr):
+        if data == LAN_ASK:
+            self.t.sendto(LAN_ANS + str(self.port).encode(), addr)
+
+
+def lan_scan(ms=700):
+    """GET /lan: спросить серверы в локальных сетях этого компьютера (UDP: широковещательно в каждую сеть) → адреса ответивших."""
+    addrs = local_addrs()
+    targets = {'255.255.255.255'}
+    for a in addrs:
+        q = a.split('.')
+        targets.add('.'.join(q[:3]) + '.255')                     # сеть /24 — чаще всего
+        if q[0] in ('10', '26'):
+            targets.add(q[0] + '.255.255.255')                  # Radmin VPN (26.x) и 10.x — /8
+    found = set()
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        s.bind(('0.0.0.0', 0))
+        for t in targets:
+            for p in LAN_PORTS:
+                try:
+                    s.sendto(LAN_ASK, (t, p))
+                except OSError:
+                    pass
+        end = time.monotonic() + ms / 1000
+        while True:
+            left = end - time.monotonic()
+            if left <= 0:
+                break
+            s.settimeout(left)
+            try:
+                data, (ip, _) = s.recvfrom(64)
+            except socket.timeout:
+                break
+            except OSError:
+                continue
+            if data.startswith(LAN_ANS) and data[4:].isdigit() and not ip.startswith('127.'):
+                found.add(f'{ip}:{int(data[4:])}')
+    finally:
+        s.close()
+    return json.dumps({'addrs': addrs, 'found': sorted(found)})
 
 
 def local_addrs():
@@ -297,6 +367,23 @@ async def _handle(reader, writer):
             await ROOM.serve(ws, [f'{a}:{port}' for a in local_addrs()])
         finally:
             ws.close()
+        return
+
+    # список серверов в меню: страница может быть открыта с другого адреса (или файлом) — разрешить чтение отовсюду
+    cors = 'Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Private-Network: true\r\n'
+    if method == 'OPTIONS' and path in ('/info', '/lan'):
+        writer.write(('HTTP/1.1 204 No Content\r\n' + cors + 'Access-Control-Allow-Methods: GET\r\n'
+                      'Access-Control-Allow-Headers: *\r\nContent-Length: 0\r\nConnection: close\r\n\r\n').encode())
+        await writer.drain()
+        writer.close()
+        return
+    if method == 'GET' and path in ('/info', '/lan'):
+        body = (info_json() if path == '/info'
+                else await asyncio.get_running_loop().run_in_executor(None, lan_scan)).encode('utf-8')
+        writer.write(('HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\n' + cors +
+                      f'Content-Length: {len(body)}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n').encode() + body)
+        await writer.drain()
+        writer.close()
         return
 
     if method == 'POST' and path == '/report' and REPORT_FILE:
@@ -376,6 +463,10 @@ def net_warning(port):
 async def main(port):
     mimetypes.add_type('application/javascript', '.js')
     server = await asyncio.start_server(handle, '0.0.0.0', port)
+    try:                                   # ответ на поиск серверов; порт UDP занят — без него (найдут перебором адресов)
+        await asyncio.get_running_loop().create_datagram_endpoint(lambda: LanAnswer(port), local_addr=('0.0.0.0', port))
+    except OSError:
+        pass
     print(f'PROJECT COMMANDO — сервер запущен, порт {port}')
     print(f'  Хост (этот компьютер):  http://localhost:{port}')
     addrs = local_addrs()

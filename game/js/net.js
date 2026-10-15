@@ -310,6 +310,7 @@ function hostWs(tg) {
       Lobby.slots = emptySlots();
       Object.assign(Lobby.slots[0], { human: true, name: G.myName });
       enterLobby();
+      sendRoomInfo();
     } else if (k === 'J') {
       const id = +m.slice(1);
       Net.wsConns.set(id, wsConn(ws, id));
@@ -330,6 +331,14 @@ function hostWs(tg) {
     if (G.role === 'host') leaveToMenu('Связь с сервером игры потеряна — окно сервера («Играть.bat») закрыто?');
     else { setStatus(`Сервер игры не отвечает — запустите «Играть.bat». (код ${ev.code})`); cleanupNet(); }
   };
+}
+
+// Хост: о комнате — серверу для списка локальных серверов (GET /info): позывной, игроков, мест, версия, где отряд
+function sendRoomInfo() {
+  const ws = Net.ws;
+  if (G.role !== 'host' || !ws || ws.readyState !== 1) return;
+  const h = Lobby.slots.filter((s) => s.human).length;
+  ws.send('I|' + JSON.stringify({ n: G.myName, h, s: Lobby.slots.length, v: GAME_VERSION, m: G.state === 'lobby' ? '' : G.mapId || '' }));
 }
 
 // Гость на сервере хоста — для кода хоста выглядит как отдельное соединение (send, close, open)
@@ -523,6 +532,7 @@ function netStats(dt) {
   if (Net.pingT > 0) return;
   Net.pingT = 1;
   if (G.role === 'host') {
+    sendRoomInfo();
     const c = Math.round(performance.now() * 10) / 10;
     for (const k of Net.conns.values()) if (k.open) { try { k.send({ t: 'pg', c }); } catch (e) { /* ignore */ } }
     const v = {};

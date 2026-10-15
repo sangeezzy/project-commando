@@ -54,8 +54,11 @@ public static class PCServer {
     static readonly object Lk = new object();
     const int MaxGuests = 7;
     class Room { public Conn Host; public readonly Dictionary<int, Conn> Guests = new Dictionary<int, Conn>(); public int NextId = 1;
+        public string Info;                 // I|json от хоста — для списка серверов (/info)
         public string Label { get { return "Комната"; } } }
     static readonly Room TheRoom = new Room();
+    static readonly string ServerId = new Random().Next().ToString("x8");   // один сервер под разными адресами — одна строка списка
+    static int HttpPort;
 
     class Conn {
         public TcpClient C; public NetworkStream S; public bool Closed;
@@ -87,6 +90,8 @@ public static class PCServer {
         DevRoot = string.IsNullOrEmpty(dev) ? null : Path.GetFullPath(dev).TrimEnd('\\') + "\\";
         var l = new TcpListener(IPAddress.Any, port);
         l.Start();
+        HttpPort = port;
+        var ut = new Thread(LanAnswer); ut.IsBackground = true; ut.Start();
         Console.WriteLine("PROJECT COMMANDO — сервер запущен, порт " + port + " (без Python)");
         Console.WriteLine("  Хост (этот компьютер):  http://localhost:" + port);
         var addrs = LocalAddrs();
@@ -102,6 +107,58 @@ public static class PCServer {
         while (true) {
             var c = l.AcceptTcpClient();
             var t = new Thread(() => Handle(c)); t.IsBackground = true; t.Start();
+        }
+    }
+
+    // Поиск серверов в локальной сети: UDP «PCR?» на порт игры → «PCR!<порт>». Порт UDP занят — без ответа (найдут перебором адресов).
+    static void LanAnswer() {
+        UdpClient u;
+        try { u = new UdpClient(new IPEndPoint(IPAddress.Any, HttpPort)); } catch { return; }
+        var ans = Encoding.ASCII.GetBytes("PCR!" + HttpPort);
+        while (true) {
+            try {
+                var from = new IPEndPoint(IPAddress.Any, 0);
+                var d = u.Receive(ref from);
+                if (Encoding.ASCII.GetString(d) == "PCR?") u.Send(ans, ans.Length, from);
+            } catch (SocketException) { }       // ICMP «порт недоступен» от прошлой отправки — дальше
+        }
+    }
+
+    // GET /lan: спросить серверы во всех сетях этого компьютера (широковещательно) → {"addrs":[свои],"found":["ip:порт",…]}
+    static string LanScan(int ms) {
+        var addrs = LocalAddrs();
+        var targets = new HashSet<string> { "255.255.255.255" };
+        foreach (var a in addrs) {
+            var q = a.Split('.');
+            targets.Add(q[0] + "." + q[1] + "." + q[2] + ".255");
+            if (q[0] == "10" || q[0] == "26") targets.Add(q[0] + ".255.255.255");   // Radmin VPN (26.x) и 10.x — /8
+        }
+        var found = new SortedSet<string>();
+        using (var u = new UdpClient(new IPEndPoint(IPAddress.Any, 0))) {
+            u.EnableBroadcast = true;
+            var ask = Encoding.ASCII.GetBytes("PCR?");
+            foreach (var t in targets) for (int p = 8000; p < 8004; p++) { try { u.Send(ask, ask.Length, new IPEndPoint(IPAddress.Parse(t), p)); } catch { } }
+            var end = DateTime.UtcNow.AddMilliseconds(ms);
+            while (true) {
+                int left = (int)(end - DateTime.UtcNow).TotalMilliseconds;
+                if (left <= 0) break;
+                u.Client.ReceiveTimeout = left;
+                try {
+                    var from = new IPEndPoint(IPAddress.Any, 0);
+                    var s = Encoding.ASCII.GetString(u.Receive(ref from));
+                    int port;
+                    if (s.StartsWith("PCR!") && int.TryParse(s.Substring(4), out port) && !IPAddress.IsLoopback(from.Address)) found.Add(from.Address + ":" + port);
+                } catch (SocketException ex) { if (ex.SocketErrorCode == SocketError.TimedOut) break; }
+            }
+        }
+        return "{\"addrs\":[" + string.Join(",", addrs.Select(a => "\"" + a + "\"")) + "],\"found\":[" + string.Join(",", found.Select(a => "\"" + a + "\"")) + "]}";
+    }
+
+    static string InfoJson() {
+        lock (Lk) {
+            bool room = TheRoom.Host != null && !TheRoom.Host.Closed;
+            return "{\"commando\":1,\"id\":\"" + ServerId + "\",\"room\":" + (room ? "true" : "false") + ",\"guests\":" + TheRoom.Guests.Count +
+                ",\"info\":" + (room && !string.IsNullOrEmpty(TheRoom.Info) ? TheRoom.Info : "null") + "}";
         }
     }
 
@@ -139,6 +196,18 @@ public static class PCServer {
                 try { Serve(TheRoom, conn, string.Join(",", LocalAddrs().Select(a => a + ":" + port))); }
                 finally { conn.Close(); }
                 return;
+            }
+            // список серверов в меню: страница может быть с другого адреса (или файлом) — разрешить чтение отовсюду
+            const string cors = "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Private-Network: true\r\n";
+            if (method == "OPTIONS" && (path == "/info" || path == "/lan")) {
+                var h = Encoding.ASCII.GetBytes("HTTP/1.1 204 No Content\r\n" + cors + "Access-Control-Allow-Methods: GET\r\nAccess-Control-Allow-Headers: *\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                s.Write(h, 0, h.Length); c.Close(); return;
+            }
+            if (method == "GET" && (path == "/info" || path == "/lan")) {
+                var body = Encoding.UTF8.GetBytes(path == "/info" ? InfoJson() : LanScan(700));
+                var h = Encoding.ASCII.GetBytes("HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\n" + cors + "Content-Length: " + body.Length +
+                    "\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n");
+                s.Write(h, 0, h.Length); s.Write(body, 0, body.Length); c.Close(); return;
             }
             if (method == "POST" && path == "/report" && !string.IsNullOrEmpty(Report)) {
                 int n = hdr.ContainsKey("Content-Length") ? int.Parse(hdr["Content-Length"]) : 0;
@@ -207,7 +276,7 @@ public static class PCServer {
         }
     }
 
-    // Протокол (заголовок перед JSON игры): хост H, T<id>|…, A|…, K<id>; гость G, M|…
+    // Протокол (заголовок перед JSON игры): хост H, T<id>|…, A|…, K<id>, I|json (о комнате — для /info); гость G, M|…
     // сервер → хосту O|адреса, J<id>, L<id>, F<id>|…, E|…; гостю W<id>, M|…, X, E|…
     static void Serve(Room r, Conn k, string addrs) {
         string hello = Recv(k);
@@ -218,7 +287,8 @@ public static class PCServer {
             try {
                 while (true) {
                     string m = Recv(k); if (m == null) break;
-                    if (m.StartsWith("A|")) { string body = "M|" + m.Substring(2); Conn[] gs; lock (Lk) gs = r.Guests.Values.ToArray(); foreach (var g in gs) g.Send(body); }
+                    if (m.StartsWith("I|")) { lock (Lk) r.Info = m.Substring(2); }
+                    else if (m.StartsWith("A|")) { string body = "M|" + m.Substring(2); Conn[] gs; lock (Lk) gs = r.Guests.Values.ToArray(); foreach (var g in gs) g.Send(body); }
                     else if (m.StartsWith("T")) {
                         int bar = m.IndexOf('|'); int id; Conn g = null;
                         if (bar > 1 && int.TryParse(m.Substring(1, bar - 1), out id)) lock (Lk) r.Guests.TryGetValue(id, out g);
@@ -231,7 +301,7 @@ public static class PCServer {
                 }
             } finally {
                 Conn[] gs = new Conn[0];
-                lock (Lk) { if (r.Host == k) { r.Host = null; gs = r.Guests.Values.ToArray(); r.Guests.Clear(); } }
+                lock (Lk) { if (r.Host == k) { r.Host = null; r.Info = null; gs = r.Guests.Values.ToArray(); r.Guests.Clear(); } }
                 if (gs.Length > 0 || r.Host == null) Console.WriteLine(r.Label + ": хост вышел — комната закрыта");
                 foreach (var g in gs) { g.Send("X"); g.Close(); }
             }

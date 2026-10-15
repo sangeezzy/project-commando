@@ -4,7 +4,7 @@
 # ЗАПРЕТ для PowerShell (и Python) в общественных, а запрет сильнее любого разрешения.
 # Что делает (нужны права администратора — попросит сам):
 #   1. выключает запрещающие входящие правила для powershell.exe и python.exe (сами правила остаются — можно включить обратно);
-#   2. разрешает только TCP-порт игры (8000) и только из своей подсети (LocalSubnet: те, кто в той же сети, что и ПК).
+#   2. разрешает только порт игры (8000: TCP — игра, UDP — поиск комнат) и только из своей подсети (LocalSubnet: те, кто в той же сети, что и ПК).
 # Отменить: Remove-NetFirewallRule -Group 'Project Commando'; запреты — Enable-NetFirewallRule (по имени программы).
 param([int]$Port = 8000)
 $ErrorActionPreference = 'Stop'
@@ -30,5 +30,8 @@ foreach ($p in $progs) {
     New-NetFirewallRule -DisplayName $name -Group 'Project Commando' -Direction Inbound -Program $p -Protocol TCP -LocalPort $Port `
         -RemoteAddress LocalSubnet -Action Allow -Profile Any | Out-Null
     Write-Host "  разрешено: $name — только из своей подсети"
+    # поиск комнат («Список локальных серверов»): запрос по UDP на тот же порт
+    New-NetFirewallRule -DisplayName ($name + ' — поиск') -Group 'Project Commando' -Direction Inbound -Program $p -Protocol UDP -LocalPort $Port `
+        -RemoteAddress LocalSubnet -Action Allow -Profile Any | Out-Null
 }
 Write-Host "Готово: гости из той же сети (в том числе из раздачи Wi-Fi с этого ПК) могут подключаться к порту $Port."
