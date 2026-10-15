@@ -49,6 +49,8 @@ UNIT_TESTS = {
     'netaddr': '',
     'allies': 'bots=1',
     'debug': '',
+    'lookcam': '',
+    'looktouch': 'touch=1',
     'aiwall': '',
     'aicorner': '',
     'aistack': '',

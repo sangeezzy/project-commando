@@ -449,7 +449,7 @@ function perceive(e) {
   for (const t of foesOf(e)) {
     if (t.dead || t.down) continue;          // лежачий раненый — не угроза, патроны на него не тратят
     const d = Math.hypot(t.x - e.x, t.y - e.y);
-    if (d > ENEMY.sight * visK() || d >= bd) continue;        // туман, дождь — видно не так далеко
+    if (d > ENEMY.sight * sightK() * visK() || d >= bd) continue;        // туман, дождь — видно не так далеко
     const off = Math.abs(angDiff(Math.atan2(t.y - e.y, t.x - e.x), e.a));
     if (off > ENEMY.fov[e.st] && d > NEAR_SENSE) continue;
     // тело за укрытием — может быть видна высунувшаяся голова (выглядывание)

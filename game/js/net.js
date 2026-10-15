@@ -208,7 +208,7 @@ function sendSnapshot() {
   broadcast({
     t: 's', seq: G.seq, gs: G.state, tm: Math.round(performance.now()),     // tm — время хоста: гость по нему интерполирует
     map: G.mapId, seed: G.mapSeed, hh: G.hubHold ? [G.hubHold.i, r2(G.hubHold.t)] : 0,   // карта и счёт перехода в хабе
-    wx: weatherState(), sv: survState(),      // погода и «Выживание» (волна, грузовик, медик)
+    wx: weatherState(), vs: sightM(), sv: survState(),      // погода и «Выживание» (волна, грузовик, медик)
     P: allPeople().map(personState),
     D: map.doors.map((d) => (d.open ? 1 : 0) | (d.locked ? 2 : 0) | (d.broken ? 4 : 0)),
     K: map.keys.map((k) => (k.taken ? 1 : 0)),
@@ -437,6 +437,7 @@ function applySnapshot(s) {
   if (fresh || s.map !== G.mapId) { resetGuestWorld(s.seq, s.map, s.seed); resetInterp(); resetPred(); }
   G.hubHold = s.hh ? { i: s.hh[0], t: s.hh[1] } : null;
   applyWeatherState(s.wx);
+  G.netSight = s.vs;
   applySurvState(s.sv);
   const tm = s.tm ?? Math.round(performance.now());
   interpClock(tm);

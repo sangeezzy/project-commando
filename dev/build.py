@@ -32,9 +32,13 @@ def build():
     parts = []
     for rel in tags:
         parts.append(f'// ---- {rel} ----\n' + strip((GAME / rel).read_text(encoding='utf-8')))
-    if DIST.exists():
-        shutil.rmtree(DIST)
-    DIST.mkdir()
+    # dist/ очищается, кроме собранных .apk (dev/android/build_apk.py кладёт их сюда же — сборка игры их не стирает)
+    DIST.mkdir(exist_ok=True)
+    for f in DIST.iterdir():
+        if f.is_dir():
+            shutil.rmtree(f)
+        elif f.suffix != '.apk':
+            f.unlink()
     (DIST / 'game.js').write_text(''.join(parts), encoding='utf-8')
     first = True
 

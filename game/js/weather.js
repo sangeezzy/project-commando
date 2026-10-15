@@ -13,7 +13,19 @@ const WEATHER = {
   fog: { name: 'туман', w: 10, vis: 0.33, hear: 1, rain: 0, fog: 1 },
 };
 const WEATHER_IDS = ['clear', 'rain', 'heavy', 'storm', 'fog'];
-const VIS_BASE = M(70);            // дальше этого в ясную погоду противников не различить (на экране)
+const VIS_BASE = M(70);            // дальше этого в ясную погоду противников не различить (на экране) — наибольшая видимость
+// Видимость до погоды (OPTS.sight у хоста, гостю — в снимке `vs`): 10, 15, … 70 м; sightK — доля от VIS_BASE (и для ИИ — от ENEMY.sight)
+const SIGHT = { min: 10, step: 5, max: 70 };
+const sightM = () => clamp((isAuth() ? OPTS.sight : G.netSight) || SIGHT.max, SIGHT.min, SIGHT.max);
+const sightK = () => M(sightM()) / VIS_BASE;
+// K — меньше на 5 м (с 10 — снова 70), Shift+K — больше (с 70 — 10); только хост и одиночка
+function stepSight(d) {
+  if (!isAuth()) { toast('ВИДИМОСТЬ МЕНЯЕТ ХОСТ', 1.4); return; }
+  let s = sightM() + d * SIGHT.step;
+  if (s < SIGHT.min) s = SIGHT.max; else if (s > SIGHT.max) s = SIGHT.min;
+  OPTS.sight = s; saveOpts();
+  toast(`ВИДИМОСТЬ: ${s} М (K / SHIFT+K)`, 1.4);
+}
 const WEATHER_BLEND = 8;           // с: смена погоды
 const BOLT_GAP = [12, 30];         // с: между молниями в грозу
 
@@ -71,11 +83,11 @@ function weatherFx(dt) {
 }
 
 // Отрисовка поверх мира (экранные координаты): дымка (туман, дождь), косые струи, вспышка молнии.
-// offX, offY — сдвиг мира на экране (как в render), p — чьими глазами смотрим.
+// m (у drawRain — cm) — матрица камеры (CAMM: сдвиг, масштаб, поворот), p — чьими глазами смотрим.
 // Дождь (положения — от времени, без хранения частиц). Число струй — по площади экрана (на телефоне холст другой).
 // Слабый — тонкие короткие струи. Сильный (rain > 0,5, heavy 0…1): гуще, второй слой — ближние длинные яркие струи,
 // брызги на земле (привязаны к миру: при движении камеры не «едут»), сумрак. Упрощённый свет (OPTS.simpleLight) — вдвое реже.
-function drawRain(rain, offX, offY) {
+function drawRain(rain, cm = CAMM) {
   const t = G.time, heavy = clamp((rain - 0.5) / 0.5, 0, 1);
   const area = (VW * VH) / (1280 * 720), lite = OPTS.simpleLight ? 0.5 : 1;
   const px = Math.max(1, VH / 720);                          // толщина и длина — по размеру холста
@@ -101,16 +113,21 @@ function drawRain(rain, offX, offY) {
     ctx.moveTo(x, y); ctx.lineTo(x - 9 * px, y + 34 * px);
   }
   ctx.stroke();
-  // брызги: расходящиеся кольца, каждое живёт 0,35 с; точка сдвигается вместе с картой (offX/offY) — брызги не «едут» за камерой
-  const life = 0.35;
-  const k = Math.round(90 * heavy * area * lite);
+  // брызги: расходящиеся кольца, каждое живёт 0,35 с; точка — в мире (плитка со стороной P вокруг камеры, перевод — матрицей cm):
+  // при сдвиге и повороте камеры брызги остаются на месте на земле. Плитка — по диагонали экрана (повёрнутый экран тоже покрыт),
+  // число брызг — с запасом на её площадь (на экран попадает столько же, сколько раньше), лишние отсекаются
+  const life = 0.35, z = Math.hypot(cm[0], cm[1]) || 1, P = Math.hypot(VW, VH) / z;
+  const k = Math.round(90 * heavy * area * lite * (VW * VW + VH * VH) / (VW * VH));
+  const cx = G.cam.x - P / 2, cy = G.cam.y - P / 2, pad = 8 * px;
   ctx.strokeStyle = `rgba(200,212,230,${0.45 * heavy})`; ctx.lineWidth = px;
   ctx.beginPath();
   for (let i = 0; i < k; i++) {
     const ph = (t / life + i * 0.618) % 1, gen = Math.floor(t / life + i * 0.618);
     const h = Math.sin(i * 12.9898 + gen * 78.233) * 43758.5453;
     const u = h - Math.floor(h), v = (h * 7.13) - Math.floor(h * 7.13);
-    const wx = (((u * VW + offX) % VW) + VW) % VW, wy = (((v * VH + offY) % VH) + VH) % VH;
+    const X = cx + ((((u * P - cx) % P) + P) % P), Y = cy + ((((v * P - cy) % P) + P) % P);
+    const wx = cm[0] * X + cm[2] * Y + cm[4], wy = cm[1] * X + cm[3] * Y + cm[5];
+    if (wx < -pad || wy < -pad || wx > VW + pad || wy > VH + pad) continue;
     const r = (1.2 + 3.8 * ph) * px;
     ctx.moveTo(wx + r, wy);
     ctx.ellipse(wx, wy, r, r * 0.55, 0, 0, Math.PI * 2);
@@ -127,17 +144,17 @@ function veilBuf(w, h) {
   return veilX;
 }
 
-function drawWeather(offX = CAMM[4], offY = CAMM[5], p = null) {
-  const w = G.weather;
-  if (!w) return;
+function drawWeather(m = CAMM, p = null) {
+  const w = G.weather, vis = w ? w.vis : 1, fog = w ? w.fog : 0, sk = sightK();
+  if (!w && sk > 0.995) return;
   ctx.save();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   // дымка — вокруг глаз бойца: дальше VIS_BASE × vis противников не различить (playerSees), там же на экране — почти сплошная пелена;
   // ближе — плотнеет с расстоянием. Туман — светло-серый, дождь — сизый.
-  if ((w.vis < 0.995 || w.fog > 0.01) && !G.noFog) {      // отладка ]: без пелены
+  if ((vis < 0.995 || fog > 0.01 || sk < 0.995) && !G.noFog) {      // отладка ]: без пелены; видимость меньше 70 м — пелена и без погоды
     const z = G.zoom, eye = p && !p.dead ? eyeOf(p) : G.cam;
-    const es = worldToScreen(eye.x, eye.y, CAMM), ex = es.x, ey = es.y, D = VIS_BASE * w.vis * z;
-    const fk = clamp(w.fog, 0, 1), aMax = clamp(0.45 + 0.5 * fk + 0.4 * (1 - w.vis), 0, 0.96);
+    const es = worldToScreen(eye.x, eye.y, CAMM), ex = es.x, ey = es.y, D = VIS_BASE * sk * vis * z;
+    const fk = clamp(fog, 0, 1), aMax = clamp(0.45 + 0.5 * fk + 0.4 * (1 - vis) + 0.5 * (1 - sk), 0, 0.96);
     const c = `${Math.round(118 + 52 * fk)},${Math.round(128 + 47 * fk)},${Math.round(142 + 38 * fk)}`;
     // градиент — в буфер в 4 раза меньше (упрощённый свет — в 8), на экран — растянуть: плавный, размытия не видно, а растеризация
     // градиента на весь экран — одна из самых дорогих операций кадра
@@ -150,8 +167,8 @@ function drawWeather(offX = CAMM[4], offY = CAMM[5], p = null) {
     tg.fillStyle = gr; tg.fillRect(0, 0, VW / q + 1, VH / q + 1);
     ctx.imageSmoothingEnabled = true; ctx.drawImage(veilC, 0, 0, veilC.width, veilC.height, 0, 0, veilC.width * q, veilC.height * q);
   }
-  if (w.rain > 0.02) drawRain(w.rain, offX, offY);
-  if (w.flash > 0.01) { ctx.fillStyle = `rgba(235,240,255,${w.flash * 0.55})`; ctx.fillRect(0, 0, VW, VH); }
+  if (w && w.rain > 0.02) drawRain(w.rain, m);
+  if (w && w.flash > 0.01) { ctx.fillStyle = `rgba(235,240,255,${w.flash * 0.55})`; ctx.fillRect(0, 0, VW, VH); }
   ctx.restore();
 }
 

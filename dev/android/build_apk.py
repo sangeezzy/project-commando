@@ -59,7 +59,7 @@ def main():
         shutil.rmtree(work)
     for d in ('assets', 'gen', 'classes', 'dex'):
         (work / d).mkdir(parents=True)
-    shutil.copytree(web_build.DIST, work / 'assets' / 'game')
+    shutil.copytree(web_build.DIST, work / 'assets' / 'game', ignore=shutil.ignore_patterns('*.apk'))   # прошлые .apk в dist/ — не внутрь
 
     print('aapt2: ресурсы и манифест…')
     run([BT / 'aapt2.exe', 'compile', '--dir', APP / 'res', '-o', work / 'res.zip'])

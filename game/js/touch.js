@@ -33,6 +33,9 @@ const TOUCH = {
   aimDead: 0.25,          // правый стик: ближе к центру направление не меняется
   aimDist: 0.3,           // точка прицела от бойца (доля высоты экрана), с прицелом — aimDistAds
   aimDistAds: 0.42,
+  // камера по взгляду (OPTS.cam 'look'): правый стик вбок — поворот, скорость lookTurn рад/с × отклонение² (за кольцом — наибольшая),
+  // ближе lookDead — не поворачивает; огонь — как обычно, палец за кольцом (вверх — без поворота); ассист доворачивает взгляд (lookAssist 1/с)
+  lookTurn: 3.5, lookDead: 0.12, lookAssist: 5,
   view: 18,               // м по вертикали по умолчанию (экран телефона маленький — ближе, чем на ПК)
   // Аим ассист (только сенсор, режим — OPTS.assist): пока держит правый стик или «ОГОНЬ», взгляд тянется к видимому противнику
   // рядом с направлением стика — в «окне» width м вбок от линии (не дальше maxA рад). Сила: pull внутри доли full окна,
@@ -222,7 +225,7 @@ function touchEnd(id) {
 }
 
 // Каждый кадр до управления бойцом: «мышь» — точка прицела от бойца, ЛКМ — огонь, ПКМ — прицел
-function touchFrame() {
+function touchFrame(dt = 1 / 60) {
   if (!TouchUI.on) return;
   const p = me();
   if (!p || !inGame()) { mouse.l = mouse.r = false; return; }
@@ -230,9 +233,23 @@ function touchFrame() {
   // точка прицела — от центра бойца: угол взгляда (controlLocal) ровно тот, что у стика (с ассистом)
   const { x: sx, y: sy } = worldToScreen(p.x, p.y);
   // стик — в осях экрана; при повёрнутой камере (в машине) угол в мире — с поворотом
-  const r = G.camRot || 0, a = aimAssist(p, Math.atan2(TouchUI.aim.y, TouchUI.aim.x) - r) + r;
-  mouse.x = sx + Math.cos(a) * L;
-  mouse.y = sy + Math.sin(a) * L;
+  if (lookCam(p)) {
+    // камера по взгляду: поворот — в lookAim (через mouse.dx, как мышь), прицел — на линии взгляда над бойцом
+    const s = TouchUI.sticks.aim, RS = touchR() * TOUCH.stickK;
+    let turn = 0;
+    if (s) {                     // и раненым: ползком тоже поворачивается (стрелять нельзя — crawl)
+      const k = clamp((s.x - s.ox) / RS, -1, 1);
+      if (Math.abs(k) > TOUCH.lookDead) turn = Math.sign(k) * k * k * TOUCH.lookTurn * dt;
+    }
+    turn += angDiff(aimAssist(p, p.a), p.a) * Math.min(1, dt * TOUCH.lookAssist);
+    mouse.dx = (mouse.dx || 0) + turn / CAM.turn;
+    mouse.dy = 0;
+    mouse.y = VH * (1 - CAM.bottom) - L;
+  } else {
+    const r = G.camRot || 0, a = aimAssist(p, Math.atan2(TouchUI.aim.y, TouchUI.aim.x) - r) + r;
+    mouse.x = sx + Math.cos(a) * L;
+    mouse.y = sy + Math.sin(a) * L;
+  }
   for (const b of TouchUI.held.values()) if (b.zoom && G.time >= b.at) { touchZoom(b.zoom); b.at = G.time + 0.12; }
   mouse.l = !TouchUI.edit && (TouchUI.stickFire || TouchUI.btnFire);
   mouse.r = TouchUI.ads && !TouchUI.sprint;
@@ -280,19 +297,20 @@ function drawTouch() {
     ctx.globalAlpha = s ? 0.9 : 0.35;
     ring(x, y, RS, 'rgba(15,16,17,0.25)', 'rgba(232,228,216,0.35)');
     if (kind === 'move') ring(x, y, RS * TOUCH.sprintAt, null, TouchUI.sprint ? 'rgba(255,176,48,0.8)' : 'rgba(232,228,216,0.12)', 1.5);
-    else ring(x, y, RS * TOUCH.fireAt, null, TouchUI.stickFire ? 'rgba(255,80,64,0.9)' : 'rgba(255,80,64,0.3)', 1.5);
+    else if (!me()?.down) ring(x, y, RS * TOUCH.fireAt, null, TouchUI.stickFire ? 'rgba(255,80,64,0.9)' : 'rgba(255,80,64,0.3)', 1.5);
     if (s) {
       const dx = s.x - s.ox, dy = s.y - s.oy, d = Math.hypot(dx, dy), k = d > RS ? RS / d : 1;
       ring(x + dx * k, y + dy * k, R * 0.6, 'rgba(232,228,216,0.35)', 'rgba(232,228,216,0.6)');
     } else {
       ctx.font = `${Math.round(R * 0.3)}px Consolas, monospace`; ctx.textAlign = 'center'; ctx.fillStyle = 'rgba(232,228,216,0.6)';
-      ctx.fillText(kind === 'move' ? 'ДВИЖЕНИЕ' : 'ВЗГЛЯД · ОГОНЬ', x, y + 4);
+      const fire = me()?.down ? '' : ' · ОГОНЬ';    // раненый не стреляет — только взгляд
+      ctx.fillText(kind === 'move' ? 'ДВИЖЕНИЕ' : (lookCam(me()) ? '◀ ПОВОРОТ ▶' : 'ВЗГЛЯД') + fire, x, y + 4);
     }
   };
   const p = me(), edit = TouchUI.edit;
   if (G.state === 'play' && p && !p.dead && !edit) {
     stick(S.move, RS + 24, VH - RS - 24, 'move');
-    if (!p.down) stick(S.aim, VW - RS * 2.6 - 40, VH - RS - 24, 'aim');
+    stick(S.aim, VW - RS * 2.6 - 40, VH - RS - 24, 'aim');      // и раненым — смотреть / поворачиваться
   }
   ctx.globalAlpha = 1;
   if (edit) {
@@ -367,6 +385,8 @@ function syncOptsUI() {
   touchMenuEl.querySelector('#tmuFps').checked = OPTS.fps60;
   touchMenuEl.querySelector('#tmuLight').checked = OPTS.simpleLight;
   for (const m of ['soft', 'hard']) touchMenuEl.querySelector('#tmuAssist-' + m).classList.toggle('on', OPTS.assist === m);
+  for (const m of ['std', 'look']) touchMenuEl.querySelector('#tmuCam-' + m).classList.toggle('on', OPTS.cam === m);
+  touchMenuEl.querySelector('#tmuSight').textContent = `${sightM()} м`;
 }
 const closeTouchMenu = () => { if (touchMenuEl) touchMenuEl.classList.add('hidden'); };
 function touchZoom(k) {
@@ -416,6 +436,9 @@ if (TouchUI.on) {
   touchMenuEl.querySelector('#tmuFps').addEventListener('change', (e) => { OPTS.fps60 = e.target.checked; saveOpts(); });
   touchMenuEl.querySelector('#tmuLight').addEventListener('change', (e) => { OPTS.simpleLight = e.target.checked; saveOpts(); });
   for (const m of ['soft', 'hard']) on('#tmuAssist-' + m, () => { OPTS.assist = m; saveOpts(); syncOptsUI(); });
+  for (const m of ['std', 'look']) on('#tmuCam-' + m, () => { setCamMode(m); syncOptsUI(); });
+  on('#tmuSightDn', () => { stepSight(-1); syncOptsUI(); });
+  on('#tmuSightUp', () => { stepSight(1); syncOptsUI(); });
   on('#tmuLeave', () => { closeTouchMenu(); vtap('Escape'); });
 
   const k = () => VW / Math.max(1, innerWidth);

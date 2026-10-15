@@ -16,9 +16,13 @@ addEventListener('keydown', (e) => {
 });
 addEventListener('keyup', (e) => { keys[e.code] = false; });
 addEventListener('blur', () => { for (const k in keys) keys[k] = false; mouse.l = mouse.r = false; });
-canvas.addEventListener('mousemove', (e) => { mouse.x = e.clientX; mouse.y = e.clientY; });
+canvas.addEventListener('mousemove', (e) => {
+  mouse.dx = (mouse.dx || 0) + e.movementX; mouse.dy = (mouse.dy || 0) + e.movementY;
+  if (!lookCam(me())) { mouse.x = e.clientX; mouse.y = e.clientY; }    // камера по взгляду: курсор — свой (lookAim)
+});
 canvas.addEventListener('mousedown', (e) => {
   initAudio();
+  if (lookCam(me()) && !TouchUI.on && document.pointerLockElement !== canvas) canvas.requestPointerLock?.();
   if (e.button === 0) { mouse.l = true; mouse.lPressed = true; }
   if (e.button === 2) mouse.r = true;
 });
@@ -31,6 +35,29 @@ function camMatrix(shX = 0, shY = 0) {
   return [c, s, -s, c, VW / 2 + shX - (c * G.cam.x - s * G.cam.y), VH / 2 + shY - (s * G.cam.x + c * G.cam.y)];
 }
 let CAMM = [1, 0, 0, 1, 0, 0];
+// Камера по взгляду (OPTS.cam 'look'; не на сенсоре, не в машине): поворот — взгляд вверх, боец — внизу посередине
+const lookCam = (v) => OPTS.cam === 'look' && !!v && !v.veh;
+function setCamMode(m) {
+  OPTS.cam = m;
+  saveOpts();
+  if (m === 'look') { mouse.x = VW / 2; mouse.y = VH * 0.4; if (!TouchUI.on) canvas.requestPointerLock?.(); }
+  else if (document.pointerLockElement) document.exitPointerLock();
+  toast(m === 'look' ? 'КАМЕРА: ПО ВЗГЛЯДУ (N)' : 'КАМЕРА: ОБЫЧНАЯ (N)', 1.4);
+}
+// Направление на экране (WASD) → в мире: с повёрнутой камерой W — вверх экрана
+function camMove(mx, my) {
+  const r = G.camRot || 0, c = Math.cos(r), s = Math.sin(r);
+  return r ? [c * mx + s * my, -s * mx + c * my] : [mx, my];
+}
+// Взгляд бойца: обычно — на курсор; камера по взгляду — мышь по горизонтали поворачивает, курсор стоит на линии взгляда
+function lookAim(p) {
+  const dx = mouse.dx || 0, dy = mouse.dy || 0;
+  mouse.dx = mouse.dy = 0;
+  if (!lookCam(p)) { const w = screenToWorld(mouse.x, mouse.y); p.a = Math.atan2(w.y - p.y, w.x - p.x); return; }
+  p.a = angDiff(p.a + dx * CAM.turn, 0);
+  mouse.x = VW / 2;
+  mouse.y = clamp((mouse.y || 0) + dy, 30, VH * (1 - CAM.bottom) - 40);
+}
 const worldToScreen = (x, y, m = camMatrix()) => ({ x: m[0] * x + m[2] * y + m[4], y: m[1] * x + m[3] * y + m[5] });
 function screenToWorld(sx, sy) {
   const r = G.camRot || 0, dx = (sx - VW / 2) / G.zoom, dy = (sy - VH / 2) / G.zoom;
@@ -48,6 +75,8 @@ function controlLocal(p, dt) {
   // отладка (действует только на нажавшего): [ — бессмертие своего бойца (в сети — у хоста), ] — без тумана войны на своём экране
   if (pressed.BracketLeft) doAct(p, 'god');
   if (pressed.BracketRight) { G.noFog = !G.noFog; toast(G.noFog ? 'ОТЛАДКА: ТУМАН ВОЙНЫ ВЫКЛЮЧЕН (])' : 'ТУМАН ВОЙНЫ ВКЛЮЧЁН (])', 2); }
+  if (pressed.KeyN) setCamMode(OPTS.cam === 'look' ? 'std' : 'look');      // N — камера: обычная / по взгляду (тест)
+  if (pressed.KeyK) stepSight(keys.ShiftLeft || keys.ShiftRight ? 1 : -1);   // K / Shift+K — видимость (хост)
   if (p.dead) { clearPressed(); return; }
   if (p.down) { crawl(p, dt); clearPressed(); return; }
   const g = p.gun;
@@ -72,6 +101,7 @@ function controlLocal(p, dt) {
     toast(OPTS.carCam === 'car' ? 'КАМЕРА: ЗА МАШИНОЙ (C)' : 'КАМЕРА: ОБЫЧНАЯ (C)', 1.4);
   } else if (pressed.KeyC) p.crouchToggle = !p.crouchToggle;
   let [mx, my, mk] = moveInput();
+  [mx, my] = camMove(mx, my);
   if (p.veh) { vehControl(p, mx, my); mx = my = 0; }      // в машине: водитель — газ и руль, пассажир — сидит
   if (busy || p.mg) mx = my = 0;      // отпирает, бьёт ногой или за пулемётом — стоит на месте
   const ml = Math.hypot(mx, my);
@@ -94,9 +124,7 @@ function controlLocal(p, dt) {
   const k = (ml ? dirSpeedK(Math.atan2(my, mx), p.a) : 1) * mk * armorSpeedK(p);     // броня — медленнее
   moveCircle(p, mx * M(sp * k) * dt, my * M(sp * k) * dt, PR);
 
-  const w = screenToWorld(mouse.x, mouse.y);
-  const aim = Math.atan2(w.y - p.y, w.x - p.x);
-  p.a = aim;   // взгляд всегда за мышкой — и на бегу (оружие при этом опущено)
+  lookAim(p);   // взгляд всегда за мышкой — и на бегу (оружие при этом опущено)
   if (p.mg) {
     // за пулемётом: на месте стрелка, ствол — только в секторе станка
     const s = mgSeat(p.mg);
@@ -205,10 +233,10 @@ const eyeOf = (o) => (o.leanPx ? { x: o.lx, y: o.ly, crouch: o.crouch } : o);
 // Ранен: ползком, медленно; смотрит за мышкой; стрелять, бегать, выглядывать нельзя
 function crawl(p, dt) {
   let [mx, my] = moveInput();
+  [mx, my] = camMove(mx, my);
   const ml = Math.hypot(mx, my);
   if (ml) { mx /= ml; my /= ml; moveCircle(p, mx * M(DOWN.crawl) * dt, my * M(DOWN.crawl) * dt, PR); }
-  const w = screenToWorld(mouse.x, mouse.y);
-  p.a = Math.atan2(w.y - p.y, w.x - p.x);
+  lookAim(p);
   p.crouch = true; p.sprint = false; p.ads = 0; p.leanWant = 0; p.sprintLock = SPRINT_TO_FIRE;
   if (!isAuth()) Net.inp.fire = false;
 }

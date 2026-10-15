@@ -12,7 +12,7 @@ const onScreen = (x, y, pad = 60) => (G.camRot ? Math.hypot(x - G.cam.x, y - G.c
 function playerSees(p, o) {
   const eye = eyeOf(p);
   const d = Math.hypot(o.x - eye.x, o.y - eye.y);
-  if (d > VIS_BASE * visK() && d > NEAR_SENSE) return false;      // туман, дождь — дальше не различить
+  if (d > VIS_BASE * sightK() * visK() && d > NEAR_SENSE) return false;      // туман, дождь — дальше не различить
   if (d > NEAR_SENSE && Math.abs(angDiff(Math.atan2(o.y - eye.y, o.x - eye.x), p.a)) > PLAYER_FOV) return false;
   if (sightLine(eye, o)) return true;
   // высунувшийся из-за угла: видна голова
@@ -65,7 +65,7 @@ function render(dt = 1 / 60) {
   ctx.setTransform(...CAMM);
   if (view && !G.noFog) drawFog(p, view);
   if (G.noFog) drawAllEnemies();
-  drawWeather(offX, offY, p);
+  drawWeather(CAMM, p);
   drawHubWorld();
   drawAssaultExit();
   drawTeamTags();

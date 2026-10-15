@@ -59,7 +59,7 @@ function update(dt) {
   if (pressed.Backspace && isAuth()) backToHub();          // хост: обратно в хаб (забег — поражение, с итогами)
   if (G.state === 'dead' && G.run && isAuth() && G.stateT >= RUN_DEAD_T) backToHub();   // отряд погиб в забеге — в хаб
   const p = me();
-  touchFrame();                                         // сенсорное управление: стики → «мышь» и движение
+  touchFrame(dt);                                       // сенсорное управление: стики → «мышь» и движение
   if (p && G.state === 'play' && !uiOpen()) controlLocal(p, dt);
   else clearPressed();
   if (touchPaused()) { /* пауза: мир стоит, камера и интерфейс — как обычно */ }
@@ -70,6 +70,17 @@ function update(dt) {
   // камера: свой боец (погиб — тот, за кем наблюдаем) + смещение к курсору (с прицелом — дальше)
   if (Math.abs(G.view - G.viewT) > 1e-3) { G.view += (G.viewT - G.view) * Math.min(1, dt * CAM.zoomSpeed); applyZoom(); }
   const v = viewer();
+  if (document.pointerLockElement && (uiOpen() || G.state !== 'play')) document.exitPointerLock();    // меню — нужен курсор
+  // камера по взгляду: с прицелом — отдаляется (CAM.adsOut)
+  const zk = lookCam(v) && v === p ? 1 + (p.ads || 0) * (CAM.adsOut - 1) : 1;
+  if (zk !== (G.zoomK || 1)) { G.zoomK = zk; applyZoom(); }
+  if (lookCam(v)) {
+    // камера по взгляду: взгляд — вверх экрана, боец — внизу посередине (CAM.bottom высоты от нижнего края)
+    const off = (VH / 2 - VH * CAM.bottom) / G.zoom;
+    G.camRot = angDiff(-Math.PI / 2 - v.a, 0);
+    G.cam.x = v.x + Math.cos(v.a) * off; G.cam.y = v.y + Math.sin(v.a) * off;
+    return;
+  }
   G.camRot = (G.camRot || 0) + angDiff(camRotTarget(v), G.camRot || 0) * Math.min(1, dt * 6);     // в машине (камера «за машиной») — поворот
   if (Math.abs(G.camRot) < 1e-4 && !camRotTarget(v)) G.camRot = 0;
   if (v) {
@@ -198,7 +209,7 @@ function resize() {
 }
 
 // Масштаб: G.view — сколько метров видно по вертикали (плавно догоняет G.viewT — цель колёсика), запоминается в браузере
-function applyZoom() { G.zoom = clamp(VH / M(G.view), 0.25, 3); }
+function applyZoom() { G.zoom = clamp(VH / M(G.view * (G.zoomK || 1)), 0.25, 3); }   // zoomK — отдаление с прицелом (камера по взгляду)
 // на телефоне свой масштаб (экран маленький — по умолчанию ближе)
 const VIEW_KEY = TouchUI.on ? 'pcr-view-touch' : 'pcr-view';
 {
