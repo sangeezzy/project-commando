@@ -343,7 +343,7 @@ function truckReinforce() {
       const { leader, name } = q;
       makeAI(q, q.a, null);
       Object.assign(q, { leader, name });
-      randomKit(q, G.surv.rnd);
+      botKitFor(q, G.surv.rnd);                     // со стола (и броня), случайное или только пистолет
     } else {
       const k = (G.kits || {})[q.slot];
       if (k) { giveKit(q, k[0], k[1], k[2]); giveArmor(q, tableArmor(q)); } else giveKit(q, 'm4a1', null);   // со стола — и броня
@@ -401,8 +401,8 @@ function survActStep(p, a, dt) {
   return false;
 }
 
-// Броня, взятая на оружейном столе (у людей; null — без брони)
-const tableArmor = (p) => (!p.ai && ((G.kits || {})[p.slot] || [])[3]) || null;
+// Броня, взятая на оружейном столе (людям — G.kits, союзным ботам — G.botKits; null — без брони)
+const tableArmor = (p) => (p.side === 'p' && (((p.ai ? G.botKits : G.kits) || {})[p.slot] || [])[3]) || null;
 // Что можно взять у грузовика сейчас: открытые к этой волне (локации) стволы, свои — тоже; броня — до лучшей привезённой
 // или взятой на оружейном столе, если она тяжелее
 function truckOffer(p) {
@@ -478,9 +478,23 @@ function openTruckMenu() {
     armorLabel(c) + '</option>').join('');
   truckMenuEl.querySelector('#tmErr').textContent = '';
   truckMenuEl.classList.remove('hidden');
+  if (tmBots) tmBots.reset();
   for (const k in keys) keys[k] = false;
 }
 function closeTruckMenu() { if (truckMenuEl) truckMenuEl.classList.add('hidden'); }
+const tmBots = truckMenuEl ? makeBotPanel(truckMenuEl, 'truck') : null;     // снаряжение союзных ботов у грузовика (hub.js)
+
+// Действие 'botsupply:место:a,b,c,броня' (хост): игрок у заднего борта выдаёт союзному боту снаряжение из грузовика (truckOffer бота,
+// полный боекомплект, броня — целая); бот считается пополненным на этой стоянке (сам к борту уже не пойдёт)
+function survBotSupply(p, k) {
+  const s = G.surv, m = /^botsupply:(\d+):(.*)$/.exec(k);
+  if (!s || !m || !nearRear(p) || p.dead || p.down) return;
+  const bot = G.players.find((o) => o.ai && o.side === 'p' && o.slot === +m[1] && !o.dead);
+  if (!bot) return;
+  const sup = truckSupply(bot, m[2].split(','));
+  bot.supplied = s.stop;
+  emit(['toast', p.id, `${bot.name}: ${sup.names}; броня ${sup.arm || 'нет'}`]);
+}
 if (truckMenuEl) {
   truckMenuEl.querySelector('#tmSupply').addEventListener('click', () => {
     const v = (id) => truckMenuEl.querySelector(id).value;

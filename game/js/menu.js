@@ -11,6 +11,7 @@ const nameEl = document.getElementById('name');
 const botsChk = document.getElementById('botsChk');
 const lobbyBotsChk = document.getElementById('lobbyBots');
 const lobbyFFChk = document.getElementById('lobbyFF');
+const lobbyBotGunsChk = document.getElementById('lobbyBotGuns');
 
 function setStatus(t) { statusEl.textContent = t; }
 function hideMenu() { menuEl.classList.add('hidden'); canvas.classList.add('playing'); setStatus(''); }
@@ -72,6 +73,8 @@ function renderLobby() {
   lobbyBotsChk.disabled = !isHost;
   lobbyFFChk.checked = Lobby.ff;
   lobbyFFChk.disabled = !isHost;
+  lobbyBotGunsChk.checked = Lobby.botGuns;
+  lobbyBotGunsChk.disabled = !isHost || !Lobby.bots;
   const waiting = Lobby.slots.filter((s) => s.human && !s.ready).map((s) => s.name);
   lobbyStatusEl.textContent = !mine || !mine.ready ? 'Нажмите «Готов»'
     : waiting.length ? `Ждём готовности: ${waiting.join(', ')}`
@@ -105,11 +108,20 @@ lobbyFFChk.addEventListener('change', () => {
   lobbyChanged();
 });
 
-// Позывной, галочка ботов и огонь по своим сохраняются между запусками
+// случайное оружие у ботов: решает хост в лобби, запоминается
+lobbyBotGunsChk.addEventListener('change', () => {
+  if (G.role === 'guest') return;
+  Lobby.botGuns = lobbyBotGunsChk.checked;
+  try { localStorage.setItem('pcr-botguns', Lobby.botGuns ? '1' : '0'); } catch (e) { /* ignore */ }
+  lobbyChanged();
+});
+
+// Позывной, галочка ботов, огонь по своим и оружие ботов сохраняются между запусками
 try {
   nameEl.value = localStorage.getItem('pcr-name') || '';
   botsChk.checked = localStorage.getItem('pcr-bots') !== '0';
   Lobby.ff = localStorage.getItem('pcr-ff') !== '0';
+  Lobby.botGuns = localStorage.getItem('pcr-botguns') !== '0';
 } catch (e) { /* ignore */ }
 function saveBots() { try { localStorage.setItem('pcr-bots', botsChk.checked ? '1' : '0'); } catch (e) { /* ignore */ } }
 botsChk.addEventListener('change', saveBots);

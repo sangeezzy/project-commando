@@ -56,6 +56,18 @@
   #loErr, #tmErr { min-height:18px; color:var(--warn); font-family:Consolas, monospace; font-size:12px; }
   #truckMenu select { font-family:Consolas, monospace; font-size:13px; color:var(--fg); background:rgba(15,16,17,.9);
     border:1px solid var(--line); padding:6px; min-width:340px; max-width:100%; }
+  /* панель снаряжения бота — справа от меню (узкий экран — ниже), стрелка на правом краю меню её открывает */
+  #loadout, #truckMenu { gap:18px; flex-wrap:wrap; }
+  #loadout > .screen, #truckMenu > .screen { position:relative; }
+  .sidearrow { position:absolute; right:-16px; top:50%; transform:translateY(-50%); width:32px; min-width:0 !important; height:76px;
+    padding:0 !important; font-size:16px; z-index:1; border-radius:6px; }
+  .botside { max-width:440px !important; }
+  .botside select { min-width:270px !important; }
+  .botside .bn { min-width:120px; text-align:center; font-family:Consolas, monospace; }
+  .botside .row.bsw { flex-wrap:nowrap; }
+  .botside .bprev, .botside .bnext { min-width:0 !important; width:46px; padding:6px 0 !important; }
+  .botside .berr { min-height:18px; color:var(--warn); font-family:Consolas, monospace; font-size:12px; }
+  .botside h3 { margin:0; font-size:15px; letter-spacing:.05em; }
   /* не помещается (телефон) — прокрутка, а не обрезка */
   #loadout, #truckMenu { overflow:auto; align-items:flex-start; }
   #loadout > .screen, #truckMenu > .screen { margin:auto 0; }
@@ -234,6 +246,7 @@
     <div id="slots"></div>
     <label><input type="checkbox" id="lobbyBots"> Пустые места занимают союзные боты</label>
     <label><input type="checkbox" id="lobbyFF"> Огонь по своим (пули, нож и машина ранят бойцов отряда)</label>
+    <label><input type="checkbox" id="lobbyBotGuns"> Случайное оружие у ботов-союзников (иначе — только пистолет; сменить можно на оружейном столе)</label>
     <div class="row"><label><input type="checkbox" id="voiceChk"> Голосовой чат (микрофон): рядом слышно без рации, <b>B</b> — рация, <b>M</b> — микрофон</label></div>
     <div id="voiceStatus" class="help"></div>
     <div class="row">

@@ -202,6 +202,8 @@ function applyAct(p, k) {
   else if (k === 'knife') startMelee(p);
   else if (k.startsWith('kit:')) applyKitAct(p, k);
   else if (k === 'supply' || k.startsWith('supply:') || k === 'heal' || k === 'evac' || k === 'truckgo') survAct(p, k);
+  else if (k.startsWith('botkit:')) applyBotKitAct(p, k);          // снаряжение союзному боту — у оружейного стола
+  else if (k.startsWith('botsupply:')) survBotSupply(p, k);        // …и у заднего борта грузовика
   else if (k === 'god') {
     p.god = !p.god;
     if (p.god) { if (p.down) reviveUp(p); p.hp = HP; }        // включил раненым — сразу на ногах и с полным здоровьем

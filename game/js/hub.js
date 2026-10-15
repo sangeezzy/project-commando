@@ -123,9 +123,92 @@ function openLoadout() {
   loadoutEl.querySelector('#lo4').innerHTML = ARMOR_ORDER.map((c) => `<option value="${c || ''}"${c === curA ? ' selected' : ''}>${armorLabel(c)}</option>`).join('');
   loadoutEl.querySelector('#loErr').textContent = '';
   loadoutEl.classList.remove('hidden');
+  if (loBots) loBots.reset();
   for (const k in keys) keys[k] = false;
 }
 function closeLoadout() { if (loadoutEl) loadoutEl.classList.add('hidden'); }
+
+// ---------- Снаряжение союзного бота: панель справа от меню стола / грузовика ----------
+// Стрелка на правом краю меню открывает панель одного бота; сверху — переключатель ◀ Бот N ▶. Стол (mode 'table') — любое оружие и броня,
+// запоминается за ботом (G.botKits) и выдаётся на каждой карте; грузовик ('truck') — что можно взять сейчас (truckOffer бота).
+// Выдаёт хост: действия 'botkit:место:a,b,c,броня' (у стола) и 'botsupply:место:…' (у заднего борта)
+function makeBotPanel(root, mode) {
+  const main = root.querySelector('.screen');
+  const arrow = document.createElement('button');
+  arrow.className = 'sidearrow'; arrow.textContent = '▶'; arrow.title = 'Снаряжение ботов';
+  main.appendChild(arrow);
+  const side = document.createElement('div');
+  side.className = 'screen botside hidden';
+  side.innerHTML = '<h3>СНАРЯЖЕНИЕ БОТА</h3>' +
+    '<div class="row bsw"><button class="bprev">◀</button><span class="bn"></span><button class="bnext">▶</button></div>' +
+    '<div class="row"><label>Оружие 1</label><select class="b1"></select></div>' +
+    '<div class="row"><label>Оружие 2</label><select class="b2"></select></div>' +
+    '<div class="row"><label>Пистолет</label><select class="b3"></select></div>' +
+    '<div class="row"><label>Броня</label><select class="b4"></select></div>' +
+    '<div class="berr"></div><button class="bok">ВЫДАТЬ БОТУ</button>';
+  root.appendChild(side);
+  const q = (c) => side.querySelector(c);
+  const st = { slot: null };
+  const bots = () => G.players.filter((o) => o.ai && o.side === 'p' && !o.dead).sort((a, b) => a.slot - b.slot);
+  const opt = (ids, sel, none) => (none ? `<option value="">— пусто —</option>` : '') +
+    ids.map((t) => `<option value="${t}"${t === sel ? ' selected' : ''}>${WEAPONS[t].name} — ${WEAPONS[t].cal}</option>`).join('');
+  function fill() {
+    const list = bots();
+    arrow.classList.toggle('hidden', !list.length);
+    if (!list.length) { side.classList.add('hidden'); return; }
+    let b = list.find((o) => o.slot === st.slot) || list[0];
+    st.slot = b.slot;
+    q('.bn').textContent = b.name || `Бот ${b.slot + 1}`;
+    q('.bn').style.color = SLOT_COLORS[b.slot];
+    const cur = b.kit.map((g) => g && g.t), curA = b.armor ? b.armor.cls : null;
+    const off = mode === 'truck' ? truckOffer(b) : { prim: PRIMARY_IDS, pist: PISTOL_IDS, armors: ARMOR_ORDER };
+    q('.b1').innerHTML = opt(off.prim, cur[0], true);
+    q('.b2').innerHTML = opt(off.prim, cur[1], true);
+    q('.b3').innerHTML = opt(off.pist, cur[2], false);
+    const selA = off.armors.includes(curA) ? curA : off.armors[off.armors.length - 1];
+    q('.b4').innerHTML = off.armors.map((c) => `<option value="${c || ''}"${c === selA ? ' selected' : ''}>${armorLabel(c)}</option>`).join('');
+    q('.berr').textContent = '';
+  }
+  const step = (d) => { const l = bots(); if (!l.length) return; const i = Math.max(0, l.findIndex((o) => o.slot === st.slot)); st.slot = l[(i + d + l.length) % l.length].slot; fill(); };
+  arrow.addEventListener('click', () => {
+    const open = side.classList.contains('hidden');
+    side.classList.toggle('hidden', !open); arrow.textContent = open ? '◀' : '▶';
+    if (open) fill();
+  });
+  q('.bprev').addEventListener('click', () => step(-1));
+  q('.bnext').addEventListener('click', () => step(1));
+  q('.bok').addEventListener('click', () => {
+    const a = q('.b1').value, b = q('.b2').value, c = q('.b3').value, ar = q('.b4').value, p = me();
+    if (a && a === b) { q('.berr').textContent = 'Два одинаковых ствола брать незачем — выберите разные.'; return; }
+    if (!p || st.slot === null) return;
+    doAct(p, `${mode === 'truck' ? 'botsupply' : 'botkit'}:${st.slot}:${a},${b},${c},${ar}`);
+    q('.berr').textContent = 'Выдано: ' + q('.bn').textContent;
+  });
+  return {
+    // меню открылось: панель свёрнута, стрелка — если есть живые боты
+    reset() { side.classList.add('hidden'); arrow.textContent = '▶'; arrow.classList.toggle('hidden', !bots().length); },
+    open: () => !side.classList.contains('hidden'),
+  };
+}
+const loBots = loadoutEl ? makeBotPanel(loadoutEl, 'table') : null;
+
+// Действие 'botkit:место:a,b,c,броня' (хост): союзному боту — снаряжение со стола (игрок у стола, в хабе), с полным боекомплектом и целой
+// бронёй; запоминается (G.botKits[место]) и выдаётся на каждой карте. a, b — полноразмерные (оба могут быть пустыми — только пистолет)
+function applyBotKitAct(p, k) {
+  if (G.mapId !== 'hub' || !tableNear(p)) return;
+  const m = /^botkit:(\d+):(.*)$/.exec(k);
+  if (!m) return;
+  const slot = +m[1], bot = G.players.find((o) => o.ai && o.side === 'p' && o.slot === slot && !o.dead);
+  let [a, b, c0, ar0] = m[2].split(',');
+  const c = c0 || 'm1911', ar = ar0 || null;
+  if (!a && b) { a = b; b = ''; }
+  if (!bot || (a && !PRIMARY_IDS.includes(a)) || (b && (!PRIMARY_IDS.includes(b) || b === a)) || !PISTOL_IDS.includes(c) || !ARMOR_ORDER.includes(ar)) return;
+  giveKit(bot, a || null, b || null, c);
+  giveArmor(bot, ar);
+  G.botKits = G.botKits || {};
+  G.botKits[slot] = [a || null, b || null, c, ar];
+  emit(['toast', p.id, `${bot.name}: ${[a, b, c].filter(Boolean).map((t) => WEAPONS[t].name).join(' + ')}; броня ${ar || 'нет'}`]);
+}
 const loadoutOpen = () => !!loadoutEl && !loadoutEl.classList.contains('hidden');
 if (loadoutEl) {
   loadoutEl.querySelector('#loOk').addEventListener('click', () => {

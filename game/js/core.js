@@ -86,6 +86,15 @@ function randomKit(o, rnd = Math.random, pool = PRIMARY_IDS) {
   return giveKit(o, p1, p2, randomPistol(rnd));
 }
 
+// Снаряжение союзного бота на карте: выбранное ему на оружейном столе (G.botKits[место] = [a, b, пистолет, броня]); не выбирали —
+// случайное (галочка в лобби «случайное оружие у ботов», G.botsRandom; по умолчанию — да) или только случайный пистолет
+function botKitFor(o, rnd = Math.random) {
+  const k = (G.botKits || {})[o.slot];
+  if (k) { giveKit(o, k[0], k[1], k[2]); giveArmor(o, k[3] || null); return o; }
+  if (G.botsRandom === false) return giveKit(o, null, null, randomPistol(rnd));
+  return randomKit(o, rnd);
+}
+
 function makePerson(side, x, y, a = 0) {
   return giveKit(newPerson(side, x, y, a), 'm4a1', null);      // по умолчанию: M4A1 + пистолет
 }
@@ -182,7 +191,7 @@ function startMap(id, seed = 0, squad = null, bots = false) {
       if (k) { giveKit(o, k[0], k[1], k[2]); giveArmor(o, k[3] || null); }    // выбранное на оружейном столе (и броня — целая)
     } else if (bots && humans.length) {
       o = makeBot(slot, x, y, a, humans[slot % humans.length]);
-      if (id !== 'range') randomKit(o, rnd);
+      if (id !== 'range') botKitFor(o, rnd);       // со стола, случайное или только пистолет (галочка в лобби)
     }
     if (o) G.players.push(o);
   }

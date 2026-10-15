@@ -20,7 +20,7 @@ const Net = {
 
 // Лобби: size мест (2–8, выбирает хост / одиночка в главном меню); human — занято человеком; ready — нажал «Готов»
 const SQUAD_MIN = 2, SQUAD_MAX = 8;
-const Lobby = { slots: [], bots: true, size: 4, ff: true };     // ff — огонь по своим (решает хост в лобби; ffBlocked в weapon.js)
+const Lobby = { slots: [], bots: true, size: 4, ff: true, botGuns: true };   // botGuns — случайное оружие у ботов (иначе только пистолет)     // ff — огонь по своим (решает хост в лобби; ffBlocked в weapon.js)
 const emptySlots = (n = Lobby.size) => Array.from({ length: clamp(n | 0, SQUAD_MIN, SQUAD_MAX) }, (_, slot) => ({ slot, human: false, name: '', ready: false }));
 
 function send(msg) {
@@ -122,8 +122,11 @@ function takeSlot(slot, name) {
     const lead = G.players.find((q) => !q.dead && !q.ai) || G.players.find((q) => !q.dead) || { x: map.start.x * TILE, y: map.start.y * TILE, a: -Math.PI / 2 };
     const spot = freeSpotNear(lead.x + TILE, lead.y, PR) || { x: lead.x, y: lead.y };
     p = makeHuman(slot, spot.x, spot.y, lead.a ?? -Math.PI / 2, name);
+    if (G.kits) giveKit(p, null, null, randomPistol());          // новый боец в сессии — как все на старте: только пистолет
     G.players.push(p);
   }
+  // снаряжение места — то, с чем вошёл (тело бота или пистолет): дальше — на каждой карте, пока не сменит на столе
+  if (G.kits && !G.kits[slot]) G.kits[slot] = [p.kit[0] ? p.kit[0].t : null, p.kit[1] ? p.kit[1].t : null, p.kit[2] ? p.kit[2].t : 'm1911', p.armor ? p.armor.cls : null];
   G.lastSquad = [...(G.lastSquad || []).filter((q) => q.slot !== slot), { slot, human: true, name }];
 }
 
@@ -156,7 +159,7 @@ function lobbyChanged() {
   if (G.role === 'host') {
     // голос — Opus, если его умеют все в комнате (иначе μ-law)
     Voice.useOpus = Voice.opusOk && [...Net.conns.values()].every((k) => k.op);
-    broadcast({ t: 'lobby', slots: Lobby.slots, bots: Lobby.bots, ff: Lobby.ff ? 1 : 0, code: Net.code, addrs: Net.addrs, vop: Voice.useOpus ? 1 : 0 });
+    broadcast({ t: 'lobby', slots: Lobby.slots, bots: Lobby.bots, ff: Lobby.ff ? 1 : 0, bg: Lobby.botGuns ? 1 : 0, code: Net.code, addrs: Net.addrs, vop: Voice.useOpus ? 1 : 0 });
   }
   if (G.state === 'lobby') renderLobby();
 }
@@ -170,6 +173,11 @@ function startGameFromLobby() {
   hideMenu();
   G.lastSquad = squad; G.lastBots = Lobby.bots;
   G.squadSize = Lobby.slots.length;      // мест в отряде: пустые — боты (если включены)
+  // снаряжение на старте: людям — только случайный пистолет (остальное — на оружейном столе в хабе); ботам — по галочке:
+  // случайное или только случайный пистолет (сменить можно на столе — G.botKits)
+  G.kits = {};
+  for (const s of squad) G.kits[s.slot] = [null, null, randomPistol(), null];
+  G.botKits = {}; G.botsRandom = Lobby.botGuns;
   launchMap('hub', 0);                    // после лобби — хаб: оружейный стол и проходы на карты
 }
 
@@ -246,7 +254,7 @@ function onGuestData(d, timeout, code) {
   }
   if (G.role !== 'guest') return;
   if (d.t === 'lobby') {
-    Lobby.slots = d.slots; Lobby.bots = d.bots; Lobby.ff = d.ff !== 0; Net.addrs = d.addrs || Net.addrs; Voice.useOpus = !!d.vop && Voice.opusOk;
+    Lobby.slots = d.slots; Lobby.bots = d.bots; Lobby.ff = d.ff !== 0; Lobby.botGuns = d.bg !== 0; Net.addrs = d.addrs || Net.addrs; Voice.useOpus = !!d.vop && Voice.opusOk;
     if (G.state === 'lobby') renderLobby();
   }
   else if (d.t === 'start') { hideMenu(); if (G.state === 'lobby') G.state = 'play'; }

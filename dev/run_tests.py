@@ -67,6 +67,7 @@ UNIT_TESTS = {
     'recoil': 'bots=1',
     'guides': '',
     'carspin': '',
+    'botkit': '',
     'touch': 'touch=1',
     'app': 'touch=1&app=1',
     'opts': 'touch=1',

@@ -90,7 +90,8 @@ async function main() {
   E(G1, "pressed.KeyF = true");
   await sleep(200);
   const loOpen = E(G1, 'loadoutOpen()');
-  E(G1, "document.getElementById('lo1').value = 'akm'; document.getElementById('lo2').value = 'w1300'; document.getElementById('loOk').click()");
+  // пистолет на старте — случайный: на столе явно Colt M1911
+  E(G1, "document.getElementById('lo1').value = 'akm'; document.getElementById('lo2').value = 'w1300'; document.getElementById('lo3').value = 'm1911'; document.getElementById('loOk').click()");
   const gKit = () => E(H, `G.players.find((q) => q.slot === ${E(G1, 'G.mySlot')}).kit.map((k) => k && k.t).join()`);
   const kitOk = await until(() => gKit() === 'akm,w1300,m1911' && E(G1, 'me().kit.map((k) => k && k.t).join()') === 'akm,w1300,m1911', 4000);
   check('гость у стола (F) взял АКМ + ружьё: у хоста и у гостя', loOpen && kitOk, [loOpen, gKit(), E(G1, 'me().kit.map((k) => k && k.t).join()')]);
