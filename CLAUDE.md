@@ -140,8 +140,8 @@
 - **Отдача** (пока только у игрока; `RECOIL`, `RECOIL_W`, `WEAPON_MODS` в data.js; `recoilPower`/`recoilShot`/`recoilKick`/`recoilReturn` в weapon.js;
   тест `recoil`): увод ствола по горизонтали за выстрел, мрад = `yawK` × √E (энергия свободного отката: импульс пули и пороховых газов
   за вычетом дульного тормоза `brake`, масса оружия `mass`) × (`lenRef` / ствол `bl`)^`lenExp` × станок `mount` × стойка × модификации;
-  постоянная часть `side` (АКМ — вправо) + случайная `rand`. Стойка: прицел ×(1 − 0,4·ads), присед ×0,75 (у РПК-74 и M249 — 0,6),
-  перемножаются. Модификации оружия — `g.mods` (id из `WEAPON_MODS`); на отдачу влияют только с флагом `recoil: true` (`recoilMods`: yaw,
+  постоянная часть `side` (АКМ — вправо) + случайная `rand`. Стойка: от бедра ×`hip` 1,5, с прицелом ×`ads` 0,6 (между — по доле прицеливания),
+  присед ×0,75 (у РПК-74 и M249 — 0,6), на ходу ×(1 + `move` 0,7 × скорость / шаг) — всё перемножается. Модификации оружия — `g.mods` (id из `WEAPON_MODS`); на отдачу влияют только с флагом `recoil: true` (`recoilMods`: yaw,
   side, ret). Два варианта (отладка, **P** — `toggleRecoilMode`, `OPTS.recoil`): `'barrel'` (по умолчанию) — уводит только ствол
   (`o.recoilYaw`: пули, вспышка, оружие на модели, перекрестие `aimScreenPoint`, лазер), взгляд на месте, стрелок сам возвращает ствол
   (`ret` или `WEAPONS.recover`, 1/с); `'aim'` — уводит прицел вместе со взглядом, обратно не возвращается: в камере по взгляду — `p.a`,
@@ -513,8 +513,8 @@ python dev/run_tests.py --only m4,cover
   профиль `dev/prof.py`, скриншоты `dev/shot.sh`.
 
 ## Текущее состояние
-- Ветка `main`, удалённый репозиторий — `origin` = https://github.com/sangeezzy/project-commando (приватный, с 2026-10-15; метка `archive-prototypes` тоже там). Версия `GAME_VERSION` = `2026-10-21.recoil`;
-  .apk этой версии собран (`dist/commando-2026-10-21.recoil.apk`, 2026-10-15, отдача у игрока, два варианта — P). **Правило пользователя:** после любых
+- Ветка `main`, удалённый репозиторий — `origin` = https://github.com/sangeezzy/project-commando (приватный, с 2026-10-15; метка `archive-prototypes` тоже там). Версия `GAME_VERSION` = `2026-10-21.recoil2`;
+  .apk этой версии собран (`dist/commando-2026-10-21.recoil2.apk`, 2026-10-15, отдача сильнее на ходу и от бедра). **Правило пользователя:** после любых
   изменений игры (`game/`) — поднять `GAME_VERSION` и пересобрать .apk (`dev/android/build_apk.py`).
 - Релизы GitHub (репозиторий публичный с 2026-10-15): метка `v<GAME_VERSION>`, файлы всегда с одними именами — `commando.apk` и
   `commando-windows.zip` (`commando/` → `game/` из `dist/` после `dev/build.py`, `server/`, `Играть.bat`, README): README ссылается на

@@ -5,7 +5,7 @@ window.__result = (() => {
   const { check, step, at, run, dummy } = T_;
   const p = me();
   G.enemies.forEach(dummy);
-  const shot = (t, st = {}) => { const g0 = p.gun; p.gun = makeGun(t); Object.assign(p, { ads: 0, crouch: false }, st); const v = recoilShot(p); p.gun = g0; return v; };
+  const shot = (t, st = {}) => { const g0 = p.gun; p.gun = makeGun(t); Object.assign(p, { ads: 0, crouch: false, speed: 0 }, st); const v = recoilShot(p); p.gun = g0; return v; };
   const fire = (n) => { for (let i = 0; i < n; i++) { p.gun.chamber = 1; p.gun.mag = 20; p.gun.cd = 0; fireRound(p, 0); } };
   const reset = () => { OPTS.cam = 'std'; G.state = 'play';
     Object.assign(p, { recoilYaw: 0, aimRot: 0, ads: 0, crouch: false, crouchToggle: false, dead: false, down: false, hp: 100, god: true });
@@ -27,11 +27,14 @@ window.__result = (() => {
     check('длиннее ствол — меньше увод', vLong < v.m4a1, [vLong.toFixed(2), v.m4a1.toFixed(2)]);
   });
 
-  run('стойка: прицел и присед, вместе — перемножаются', () => {
+  run('стойка: прицел, присед, ходьба — перемножаются', () => {
     const s0 = shot('m4a1'), sA = shot('m4a1', { ads: 1 }), sC = shot('m4a1', { crouch: true }), sAC = shot('m4a1', { ads: 1, crouch: true });
-    check('с прицелом меньше', Math.abs(sA / s0 - (1 - RECOIL.ads)) < 1e-9, (sA / s0).toFixed(3));
+    check('без прицела сильнее, чем с прицелом (×hip / ×ads)', Math.abs(sA / s0 - RECOIL.ads / RECOIL.hip) < 1e-9 && s0 > sA * 2, (s0 / sA).toFixed(3));
     check('присев меньше', Math.abs(sC / s0 - RECOIL.crouch) < 1e-9, (sC / s0).toFixed(3));
-    check('вместе — произведение', Math.abs(sAC / s0 - (1 - RECOIL.ads) * RECOIL.crouch) < 1e-9, (sAC / s0).toFixed(3));
+    check('прицел и присед — произведение', Math.abs(sAC / s0 - RECOIL.ads / RECOIL.hip * RECOIL.crouch) < 1e-9, (sAC / s0).toFixed(3));
+    const sW = shot('m4a1', { speed: M(SPEED.walk) }), sWA = shot('m4a1', { speed: M(SPEED.walk), ads: 1 });
+    check('на ходу сильнее (полный шаг ×(1 + move))', Math.abs(sW / s0 - (1 + RECOIL.move)) < 1e-9, (sW / s0).toFixed(3));
+    check('на ходу с прицелом — тоже произведение', Math.abs(sWA / sA - (1 + RECOIL.move)) < 1e-9);
     check('ручной пулемёт присев — свой множитель (сошки, вес)', Math.abs(shot('rpk74', { crouch: true }) / shot('rpk74') - RECOIL_W.rpk74.crouch) < 1e-9);
   });
 
@@ -39,7 +42,7 @@ window.__result = (() => {
     const g = makeGun('m4a1');
     check('у оружия есть список модификаций', Array.isArray(g.mods) && !g.mods.length);
     const s0 = shot('m4a1');
-    const g0 = p.gun; p.gun = makeGun('m4a1'); p.ads = 0; p.crouch = false;
+    const g0 = p.gun; p.gun = makeGun('m4a1'); p.ads = 0; p.crouch = false; p.speed = 0;
     p.gun.mods = ['light'];
     check('модификация без флага recoil — отдачу не меняет', Math.abs(recoilShot(p) - s0) < 1e-9);
     p.gun.mods = ['brake'];

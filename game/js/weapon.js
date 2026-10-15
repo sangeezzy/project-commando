@@ -77,10 +77,12 @@ function recoilPower(t) {
   const I = (R.mb * W.v0 + R.mp * RECOIL.gasV * W.v0 * (1 - R.brake)) / 1000;     // Н·с
   return I / Math.sqrt(2 * R.mass);
 }
-// Множитель стойки: прицел и присед уменьшают, вместе — перемножаются
+// Множитель стойки: от бедра сильнее, с прицелом слабее; присед уменьшает, ходьба усиливает — всё перемножается
 function recoilStance(o) {
-  const R = RECOIL_W[o.gun.t] || {};
-  return (1 - RECOIL.ads * clamp(o.ads || 0, 0, 1)) * (o.crouch ? R.crouch ?? RECOIL.crouch : 1);
+  const R = RECOIL_W[o.gun.t] || {}, ads = clamp(o.ads || 0, 0, 1);
+  const aim = RECOIL.hip + (RECOIL.ads - RECOIL.hip) * ads;
+  const move = 1 + RECOIL.move * clamp((o.speed || 0) / M(SPEED.walk), 0, 1.5);
+  return aim * (o.crouch ? R.crouch ?? RECOIL.crouch : 1) * move;
 }
 // Увод за выстрел, мрад (масштаб: постоянная часть — side, случайная — rand)
 function recoilShot(o) {
