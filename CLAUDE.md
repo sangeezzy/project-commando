@@ -117,12 +117,15 @@
   `firstCount(бойцов)`: гость строит ту же карту; `kitForStage` = `kitForWave` (1–2 — пистолеты, 3–4 — и ружья, 5–6 — наполовину `randomKit`, дальше — `randomKit`); из хаба — всегда локация 1 (`assaultSeed(…, 1)` в `updateHub`); патруль/охрана — как в «Выживании».
   `updateAssault`: бой → все уничтожены → грузовик (после 3, 6, 9, 12, дальше каждой второй — `SURV.truckDue`) → фаза `exit` (хост 2 с в переходе) → `nextStage`.
   Отряд переносится (`G.assaultCarry`: оружие, патроны, здоровье, броня; раненые — 25; погибшие на новую локацию не попадают — `evac`, без тела; с 1-й локации сбрасывается).
-  Погибших (и в «Выживании») привозит грузовик (`truckReinforce` при стоянке: у заднего борта, полное здоровье, снаряжение со стола / новое у ботов, без брони).
+  Погибших (и в «Выживании») привозит грузовик (`truckReinforce` при стоянке: у заднего борта, полное здоровье, снаряжение со стола (с его бронёй) / новое у ботов, без брони).
 - Забег (`G.run` в hub.js: `startRun`/`endRun`/`runCount`; `cleared`, `kills`, `losses`, в снимке — `sv[10]`): «Выживание» или «Штурм» от хаба до хаба; Enter в забеге не работает.
   Конец — всегда в хаб: «покинуть боевую зону» (`backToHub(true)`) — успех; Backspace и гибель отряда (экран итогов `RUN_DEAD_T` = 5 с) — поражение.
   Итоги — эффект `'result'` → `G.runResult`, панель в хабе `drawRunResult` (`RUN_RESULT_T` = 25 с): пережито волн / зачищено локаций, убито, потери.
 - `hub.js` — хаб и карты: `missionSetup(rnd)` («Зачистка»), `updateHub` (хост в проходе `HUB_HOLD` = 2 с → `launchMap`), `launchMap`/`backToHub`,
-  оружейный стол (`tableNear`, `openLoadout` — DOM `#loadout`, действие `kit:a,b` → `applyKitAct` у хоста, `G.kits[slot]`), `drawHubWorld`.
+  оружейный стол (`tableNear`, `openLoadout` — DOM `#loadout`, действие `kit:a,b,c,броня` → `applyKitAct` у хоста, `G.kits[slot]` =
+  [a, b, c, броня]; броня — любой класс `ARMOR_ORDER` или без, сразу на бойце, `armorLabel` — строка выбора и у грузовика), `drawHubWorld`.
+  Броня со стола (`tableArmor` в survival.js): на каждой карте (`startMap`), в начале «Выживания» и на 1-й локации «Штурма», у привезённых
+  грузовиком; у грузовика в выборе — до max(привезённой, со стола).
 - `fx.js` — `emit` → `playFx` (вспышки, гильзы, следы пуль, попадания по материалам, кровь, выпавшие магазины), синтез звука `SFX`
   (выстрел с задержкой по скорости звука и глуше за стеной, щелчок пролетевшей пули, перезарядка, гильзы).
 - `weapon.js` — `playerSpread`, `pullTrigger` (режимы, темп с переносом остатка), `fireRound`, `updateGun` (отдача гаснет), `startReload`/`finishReload`,
@@ -485,8 +488,8 @@ python dev/run_tests.py --only m4,cover
   профиль `dev/prof.py`, скриншоты `dev/shot.sh`.
 
 ## Текущее состояние
-- Ветка `main`, удалённый репозиторий — `origin` = https://github.com/sangeezzy/project-commando (приватный, с 2026-10-15; метка `archive-prototypes` тоже там). Версия `GAME_VERSION` = `2026-10-21.ff`;
-  .apk этой версии собран (`dist/commando-2026-10-21.ff.apk`, 2026-10-15, с огнём по своим и тараном). **Правило пользователя:** после любых
+- Ветка `main`, удалённый репозиторий — `origin` = https://github.com/sangeezzy/project-commando (приватный, с 2026-10-15; метка `archive-prototypes` тоже там). Версия `GAME_VERSION` = `2026-10-21.armor`;
+  .apk этой версии собран (`dist/commando-2026-10-21.armor.apk`, 2026-10-15, с бронёй на оружейном столе). **Правило пользователя:** после любых
   изменений игры (`game/`) — поднять `GAME_VERSION` и пересобрать .apk (`dev/android/build_apk.py`).
 - Релизы GitHub (репозиторий публичный с 2026-10-15): метка `v<GAME_VERSION>`, файлы всегда с одними именами — `commando.apk` и
   `commando-windows.zip` (`commando/` → `game/` из `dist/` после `dev/build.py`, `server/`, `Играть.bat`, README): README ссылается на

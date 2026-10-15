@@ -222,7 +222,7 @@ function assaultInit(rnd) {
     q.hp = c.hp;
     q.armor = c.armor ? { ...c.armor } : null;
     if (c.dead) Object.assign(q, { dead: true, hp: 0, evac: true });   // погибшие — не здесь: приедут с грузовиком
-  } else for (const q of G.players) q.armor = null;
+  } else for (const q of G.players) giveArmor(q, tableArmor(q));   // 1-я локация — броня со стола (или без)
 }
 
 // Ход локации (хост): бой (подкрепление) → все уничтожены → грузовик (если положен) → переход открыт (хост стоит 2 с) → следующая

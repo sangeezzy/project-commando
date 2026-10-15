@@ -108,7 +108,7 @@ function runCount(o) {
   if (o.side === 'e') G.run.kills++; else G.run.losses++;
 }
 
-// ---------- Оружейный стол: выбор двух полноразмерных (слот 2 может быть пустым), пистолет — всегда ----------
+// ---------- Оружейный стол: выбор двух полноразмерных (слот 2 может быть пустым), пистолет — всегда, броня (можно без) ----------
 const loadoutEl = document.getElementById('loadout');
 function openLoadout() {
   const p = me();
@@ -119,6 +119,8 @@ function openLoadout() {
   loadoutEl.querySelector('#lo1').innerHTML = opt(PRIMARY_IDS, cur[0], false);
   loadoutEl.querySelector('#lo2').innerHTML = opt(PRIMARY_IDS, cur[1], true);
   loadoutEl.querySelector('#lo3').innerHTML = opt(PISTOL_IDS, cur[2], false);
+  const curA = p.armor ? p.armor.cls : null;
+  loadoutEl.querySelector('#lo4').innerHTML = ARMOR_ORDER.map((c) => `<option value="${c || ''}"${c === curA ? ' selected' : ''}>${armorLabel(c)}</option>`).join('');
   loadoutEl.querySelector('#loErr').textContent = '';
   loadoutEl.classList.remove('hidden');
   for (const k in keys) keys[k] = false;
@@ -127,27 +129,30 @@ function closeLoadout() { if (loadoutEl) loadoutEl.classList.add('hidden'); }
 const loadoutOpen = () => !!loadoutEl && !loadoutEl.classList.contains('hidden');
 if (loadoutEl) {
   loadoutEl.querySelector('#loOk').addEventListener('click', () => {
-    const a = loadoutEl.querySelector('#lo1').value, b = loadoutEl.querySelector('#lo2').value, c = loadoutEl.querySelector('#lo3').value;
+    const v = (id) => loadoutEl.querySelector(id).value;
+    const a = v('#lo1'), b = v('#lo2'), c = v('#lo3'), ar = v('#lo4');
     if (a === b) { loadoutEl.querySelector('#loErr').textContent = 'Два одинаковых ствола брать незачем — выберите разные.'; return; }
     const p = me();
-    if (p) doAct(p, `kit:${a},${b},${c}`);
+    if (p) doAct(p, `kit:${a},${b},${c},${ar}`);
     closeLoadout();
   });
   loadoutEl.querySelector('#loCancel').addEventListener('click', closeLoadout);
   addEventListener('keydown', (e) => { if (e.code === 'Escape' && loadoutOpen()) { e.stopImmediatePropagation(); closeLoadout(); } }, true);
 }
 
-// Действие 'kit:a,b,c' (у хоста): новое снаряжение с полным боекомплектом — только в хабе, у стола; запоминается за местом.
-// a, b — полноразмерные (b может быть пустым), c — пистолет (нет — Colt M1911)
+// Действие 'kit:a,b,c,броня' (у хоста): новое снаряжение с полным боекомплектом и целой бронёй — только в хабе, у стола;
+// запоминается за местом (G.kits[slot] = [a, b, c, броня]) и выдаётся на каждой карте (startMap) и привезённым грузовиком.
+// a, b — полноразмерные (b может быть пустым), c — пистолет (нет — Colt M1911), броня — класс из ARMOR_ORDER (пусто — без брони)
 function applyKitAct(p, k) {
   if (G.mapId !== 'hub' || !tableNear(p)) return;
-  const [a, b, c0] = k.slice(4).split(',');
-  const c = c0 || 'm1911';
-  if (!PRIMARY_IDS.includes(a) || (b && (!PRIMARY_IDS.includes(b) || b === a)) || !PISTOL_IDS.includes(c)) return;
+  const [a, b, c0, ar0] = k.slice(4).split(',');
+  const c = c0 || 'm1911', ar = ar0 || null;
+  if (!PRIMARY_IDS.includes(a) || (b && (!PRIMARY_IDS.includes(b) || b === a)) || !PISTOL_IDS.includes(c) || !ARMOR_ORDER.includes(ar)) return;
   giveKit(p, a, b || null, c);
+  giveArmor(p, ar);
   G.kits = G.kits || {};
-  G.kits[p.slot] = [a, b || null, c];
-  emit(['toast', p.id, `СНАРЯЖЕНИЕ: ${WEAPONS[a].name}${b ? ' + ' + WEAPONS[b].name : ''} + ${WEAPONS[c].name}`]);
+  G.kits[p.slot] = [a, b || null, c, ar];
+  emit(['toast', p.id, `СНАРЯЖЕНИЕ: ${WEAPONS[a].name}${b ? ' + ' + WEAPONS[b].name : ''} + ${WEAPONS[c].name}; броня ${ar || 'нет'}`]);
 }
 
 // ---------- Отрисовка: надписи у проходов, счёт перехода, подсказка у стола (в координатах мира) ----------

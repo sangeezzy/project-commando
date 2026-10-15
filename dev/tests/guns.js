@@ -57,7 +57,7 @@ window.__result = (() => {
     document.getElementById('lo1').value = 'fal'; document.getElementById('lo2').value = 'm249'; document.getElementById('lo3').value = 'tt';
     document.getElementById('loOk').click();
     check('взял FN FAL + M249 + ТТ', h.kit.map((k) => k && k.t).join() === 'fal,m249,tt', h.kit.map((k) => k && k.t));
-    check('запомнено за местом (с пистолетом)', G.kits[h.slot].join() === 'fal,m249,tt');
+    check('запомнено за местом (с пистолетом)', G.kits[h.slot].slice(0, 3).join() === 'fal,m249,tt');
     applyKitAct(h, 'kit:ak74,,bad');
     check('чужой пистолет не принимается', h.kit[0].t === 'fal');
     applyKitAct(h, 'kit:ak74,');
@@ -67,6 +67,36 @@ window.__result = (() => {
     check('на карте — снаряжение со стола, полный боекомплект', me().kit.map((k) => k && k.t).join() === 'rpk74,akm,hipower' &&
       ammoTotal(me().kit[0]) === W.rpk74.mag * W.rpk74.mags && ammoTotal(me().kit[2]) === W.hipower.mag * W.hipower.mags,
       me().kit.map((k) => k && [k.t, ammoTotal(k)]));
+    check('без выбора брони — без брони', !me().armor, me().armor);
+    // броня на столе
+    startMap('hub', 0, solo, false);
+    const h2 = me();
+    at(h2, HUB_TABLE.x0 + 2, HUB_TABLE.y1 + 2);
+    openLoadout();
+    const ao = [...document.getElementById('lo4').options].map((o) => o.value);
+    check('на столе — все классы брони и «без брони»', ao.join() === ARMOR_ORDER.map((c) => c || '').join(), ao);
+    document.getElementById('lo1').value = 'm4a1'; document.getElementById('lo2').value = ''; document.getElementById('lo4').value = 'III+';
+    document.getElementById('loOk').click();
+    check('взял III+ — сразу на бойце, целая', h2.armor && h2.armor.cls === 'III+' && h2.armor.hp === 100, h2.armor);
+    check('запомнено за местом', G.kits[h2.slot][3] === 'III+', G.kits[h2.slot]);
+    openLoadout();
+    check('стол открывается со своей бронёй', document.getElementById('lo4').value === 'III+');
+    closeLoadout();
+    applyKitAct(h2, 'kit:m4a1,,m1911,V');
+    check('несуществующий класс не принимается', h2.armor.cls === 'III+');
+    startMap('clear', 3, solo, false);
+    check('на карте — броня со стола', me().armor && me().armor.cls === 'III+' && me().armor.hp === 100, me().armor);
+    startMap('assault', 0, solo, false);
+    check('«Штурм», 1-я локация — броня со стола', me().armor && me().armor.cls === 'III+', me().armor);
+    startMap('surv', 1, solo, false);
+    const pS = me();
+    G.surv.trucks = 1;
+    check('грузовик (привёз IIIA) — своя III+ остаётся в выборе', truckOffer(pS).armors.includes('III+') && !truckOffer(pS).armors.includes('IV'), truckOffer(pS).armors);
+    pS.armor.hp = 30;
+    check('без выбора — своя III+, целая', truckSupply(pS, null).arm === 'III+' && pS.armor.hp === 100, pS.armor);
+    G.surv.truck = { state: 'park', t: 0, fy: map.truck.park };
+    pS.dead = true; truckReinforce();
+    check('привезённый грузовиком — с бронёй со стола', !pS.dead && pS.armor && pS.armor.cls === 'III+', [pS.dead, pS.armor]);
     G.kits = {};
     let err = null;
     try { const c = document.createElement('canvas').getContext('2d'); drawTable(c, HUB_TABLE); } catch (e) { err = String(e); }

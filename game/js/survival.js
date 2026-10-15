@@ -103,7 +103,7 @@ function survInit(rnd) {
   G.surv = { mode: 'survival', rnd, wave: 0, stage: 0, phase: 'break', t: SURV.firstBreak, toSpawn: 0, spawnT: 0, dirT: 0, trucks: 0, stop: 0,
     truck: null, medic: null, spawns, recent: [], tilesOn: false, waitT: 0, reinf: null, first: firstCount(G.players.length, rnd) };
   initWeather(rollWeather(rnd));
-  for (const p of G.players) p.armor = null;          // начинают без брони
+  for (const p of G.players) giveArmor(p, tableArmor(p));     // начинают с бронёй со стола (не брали — без брони)
 }
 
 // Первая волна «Выживания» / первая локация «Штурма»: случайно 0,8–1,2 × бойцов отряда (люди и боты), не меньше 1
@@ -325,7 +325,7 @@ function truckReinforce() {
       randomKit(q, G.surv.rnd);
     } else {
       const k = (G.kits || {})[q.slot];
-      if (k) giveKit(q, k[0], k[1], k[2]); else giveKit(q, 'm4a1', null);
+      if (k) { giveKit(q, k[0], k[1], k[2]); giveArmor(q, tableArmor(q)); } else giveKit(q, 'm4a1', null);   // со стола — и броня
     }
   });
   if (back.length) emit(['radio', `Грузовик привёз пополнение: ${back.map((q) => q.name).join(', ')}`]);
@@ -376,12 +376,16 @@ function survActStep(p, a, dt) {
   return false;
 }
 
+// Броня, взятая на оружейном столе (у людей; null — без брони)
+const tableArmor = (p) => (!p.ai && ((G.kits || {})[p.slot] || [])[3]) || null;
 // Что можно взять у грузовика сейчас: открытые к этой волне (локации) стволы, свои — тоже; броня — до лучшей привезённой
+// или взятой на оружейном столе, если она тяжелее
 function truckOffer(p) {
   const s = G.surv, n = s.mode === 'assault' ? s.stage : s.wave;
   const own = p.kit.slice(0, 2).filter(Boolean).map((g) => g.t);
+  const ownA = Math.max(0, ARMOR_ORDER.indexOf(tableArmor(p)));
   return { prim: PRIMARY_IDS.filter((t) => unlockedPrimaries(n).includes(t) || own.includes(t)), pist: PISTOL_IDS,
-    armors: ARMOR_ORDER.slice(0, Math.min(s.trucks, 4) + 1) };       // [null, 'IIIA', …] — без брони тоже можно (быстрее)
+    armors: ARMOR_ORDER.slice(0, Math.max(Math.min(s.trucks, 4), ownA) + 1) };       // [null, 'IIIA', …] — без брони тоже можно (быстрее)
 }
 // Выдать у грузовика: pick = [ствол 1, ствол 2, пистолет, броня] (проверяется по truckOffer; неверный — как без выбора);
 // без выбора — те же стволы и лучшая доступная броня. Всё — с полным боекомплектом.
@@ -446,7 +450,7 @@ function openTruckMenu() {
   // по умолчанию — своя броня, если её ещё можно взять, иначе лучшая привезённая
   const best = off.armors[off.armors.length - 1], selA = p.armor && off.armors.includes(p.armor.cls) ? p.armor.cls : best;
   truckMenuEl.querySelector('#tmArmor').innerHTML = off.armors.map((c) => `<option value="${c || ''}"${c === selA ? ' selected' : ''}>` +
-    (c ? `${c} — ${ARMOR[c].desc}; скорость −${Math.round((1 - ARMOR[c].speed) * 100)}%` : 'без брони — быстрее всех') + '</option>').join('');
+    armorLabel(c) + '</option>').join('');
   truckMenuEl.querySelector('#tmErr').textContent = '';
   truckMenuEl.classList.remove('hidden');
   for (const k in keys) keys[k] = false;

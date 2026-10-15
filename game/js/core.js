@@ -168,7 +168,7 @@ function startMap(id, seed = 0, squad = null, bots = false) {
     if (q && q.human) {
       o = makeHuman(slot, x, y, a, q.name);
       const k = (G.kits || {})[slot];
-      if (k) giveKit(o, k[0], k[1], k[2]);           // выбранное на оружейном столе
+      if (k) { giveKit(o, k[0], k[1], k[2]); giveArmor(o, k[3] || null); }    // выбранное на оружейном столе (и броня — целая)
     } else if (bots && humans.length) {
       o = makeBot(slot, x, y, a, humans[slot % humans.length]);
       if (id !== 'range') randomKit(o, rnd);
