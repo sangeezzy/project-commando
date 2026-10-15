@@ -2,9 +2,12 @@
 // выстрел поднимает противников, 3 союзных бота против n противников. Варианты поведения ботов — CFG (A — старое, D — текущее).
 // Запуск: python dev/sim.py D:8 A:8 D:3   (вариант:число противников, по 12 раундов на каждый, параллельно)
 // Доп. параметры (sim.py: вариант:число:параметры, например D:4:arm=III,kit=rand,runs=24): arm — броня ботов (IIIA, III, III+, IV),
-// earm — броня противников, kit=rand — у всех случайные стволы и пистолеты (как на картах), runs — раундов.
+// earm — броня противников, kit=rand — у всех случайные стволы и пистолеты (как на картах), runs — раундов,
+// recoil=0 — у ботов без отдачи, recoil=all — отдача и у противников (RECOIL.bots / RECOIL.enemies).
 window.__result = (() => {
   const qs = new URLSearchParams(location.search), cfgName = qs.get('cfg') || 'C', nEnemies = +(qs.get('n') || 8);
+  if (qs.get('recoil') === '0') RECOIL.bots = false;
+  if (qs.get('recoil') === 'all') RECOIL.enemies = true;
   const CFG = {
     A: { guard: { huntNear: 1e9, reviveRisk: 1e9, tether: 1e9, coverR: 1e9, retreatCover: false }, share: 0, intelOff: true },
     B: { guard: { huntNear: M(10), reviveRisk: 6, tether: 1e9, coverR: 1e9, retreatCover: false }, share: M(25) },

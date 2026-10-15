@@ -56,7 +56,7 @@ function onHostData(c, d) {
   // гость ведёт своего бойца сам — хост принимает позицию, взгляд и стойку
   p.net = true;
   p.x = d.x; p.y = d.y; p.a = d.a; p.crouch = !!d.c; p.ads = d.ads; p.leanWant = d.lw; p.sprint = !!d.sp;
-  p.sprintLock = d.sl; p.speed = d.v; p.recoilYaw = +d.ry || 0;
+  p.sprintLock = d.sl; p.speed = d.v;
   p.inFire = !!d.f; p.inPress = (p.inPress || 0) + (d.pr | 0); p.inHoldF = !!d.hf;
   for (const k of d.acts || []) applyAct(p, k);
   // гость за рулём: машину ведёт он — хост берёт её позу
@@ -411,7 +411,7 @@ function guestSendInput() {
   if (!p || p.dead) { Net.inp.acts = []; Net.inp.press = 0; return; }   // раненый тоже шлёт: ползёт
   send({ t: 'i', seq: G.seq, x: r1(p.x), y: r1(p.y), a: r2(p.a), c: p.crouch ? 1 : 0, ads: r2(p.ads), lw: p.leanWant | 0,
     sp: p.sprint ? 1 : 0, sl: r2(p.sprintLock), v: r1(p.speed), f: Net.inp.fire ? 1 : 0, pr: Net.inp.press, acts: Net.inp.acts,
-    hf: keys.KeyF ? 1 : 0, ry: Math.round((p.recoilYaw || 0) * 1e4) / 1e4,      // увод ствола отдачей (вариант 'barrel')
+    hf: keys.KeyF ? 1 : 0,
     // за рулём — поза своей машины (гость считает её сам, как своего бойца)
     vh: p.veh && p.seat === 0 ? vehInput(p.veh) : 0 });
   Net.inp.press = 0; Net.inp.acts = [];
@@ -564,9 +564,9 @@ function predictFire(p, held, pressedNow) {
   if (g.mag > 0) { g.mag--; g.chamber = 1; }
   g.bloom = Math.min(W.maxBloom, g.bloom + (W.kick + (W.kickHip - W.kick) * (1 - p.ads)) * RECOIL.bloomK);
   g.lastShot = G.time;
-  const ox = p.leanPx ? p.lx : p.x, oy = p.leanPx ? p.ly : p.y, ba = p.a + (p.recoilYaw || 0);
-  playFx(['shot', ox + Math.cos(ba) * M(0.75), oy + Math.sin(ba) * M(0.75), ba, p.side, p.id]);
-  recoilKick(p);                                  // отдача — у гостя сразу (увод ствола уйдёт хосту во вводе: ry)
+  const ox = p.leanPx ? p.lx : p.x, oy = p.leanPx ? p.ly : p.y;
+  playFx(['shot', ox + Math.cos(p.a) * M(0.75), oy + Math.sin(p.a) * M(0.75), p.a, p.side, p.id]);
+  recoilKick(p);                                  // отдача — у гостя сразу (уведённый взгляд уйдёт хосту во вводе)
 }
 
 // Каждый кадр у гостя: темп и отдача своего оружия гаснут; просроченные предсказания списываются

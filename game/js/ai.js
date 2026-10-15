@@ -542,6 +542,9 @@ function aiWeapons(e, dt, seen) {
   }
 }
 
+// Скорость доворота взгляда, рад/с: сразу после выстрела (отдача увела прицел, recoilKick) — медленно, как человек мышью (RECOIL.aiPull)
+const aiTurnRate = (e) => (e.recoilT > G.time ? Math.min(ENEMY.turn, RECOIL.aiPull) : ENEMY.turn);
+
 function updateAI(dt) {
   updateSquads(dt);
   updateExecutions();
@@ -609,7 +612,7 @@ function updateAI(dt) {
     else idle(e, dt);
     if (!e.kneelSet) e.kneel = false;      // колено держат только режимы прицельного огня
     e.kneelSet = false;
-    e.a = turnTo(e.a, e.want === undefined ? e.a : e.want, ENEMY.turn * dt);
+    e.a = turnTo(e.a, e.want === undefined ? e.a : e.want, aiTurnRate(e) * dt);
     updateLean(e, dt);
     updateEnemyLamp(e, dt);
   }

@@ -17,8 +17,10 @@ window.__result = (() => {
     check('влево — назад, слабее', angDiff(p.a, a0) < -0.1 && angDiff(p.a, a0) > -0.5, angDiff(p.a, a0));
     a0 = p.a; touchMove(5, X + RS * 0.05, Y); step(30);
     check('у центра — не поворачивает', Math.abs(angDiff(p.a, a0)) < 1e-6);
+    RECOIL.on = false;                    // стик вверх не поворачивает (поворот от отдачи — в тесте recoil)
     a0 = p.a; touchMove(5, X, Y - RS * (TOUCH.fireAt + 0.2)); step(2);
     check('вверх за кольцо — огонь без поворота', mouse.l && Math.abs(angDiff(p.a, a0)) < 1e-6, [mouse.l]);
+    RECOIL.on = true;
     touchEnd(5); step(2);
     const s2 = worldToScreen(p.x, p.y);
     check('боец всё там же на экране', Math.abs(s2.x - VW / 2) < 1 && Math.abs(s2.y - VH * (1 - CAM.bottom)) < 1);

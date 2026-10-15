@@ -85,8 +85,6 @@ function controlLocal(p, dt) {
     toast(OPTS.laser ? 'ПРИЦЕЛ: ЛАЗЕР (Shift+N)' + (OPTS.cam === 'look' ? '' : ' — в камере по взгляду (N)') : 'ПРИЦЕЛ: ПЕРЕКРЕСТИЕ (Shift+N)', 1.6);
   } else if (pressed.KeyN) setCamMode(OPTS.cam === 'look' ? 'std' : 'look');      // N — камера: обычная / по взгляду (тест)
   if (pressed.KeyK) stepSight(keys.ShiftLeft || keys.ShiftRight ? 1 : -1);   // K / Shift+K — видимость (хост)
-  if (pressed.KeyP) toggleRecoilMode(p);                                    // P — вариант отдачи (отладка): увод ствола / прицела
-  recoilReturn(p, dt);                                                      // 'barrel': стрелок возвращает ствол
   if (p.dead) { clearPressed(); return; }
   if (p.down) { crawl(p, dt); clearPressed(); return; }
   const g = p.gun;

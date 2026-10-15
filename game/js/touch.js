@@ -246,7 +246,10 @@ function touchEnd(id) {
   }
   const S = TouchUI.sticks;
   if (S.move && S.move.id === id) { S.move = null; TouchUI.mv = null; TouchUI.sprint = false; }
-  if (S.aim && S.aim.id === id) { S.aim = null; TouchUI.stickFire = false; }
+  if (S.aim && S.aim.id === id) {
+    S.aim = null; TouchUI.stickFire = false;
+    const p = me(); if (p) p.aimRot = 0;     // стик отпущен — поправка прицела отдачей сброшена: новое касание целится ровно по стику
+  }
 }
 
 // Каждый кадр до управления бойцом: «мышь» — точка прицела от бойца, ЛКМ — огонь, ПКМ — прицел

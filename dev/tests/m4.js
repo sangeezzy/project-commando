@@ -77,7 +77,9 @@ window.__result = (() => {
     p.crouch = false; p.speed = M(SPEED.walk);
     check('на ходу разброс растёт', playerSpread(p) > 10, playerSpread(p));
     p.speed = 0; p.gun.bloom = 0;
+    RECOIL.on = true;                     // разброс за выстрел меньше у тех, у кого есть отдача
     for (let i = 0; i < 10; i++) { p.gun.chamber = 1; fireRound(p, 0); }
+    RECOIL.on = false;
     G.bullets = [];
     check('очередь 10 выстрелов раскачивает оружие (разброс ≥ 20 мрад; у игрока прирост ×RECOIL.bloomK)', p.gun.bloom >= 20 &&
       Math.abs(p.gun.bloom - Math.min(W.maxBloom, 10 * W.kick * RECOIL.bloomK)) < 1e-6, p.gun.bloom.toFixed(1));
