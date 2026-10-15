@@ -172,7 +172,9 @@
   ФОНАРЬ, РЕЖИМ, РАЦИЯ (голос), по месту — F (`touchUseLabel`: поднять, грузовик, медик, стол, дверь; держать) и ВЫБИТЬ; камера (`zoomIn`/`zoomOut`
   под ≡, значок `camIcon` — камера со стрелкой; касание — шаг ×1,15, держать — шаг раз в 0,12 с); раскладка — меню ≡ → «Настроить кнопки»
   (`TouchUI.edit`, `startLayoutEdit`): видны все кнопки (и «по месту»), их тащат пальцем, «Готово»/«Сброс» (`editControls`); свои положения —
-  `TouchUI.layout[id]` = доли экрана (`touchLayout`, `pcr-touch-layout`). Одиночка стоит, пока открыто меню ≡ или настройка (`touchPaused`:
+  `TouchUI.layout[id]` = доли экрана (`touchLayout`, `pcr-touch-layout`); убрать / вернуть кнопку — значок ✕ / + в её углу в настройке
+  (`hideBadge`, `toggleHidden`; `TouchUI.hidden`, `pcr-touch-hidden`; ≡ не убирается; убранная в настройке — полупрозрачная, в игре её нет;
+  касание — по верхней из кнопок на одном месте; «Сброс» возвращает и их). Одиночка стоит, пока открыто меню ≡ или настройка (`touchPaused`:
   `G.time` и `updateWorld` не идут; и на ПК); ≡ — DOM `#touchMenu` — **игровое меню и на ПК (Esc)**: Esc в игре открывает/закрывает
   (раньше — выход в главное меню; выход — кнопкой), окна стола и грузовика закрываются своим Esc раньше; пункты `.touchonly` (кнопки, ТТХ,
   аим ассист) на ПК скрыты; камера по взгляду — Esc снимает захват мыши → `pointerlockchange` открывает меню (`G.lockMenuAt` — тот же Esc
@@ -495,8 +497,8 @@ python dev/run_tests.py --only m4,cover
   профиль `dev/prof.py`, скриншоты `dev/shot.sh`.
 
 ## Текущее состояние
-- Ветка `main`, удалённый репозиторий — `origin` = https://github.com/sangeezzy/project-commando (приватный, с 2026-10-15; метка `archive-prototypes` тоже там). Версия `GAME_VERSION` = `2026-10-21.esc`;
-  .apk этой версии собран (`dist/commando-2026-10-21.esc.apk`, 2026-10-15, меню по Esc закрывается с первого раза). **Правило пользователя:** после любых
+- Ветка `main`, удалённый репозиторий — `origin` = https://github.com/sangeezzy/project-commando (приватный, с 2026-10-15; метка `archive-prototypes` тоже там). Версия `GAME_VERSION` = `2026-10-21.hide`;
+  .apk этой версии собран (`dist/commando-2026-10-21.hide.apk`, 2026-10-15, на телефоне можно убирать кнопки). **Правило пользователя:** после любых
   изменений игры (`game/`) — поднять `GAME_VERSION` и пересобрать .apk (`dev/android/build_apk.py`).
 - Релизы GitHub (репозиторий публичный с 2026-10-15): метка `v<GAME_VERSION>`, файлы всегда с одними именами — `commando.apk` и
   `commando-windows.zip` (`commando/` → `game/` из `dist/` после `dev/build.py`, `server/`, `Играть.bat`, README): README ссылается на

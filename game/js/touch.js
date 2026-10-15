@@ -92,7 +92,11 @@ function touchButtons(edit = TouchUI.edit) {
   const p = me();
   if (!inGame() || !p) return [];
   const R = touchR(), small = Math.round(R * 0.62), B = [];
-  const add = (b, when = true) => { if (edit ? b.id !== 'again' : when) B.push(b); };
+  // убранные игроком (TouchUI.hidden) в игре не показываются; в настройке видны все — убранные с пометкой off
+  const add = (b, when = true) => {
+    const off = TouchUI.hidden.has(b.id) && b.id !== 'menu';
+    if (edit ? b.id !== 'again' : when && !off) B.push(Object.assign(b, { off }));
+  };
   // меню — всегда (сверху, правее блока задачи); под ним — камера: приблизить / отдалить (держать — дальше)
   const xm = Math.min(370 + small, VW / 2 - 140 - small);
   add({ id: 'menu', x: xm, y: 14 + small, r: small, label: '≡', down: openTouchMenu });
@@ -145,15 +149,29 @@ function touchLayout(B) {
   }
   return B;
 }
-const saveLayout = () => { try { localStorage.setItem('pcr-touch-layout', JSON.stringify(TouchUI.layout)); } catch (e) { /* ignore */ } };
+const saveLayout = () => {
+  try {
+    localStorage.setItem('pcr-touch-layout', JSON.stringify(TouchUI.layout));
+    localStorage.setItem('pcr-touch-hidden', JSON.stringify([...TouchUI.hidden]));
+  } catch (e) { /* ignore */ }
+};
 try { TouchUI.layout = JSON.parse(localStorage.getItem('pcr-touch-layout') || '{}') || {}; } catch (e) { TouchUI.layout = {}; }
+// убранные кнопки (настройка: значок ✕ / + в углу); меню ≡ не убирается — иначе до настройки не добраться
+try { TouchUI.hidden = new Set(JSON.parse(localStorage.getItem('pcr-touch-hidden') || '[]')); } catch (e) { TouchUI.hidden = new Set(); }
+// Значок «убрать / вернуть» у кнопки в настройке — правый верхний угол
+const hideBadge = (b) => ({ x: b.x + b.r * 0.72, y: b.y - b.r * 0.72, r: Math.max(11, b.r * 0.34) });
+function toggleHidden(id) {
+  if (id === 'menu') return;
+  if (TouchUI.hidden.has(id)) TouchUI.hidden.delete(id); else TouchUI.hidden.add(id);
+  saveLayout();
+}
 
 // Режим настройки раскладки: две служебные кнопки посередине (их не двигают)
 function editControls() {
   const R = touchR();
   return [
     { id: 'editDone', x: VW / 2 - R * 1.5, y: VH / 2, r: R, label: 'ГОТОВО', down: () => { TouchUI.edit = false; touchReset(); } },
-    { id: 'editReset', x: VW / 2 + R * 1.5, y: VH / 2, r: R, label: 'СБРОС', down: () => { TouchUI.layout = {}; saveLayout(); } },
+    { id: 'editReset', x: VW / 2 + R * 1.5, y: VH / 2, r: R, label: 'СБРОС', down: () => { TouchUI.layout = {}; TouchUI.hidden.clear(); saveLayout(); } },
   ];
 }
 function startLayoutEdit() { closeTouchMenu(); touchReset(); TouchUI.edit = true; }
@@ -167,10 +185,13 @@ function touchStart(id, x, y) {
   const S = TouchUI.sticks, R = touchR();
   const hit = (q) => Math.hypot(q.x - x, q.y - y) <= q.r * 1.15;
   if (TouchUI.edit) {
-    // настройка: «Готово» / «Сброс» — нажать, остальные кнопки — тащить
+    // настройка: «Готово» / «Сброс» — нажать, значок в углу кнопки — убрать / вернуть её, остальное — тащить
     const c = editControls().find(hit);
     if (c) { c.down(); return; }
-    const d = touchButtons(true).find(hit);
+    const all = touchButtons(true).reverse();      // сверху нарисована последняя (НОЖ и КАМЕРА, ПРИСЕД и РУЧНИК — на одном месте)
+    const hb = all.find((q) => q.id !== 'menu' && Math.hypot(hideBadge(q).x - x, hideBadge(q).y - y) <= hideBadge(q).r * 1.2);
+    if (hb) { toggleHidden(hb.id); return; }
+    const d = all.find(hit);
     if (d) TouchUI.drag.set(id, { bid: d.id, dx: d.x - x, dy: d.y - y });
     return;
   }
@@ -321,19 +342,34 @@ function drawTouch() {
     // настройка раскладки: экран притемнён, кнопки — с пунктирной рамкой (их тащат), посередине «Готово» / «Сброс»
     ctx.fillStyle = 'rgba(8,9,10,0.55)'; ctx.fillRect(0, 0, VW, VH);
     txt('НАСТРОЙКА КНОПОК: перетащите пальцем', VW / 2, VH / 2 - R * 1.6, Math.round(R * 0.42), HUD_WARN, 'center');
+    txt('✕ в углу — убрать кнопку, + — вернуть', VW / 2, VH / 2 - R * 1.6 + Math.round(R * 0.5), Math.round(R * 0.32), HUD_DIM, 'center');
   }
   const dragging = new Set([...TouchUI.drag.values()].map((d) => d.bid));
   const list = touchButtons();
   if (edit) list.push(...editControls().map((c) => ({ ...c, ctl: true })));
   for (const b of list) {
     const pressedNow = [...TouchUI.held.values()].some((q) => q.id === b.id) || dragging.has(b.id);
+    ctx.globalAlpha = b.off ? 0.35 : 1;          // убранная (видна только в настройке)
     ring(b.x, b.y, b.r, b.on || pressedNow ? 'rgba(255,176,48,0.35)' : 'rgba(15,16,17,0.45)', b.fire ? 'rgba(255,80,64,0.7)' : 'rgba(232,228,216,0.4)');
     if (edit && !b.ctl) {
       ctx.setLineDash([5, 4]);
       ring(b.x, b.y, b.r + 4, null, dragging.has(b.id) ? 'rgba(255,176,48,0.9)' : 'rgba(255,176,48,0.5)', 1.5);
       ctx.setLineDash([]);
+      if (b.id !== 'menu') {
+        // значок в углу: ✕ — убрать, + — вернуть
+        const h = hideBadge(b);
+        ctx.globalAlpha = 1;
+        ring(h.x, h.y, h.r, b.off ? 'rgba(60,150,80,0.9)' : 'rgba(170,45,35,0.9)', 'rgba(232,228,216,0.8)', 1.5);
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = Math.max(2, h.r * 0.2);
+        const s = h.r * 0.45;
+        ctx.beginPath();
+        if (b.off) { ctx.moveTo(h.x - s, h.y); ctx.lineTo(h.x + s, h.y); ctx.moveTo(h.x, h.y - s); ctx.lineTo(h.x, h.y + s); }
+        else { ctx.moveTo(h.x - s, h.y - s); ctx.lineTo(h.x + s, h.y + s); ctx.moveTo(h.x + s, h.y - s); ctx.lineTo(h.x - s, h.y + s); }
+        ctx.stroke();
+        ctx.globalAlpha = b.off ? 0.35 : 1;
+      }
     }
-    if (b.icon) { camIcon(b.x, b.y, b.r, b.icon === 'in'); continue; }
+    if (b.icon) { camIcon(b.x, b.y, b.r, b.icon === 'in'); ctx.globalAlpha = 1; continue; }
     ctx.textAlign = 'center';
     const fs = Math.round(clamp(b.r * (b.label.length > 6 ? 0.26 : b.label.length > 3 ? 0.32 : 0.6), 9, 30));
     ctx.font = `${fs}px Consolas, monospace`;
@@ -343,6 +379,7 @@ function drawTouch() {
       ctx.font = `${Math.round(fs * 0.75)}px Consolas, monospace`; ctx.fillStyle = 'rgba(232,228,216,0.6)';
       ctx.fillText(b.sub, b.x, b.y + fs);
     }
+    ctx.globalAlpha = 1;
   }
   ctx.restore();
 }

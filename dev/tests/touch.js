@@ -197,6 +197,45 @@ window.__result = (() => {
     check('«Назад» в настройке — выйти из неё', appBack() === true && !TouchUI.edit);
   });
 
+  run('убрать / вернуть кнопку', () => {
+    reset();
+    TouchUI.layout = {}; TouchUI.hidden.clear(); saveLayout();
+    startLayoutEdit();
+    const tapBadge = (id, tid) => { const b = touchButtons(true).find((q) => q.id === id), h = hideBadge(b); touchStart(tid, h.x, h.y); touchEnd(tid); };
+    const k0 = btn('reload');
+    tapBadge('reload', 11);
+    check('✕ — кнопка помечена убранной, но в настройке видна', TouchUI.hidden.has('reload') && btn('reload') && btn('reload').off);
+    check('значок не сдвинул кнопку', Math.abs(btn('reload').x - k0.x) < 1 && Math.abs(btn('reload').y - k0.y) < 1);
+    let saved = [];
+    try { saved = JSON.parse(localStorage.getItem('pcr-touch-hidden') || '[]'); } catch (e) { /* ignore */ }
+    check('запомнено', saved.includes('reload'), saved);
+    let err = null; try { render(1 / 60); } catch (e) { err = String(e); }
+    check('настройка с убранной кнопкой рисуется', !err, err);
+    TouchUI.edit = false;
+    check('в игре убранной кнопки нет, остальные на месте', !btn('reload') && !!btn('fire') && !!btn('ads'));
+    const kb = { x: k0.x, y: k0.y };
+    p.gun.mag = 10; p.gun.reloadT = 0;          // перезарядка возможна — если бы кнопка сработала, началась бы
+    touchStart(12, kb.x, kb.y); step(2); touchEnd(12);
+    check('касание на её месте — не перезарядка (стик)', !p.gun.reloadT);
+    startLayoutEdit();
+    const mb = touchButtons(true).find((q) => q.id === 'menu'), mh = hideBadge(mb);
+    touchStart(13, mh.x, mh.y); touchEnd(13);
+    check('меню ≡ убрать нельзя', !TouchUI.hidden.has('menu'));
+    tapBadge('reload', 14);
+    TouchUI.edit = false;
+    check('+ — кнопка вернулась', !TouchUI.hidden.has('reload') && !!btn('reload'));
+    // кнопки на одном месте (НОЖ и КАМЕРА — по обстановке): значок — у верхней (нарисованной последней)
+    startLayoutEdit();
+    tapBadge('carcam', 18);
+    check('значок верхней из двух на одном месте — её, а не нижней', TouchUI.hidden.has('carcam') && !TouchUI.hidden.has('knife'), [...TouchUI.hidden]);
+    tapBadge('ads', 15); tapBadge('lamp', 16);
+    const rs = editControls().find((c) => c.id === 'editReset');
+    touchStart(17, rs.x, rs.y); touchEnd(17);
+    TouchUI.edit = false;
+    check('«Сброс» возвращает и убранные', TouchUI.hidden.size === 0 && !!btn('ads') && !!btn('lamp'));
+    touchReset();
+  });
+
   run('рисуется без ошибок', () => { reset(); touchStart(1, 200, VH - 150); touchMove(1, 230, VH - 190); render(1 / 60); touchEnd(1); check('кадр с сенсорным интерфейсом', true); });
   return T_.checks;
 })();
