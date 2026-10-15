@@ -38,6 +38,8 @@
   #touchMenu button.opt.on { background:rgba(255,176,48,.25); border-color:rgba(255,176,48,.7); }
   #touchMenu label { font-size:13px; }
   #touchMenu h2 { font-size:20px; }
+  #touchMenu input[type=range] { flex:1; min-width:110px; accent-color:#ffb030; }
+  html:not(.touch) #touchMenu .touchonly { display:none !important; }
   /* не помещается (телефон) — прокрутка от верха, а не обрезка: центрирует margin:auto у .screen, а не align-items */
   #menu { position:fixed; inset:0; display:flex; align-items:flex-start; justify-content:center; padding:16px; overflow:auto;
     background: radial-gradient(ellipse at center, rgba(40,42,38,.92), rgba(18,19,20,.98)); }
@@ -148,7 +150,7 @@
   </div>
 </div>
 
-<!-- Сенсорное управление: меню (≡) — то, что на ПК делают редкие клавиши -->
+<!-- Игровое меню: на телефоне — ≡, на ПК — Esc (то, что на ПК делают редкие клавиши, и настройки) -->
 <div id="touchMenu" class="hidden">
   <div class="screen">
     <h2>МЕНЮ</h2>
@@ -157,28 +159,31 @@
         <button id="tmuResume">ПРОДОЛЖИТЬ</button>
         <button id="tmuAgain">ЗАНОВО</button>
         <button id="tmuHub">В ХАБ</button>
-        <button id="tmuLayout">НАСТРОИТЬ КНОПКИ</button>
-        <button id="tmuSpecs">ХАРАКТЕРИСТИКИ ОРУЖИЯ</button>
+        <button id="tmuLayout" class="touchonly">НАСТРОИТЬ КНОПКИ</button>
+        <button id="tmuSpecs" class="touchonly">ХАРАКТЕРИСТИКИ ОРУЖИЯ</button>
         <button id="tmuFull">ВО ВЕСЬ ЭКРАН</button>
         <button id="tmuLeave">ВЫЙТИ В ГЛАВНОЕ МЕНЮ</button>
       </div>
       <div class="col">
         <div class="row"><label>Масштаб</label><button id="tmuOut">−</button><span id="tmuView" class="help"></span><button id="tmuIn">+</button></div>
         <div class="row"><label>Камера</label><button id="tmuCam-std" class="opt">ОБЫЧНАЯ</button><button id="tmuCam-look" class="opt">ПО ВЗГЛЯДУ</button></div>
+        <div class="row" id="tmuTurnRow"><label for="tmuTurn">Поворот</label><input type="range" id="tmuTurn" min="0.3" max="3" step="0.05"><span id="tmuTurnV" class="help"></span></div>
+        <div class="row" id="tmuAimRow"><label>Прицел</label><button id="tmuAim-cross" class="opt">ПЕРЕКРЕСТИЕ</button><button id="tmuAim-laser" class="opt">ЛАЗЕР</button></div>
         <div class="row"><label>Видимость</label><button id="tmuSightDn">−</button><span id="tmuSight" class="help"></span><button id="tmuSightUp">+</button></div>
-        <div class="row"><label>Аим ассист</label><button id="tmuAssist-soft" class="opt">МЯГКИЙ</button><button id="tmuAssist-hard" class="opt">ЖЁСТКИЙ</button></div>
+        <div class="row touchonly"><label>Аим ассист</label><button id="tmuAssist-soft" class="opt">МЯГКИЙ</button><button id="tmuAssist-hard" class="opt">ЖЁСТКИЙ</button></div>
         <label><input type="checkbox" id="tmuFps"> Ограничение 60 ФПС (меньше греется)</label>
         <label><input type="checkbox" id="tmuLight"> Упрощённый свет (быстрее)</label>
         <button id="tmuMic">МИКРОФОН</button>
       </div>
     </div>
+    <div class="help kbd">Esc — продолжить. В одиночной игре мир на паузе, в сети — идёт.</div>
   </div>
 </div>
 
 <div id="menu">
   <div class="screen" id="mainMenu">
     <h1>PROJECT COMMANDO</h1>
-    <div class="sub">тестовый полигон · реалистичный режим · кооператив до 4 игроков</div>
+    <div class="sub">реалистичный тактический шутер · кооператив до 8 игроков</div>
     <div class="row"><label for="name">Позывной</label><input type="text" id="name" maxlength="16" autocomplete="off" spellcheck="false"></div>
     <div class="row"><label for="slotsN">Мест в отряде</label><select id="slotsN"><option>2</option><option>3</option><option selected>4</option><option>5</option><option>6</option><option>7</option><option>8</option></select>
       <label><input type="checkbox" id="botsChk" checked> Заполнять пустые места союзными ботами</label></div>
@@ -208,7 +213,7 @@
       <b>WASD</b> — движение · <b>мышь</b> — прицел · <b>ЛКМ</b> — огонь · <b>ПКМ</b> — прицелиться · <b>R</b> — перезарядка · <b>V</b> — режим<br>
       <b>Q/E</b> — выглянуть · <b>F</b> — дверь · <b>G</b> — выбить · <b>L</b> — фонарь · <b>C</b> — присесть · <b>Shift</b> — бег<br>
       <b>B</b> (держать) — рация · <b>M</b> — микрофон вкл/выкл (голосовой чат включается в лобби)<br>
-      <b>Колёсико</b> — приблизить/отдалить · <b>Tab</b> — характеристики оружия · <b>H</b> — управление · <b>Enter</b> — заново · <b>Esc</b> — в меню<br>
+      <b>Колёсико</b> — приблизить/отдалить · <b>Tab</b> — характеристики оружия · <b>H</b> — управление · <b>Enter</b> — заново · <b>Esc</b> — меню (настройки, выход)<br>
       Отладка (только у себя): <b>[</b> — бессмертие · <b>]</b> — без тумана войны (видно всех противников)
     </div>
   </div>

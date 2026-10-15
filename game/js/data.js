@@ -2,7 +2,7 @@
 // ---------- Тюнинг и справочники. Масштаб: 1 м = PX_M px = одна клетка ----------
 
 // Версия игры: гость с другой версией не войдёт (при прямом подключении у гостя может быть своя копия)
-const GAME_VERSION = '2026-10-21.laser';
+const GAME_VERSION = '2026-10-21.menu';
 
 const PX_M = 32;
 const M = (m) => m * PX_M;     // метры -> пиксели
@@ -40,7 +40,8 @@ const STAND_COVER_HIT = 0.3;   // стоя за низким укрытием, �
 // Настройки игрока (меню ≡ на телефоне; запоминаются — localStorage pcr-opts, загрузка — touch.js):
 // fps60 — не чаще 60 кадров/с (экраны 90–120 Гц; на телефоне по умолчанию включено), simpleLight — упрощённый свет (light.js),
 // assist — аим ассист на сенсоре: 'soft' (мягкий) / 'hard' (жёсткий), см. TOUCH.assist
-const OPTS = { fps60: false, simpleLight: false, assist: 'soft', carCam: 'std', cam: 'std', sight: 70, laser: false };      // laser — Shift+N: в камере по взгляду вместо перекрестия лазер по взгляду      // carCam — камера в машине: 'std' / 'car' (за машиной); cam — 'std' / 'look' (по взгляду, N);
+const OPTS = { fps60: false, simpleLight: false, assist: 'soft', carCam: 'std', cam: 'std', sight: 70, laser: false, turnK: 1 };      // turnK — чувствительность поворота в камере по взгляду (мышь и стик)
+const TURN_K = { min: 0.3, max: 3 };      // laser — Shift+N: в камере по взгляду вместо перекрестия лазер по взгляду      // carCam — камера в машине: 'std' / 'car' (за машиной); cam — 'std' / 'look' (по взгляду, N);
 // sight — видимость в ясную погоду, м (до погоды; для всех — игрок, боты, противники; решает хост — K / Shift+K, см. sightM)
 
 const VIEW_M = 26;             // камера: по вертикали экрана видно столько метров

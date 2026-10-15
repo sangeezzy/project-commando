@@ -278,5 +278,4 @@ voiceChk.addEventListener('change', async () => {
   } else { Voice.disable(); voiceStatusEl.textContent = ''; }
 });
 
-// Esc в бою — выйти в меню
-addEventListener('keydown', (e) => { if (e.code === 'Escape' && G.state !== 'menu' && G.state !== 'lobby') leaveToMenu(''); });
+// Esc в бою — игровое меню (touch.js); выход в главное меню — кнопкой в нём

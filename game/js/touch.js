@@ -154,7 +154,7 @@ function editControls() {
 }
 function startLayoutEdit() { closeTouchMenu(); touchReset(); TouchUI.edit = true; }
 // Одиночная игра стоит, пока открыто меню ≡ или настройка кнопок (в сети мир идёт у всех — не останавливаем)
-const touchPaused = () => TouchUI.on && G.role === 'solo' && (TouchUI.edit || touchMenuOpen());
+const touchPaused = () => G.role === 'solo' && (TouchUI.edit || touchMenuOpen());      // меню — и на ПК (Esc)
 
 // ---------- Касания (координаты холста) ----------
 function touchStart(id, x, y) {
@@ -239,7 +239,7 @@ function touchFrame(dt = 1 / 60) {
     let turn = 0;
     if (s) {                     // и раненым: ползком тоже поворачивается (стрелять нельзя — crawl)
       const k = clamp((s.x - s.ox) / RS, -1, 1);
-      if (Math.abs(k) > TOUCH.lookDead) turn = Math.sign(k) * k * k * TOUCH.lookTurn * dt;
+      if (Math.abs(k) > TOUCH.lookDead) turn = Math.sign(k) * k * k * TOUCH.lookTurn * OPTS.turnK * dt;     // чувствительность — меню
     }
     turn += angDiff(aimAssist(p, p.a), p.a) * Math.min(1, dt * TOUCH.lookAssist);
     mouse.dx = (mouse.dx || 0) + turn / CAM.turn;
@@ -380,15 +380,28 @@ function openTouchMenu() {
   for (const k of ['KeyQ', 'KeyE', 'KeyB', 'KeyF']) if (keys[k]) vkey(k, false);
   touchReset();
 }
-// Настройки в меню: галочки и переключатель режима ассиста
+// Настройки в меню: галочки, переключатели; чувствительность поворота и прицел — только в камере по взгляду
 function syncOptsUI() {
-  touchMenuEl.querySelector('#tmuFps').checked = OPTS.fps60;
-  touchMenuEl.querySelector('#tmuLight').checked = OPTS.simpleLight;
-  for (const m of ['soft', 'hard']) touchMenuEl.querySelector('#tmuAssist-' + m).classList.toggle('on', OPTS.assist === m);
-  for (const m of ['std', 'look']) touchMenuEl.querySelector('#tmuCam-' + m).classList.toggle('on', OPTS.cam === m);
-  touchMenuEl.querySelector('#tmuSight').textContent = `${sightM()} м`;
+  const q = (id) => touchMenuEl.querySelector(id);
+  q('#tmuFps').checked = OPTS.fps60;
+  q('#tmuLight').checked = OPTS.simpleLight;
+  for (const m of ['soft', 'hard']) q('#tmuAssist-' + m).classList.toggle('on', OPTS.assist === m);
+  for (const m of ['std', 'look']) q('#tmuCam-' + m).classList.toggle('on', OPTS.cam === m);
+  q('#tmuSight').textContent = `${sightM()} м`;
+  const look = OPTS.cam === 'look';
+  q('#tmuTurnRow').classList.toggle('hidden', !look);
+  q('#tmuAimRow').classList.toggle('hidden', !look);
+  q('#tmuTurn').value = String(OPTS.turnK);
+  q('#tmuTurnV').textContent = '×' + OPTS.turnK.toFixed(2).replace('.', ',');
+  q('#tmuAim-cross').classList.toggle('on', !OPTS.laser);
+  q('#tmuAim-laser').classList.toggle('on', !!OPTS.laser);
 }
-const closeTouchMenu = () => { if (touchMenuEl) touchMenuEl.classList.add('hidden'); };
+// Закрыть меню; на ПК в камере по взгляду — снова захватить мышь (клик по кнопке — жест пользователя)
+const closeTouchMenu = () => {
+  if (!touchMenuEl || !touchMenuOpen()) return;
+  touchMenuEl.classList.add('hidden');
+  if (!TouchUI.on && inGame() && lookCam(me()) && document.pointerLockElement !== canvas) canvas.requestPointerLock?.();
+};
 function touchZoom(k) {
   G.viewT = clamp(G.viewT * k, CAM.viewMin, CAM.viewMax);
   try { localStorage.setItem(VIEW_KEY, G.viewT.toFixed(1)); } catch (e) { /* ignore */ }
@@ -421,7 +434,8 @@ function touchReset() {
   TouchUI.mv = null; TouchUI.sprint = TouchUI.stickFire = TouchUI.btnFire = false;
 }
 
-if (TouchUI.on) {
+// Игровое меню — и на телефоне (≡, «Назад»), и на ПК (Esc)
+{
   touchMenuEl = document.getElementById('touchMenu');
   const on = (id, fn) => touchMenuEl.querySelector(id).addEventListener('click', fn);
   on('#tmuResume', closeTouchMenu);
@@ -436,12 +450,31 @@ if (TouchUI.on) {
   touchMenuEl.querySelector('#tmuFps').addEventListener('change', (e) => { OPTS.fps60 = e.target.checked; saveOpts(); });
   touchMenuEl.querySelector('#tmuLight').addEventListener('change', (e) => { OPTS.simpleLight = e.target.checked; saveOpts(); });
   for (const m of ['soft', 'hard']) on('#tmuAssist-' + m, () => { OPTS.assist = m; saveOpts(); syncOptsUI(); });
-  for (const m of ['std', 'look']) on('#tmuCam-' + m, () => { setCamMode(m); syncOptsUI(); });
+  // камера из меню: мышь не захватывать сейчас (меню открыто) — захватит закрытие меню
+  for (const m of ['std', 'look']) on('#tmuCam-' + m, () => { setCamMode(m, true); syncOptsUI(); });
+  touchMenuEl.querySelector('#tmuTurn').addEventListener('input', (e) => { OPTS.turnK = clamp(+e.target.value || 1, TURN_K.min, TURN_K.max); saveOpts(); syncOptsUI(); });
+  on('#tmuAim-cross', () => { OPTS.laser = false; saveOpts(); syncOptsUI(); });
+  on('#tmuAim-laser', () => { OPTS.laser = true; saveOpts(); syncOptsUI(); });
   on('#tmuSightDn', () => { stepSight(-1); syncOptsUI(); });
   on('#tmuSightUp', () => { stepSight(1); syncOptsUI(); });
-  on('#tmuLeave', () => { closeTouchMenu(); vtap('Escape'); });
+  on('#tmuLeave', () => { touchMenuEl.classList.add('hidden'); leaveToMenu(''); });
+  // ПК: Esc в игре — открыть / закрыть меню (окна стола и грузовика закрываются своим Esc раньше)
+  addEventListener('keydown', (e) => {
+    if (e.code !== 'Escape' || !inGame()) return;
+    if (touchMenuOpen()) { if (performance.now() - (G.lockMenuAt || 0) > 400) closeTouchMenu(); }   // только что открыло снятие захвата — тот же Esc
+    else if (!uiOpen()) openTouchMenu();
+  });
+  // ПК, камера по взгляду: Esc снимает захват мыши (сам Esc браузер игре может и не передать) — тогда сразу меню
+  document.addEventListener('pointerlockchange', () => {
+    if (!document.pointerLockElement && !TouchUI.on && inGame() && G.state === 'play' && lookCam(me()) && !uiOpen() && !G.lockDrop) {
+      openTouchMenu(); G.lockMenuAt = performance.now();
+    }
+    G.lockDrop = false;
+  });
+}
 
-  const k = () => VW / Math.max(1, innerWidth);
+if (TouchUI.on) {
+  const k =() => VW / Math.max(1, innerWidth);
   const each = (e, fn) => { for (const t of e.changedTouches) fn(t.identifier, t.clientX * k(), t.clientY * k()); };
   canvas.addEventListener('touchstart', (e) => { e.preventDefault(); initAudio(); each(e, touchStart); }, { passive: false });
   canvas.addEventListener('touchmove', (e) => { e.preventDefault(); each(e, touchMove); }, { passive: false });

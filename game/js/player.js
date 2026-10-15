@@ -39,11 +39,11 @@ let CAMM = [1, 0, 0, 1, 0, 0];
 const lookCam = (v) => OPTS.cam === 'look' && !!v && !v.veh;
 // Лазер вместо перекрестия (Shift+N, только в камере по взгляду): мышь по вертикали прицел не двигает
 const laserOn = (v) => OPTS.laser && lookCam(v);
-function setCamMode(m) {
+function setCamMode(m, noLock = false) {
   OPTS.cam = m;
   saveOpts();
-  if (m === 'look') { mouse.x = VW / 2; mouse.y = VH * 0.4; if (!TouchUI.on) canvas.requestPointerLock?.(); }
-  else if (document.pointerLockElement) document.exitPointerLock();
+  if (m === 'look') { mouse.x = VW / 2; mouse.y = VH * 0.4; if (!TouchUI.on && !noLock) canvas.requestPointerLock?.(); }
+  else if (document.pointerLockElement) { G.lockDrop = true; document.exitPointerLock(); }     // сами отпустили — меню не открывать
   toast(m === 'look' ? 'КАМЕРА: ПО ВЗГЛЯДУ (N)' : 'КАМЕРА: ОБЫЧНАЯ (N)', 1.4);
 }
 // Направление на экране (WASD) → в мире: с повёрнутой камерой W — вверх экрана
@@ -56,7 +56,7 @@ function lookAim(p) {
   const dx = mouse.dx || 0, dy = mouse.dy || 0;
   mouse.dx = mouse.dy = 0;
   if (!lookCam(p)) { const w = screenToWorld(mouse.x, mouse.y); p.a = Math.atan2(w.y - p.y, w.x - p.x); return; }
-  p.a = angDiff(p.a + dx * CAM.turn, 0);
+  p.a = angDiff(p.a + dx * CAM.turn * (TouchUI.on ? 1 : OPTS.turnK), 0);     // мышь — с чувствительностью из меню (сенсор — в touchFrame)
   mouse.x = VW / 2;
   mouse.y = laserOn(p) ? VH * 0.4 : clamp((mouse.y || 0) + dy, 30, VH * (1 - CAM.bottom) - 40);     // с лазером — вертикаль не нужна
 }
